@@ -1,0 +1,30 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.ruff_cache/
+
+# Secrets and local config (never commit API keys)
+.env
+.env.*
+!.env.example
+.unskein.toml
+
+# Logs
+*.log
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/
