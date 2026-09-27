@@ -1,0 +1,294 @@
+# unskein — Contexto del proyecto
+
+Este archivo da contexto a Claude Code sobre el proyecto `unskein`. Léelo antes de
+proponer cambios de diseño o generar código nuevo.
+
+## Qué es
+
+`unskein` es un CLI de análisis estático de código, impulsado por IA, escrito en
+Python. Detecta dependencias, acoplamiento y ciclos entre módulos, y usa un LLM
+para interpretar esas señales y generar recomendaciones.
+
+Nombre elegido tras verificar disponibilidad en PyPI (evitamos "cortex" y variantes
+por saturación de namespace y por un competidor directo llamado CodeCortex).
+El nombre evoca "desenredar" (unskein = deshacer una madeja) la maraña de
+dependencias de un proyecto.
+
+## Audiencia y forma de uso
+
+- **Proyecto open source**, licencia MIT.
+- Se usa como **CLI manual** (`unskein scan <path>`), no como servicio ni gate de
+  CI/CD en v0.1 (eso podría venir después, pero no es el foco ahora).
+
+## Alcance funcional (v0.1)
+
+Solo dos de los cuatro requisitos originales del proyecto, deliberadamente acotado:
+
+1. **Análisis de dependencias** — grafo de imports entre módulos.
+2. **Acoplamiento de sistemas** — métricas Ca/Ce/Inestabilidad + detección de ciclos.
+
+Quedan **fuera de v0.1** (fase 2, sin diseñar aún):
+- Análisis de vulnerabilidades CVE.
+- Mapa de arquitectura completo (más allá del grafo de dependencias).
+
+Granularidad: **nivel de módulo/archivo**, no de clase/función.
+
+## Lenguajes
+
+- **v0.1: solo Python.**
+- Roadmap futuro (no implementar todavía): TypeScript/JavaScript (v0.3), luego
+  Java (v0.4), usando `tree-sitter` como capa de abstracción de parseo para no
+  reescribir el pipeline por cada lenguaje nuevo.
+- El diseño del adapter (`parsers/base.py`) ya está pensado para esto: es una
+  interfaz (`LanguageAdapter`) que cada lenguaje implementa.
+
+## Discovery de archivos
+
+- **Excludes combinados de tres orígenes** (unión, no se pisan entre sí):
+  `.gitignore` + `.unskeinignore` (nuevo, para excluir del análisis algo que
+  sí está versionado en git, ej. código generado) + `--exclude` del CLI.
+- **Symlinks NO se siguen por defecto** (`follow_symlinks=False`). Se usa
+  `os.walk(followlinks=...)`, no `Path.rglob()` (que en Python 3.12 sigue
+  symlinks siempre — el parámetro para desactivarlo no existe hasta 3.13).
+  Flag `--follow-symlinks` para quien los necesite explícitamente. Con
+  symlinks seguidos, además, hay detección de ciclos por directorio real
+  visitado (defensa en profundidad, no depender solo de `followlinks`).
+  Motivo del default seguro: seguir symlinks puede causar bucles infinitos
+  (symlink que apunta a un ancestro) o fuga de alcance (analizar código fuera
+  del proyecto, ej. un venv compartido).
+- **Encoding se detecta por archivo** vía `tokenize.detect_encoding` (stdlib,
+  ya implementa PEP 263 — encoding cookie `# -*- coding: ... -*-` — y
+  detección de BOM). `--encoding`/`.unskein.toml` (`default_encoding`) es
+  solo un *fallback* para cuando el archivo no declara cookie y la detección
+  automática no puede resolverlo — nunca fuerza un encoding sobre un archivo
+  que ya lo declara.
+- **Límites de tamaño y tiempo por archivo**, para evitar que un archivo
+  anómalo (generado, minificado, vendored) degrade el análisis completo:
+  `max_file_size_bytes` (default 5 MB — se salta con warning, ni se lee) y
+  `per_file_timeout_seconds` (default 30s, vía `future.result(timeout=...)`
+  del `ProcessPoolExecutor` — se salta con warning ese archivo, no tumba el
+  análisis). Ver `docs/architecture.md`, sección 3.5.
+
+## Stack técnico
+
+- **Python `>=3.12`** como mínimo soportado; **3.14 como versión de desarrollo/CI
+  principal**. No se diseña v0.1 asumiendo builds free-threaded (`cp314t`): el
+  ecosistema de wheels de extensiones en C (pydantic-core, y el futuro
+  tree-sitter para v0.3+) todavía no tiene soporte maduro y confiable para
+  free-threading. Revisar de nuevo cuando se evalúe activarlo como optimización
+  opcional, no asumirlo como base.
+- `ast` (stdlib) para parseo de Python — no usar `tree-sitter` todavía en v0.1,
+  solo se adoptará al agregar el segundo lenguaje.
+- `networkx` para el grafo de dependencias y sus métricas.
+- `pydantic` para validar la salida estructurada del LLM.
+- `typer` + `rich` para el CLI y el renderizado en terminal.
+- `litellm` como capa de abstracción del proveedor de IA — **no** usar SDKs de
+  proveedores específicos (ni `openai`, ni `azure-openai` directo). Todo el
+  fallback entre modelos y reintentos se gestiona vía LiteLLM, no con lógica
+  propia.
+- Proveedor de IA previsto: Ollama local con modelos económicos de HuggingFace,
+  con fallback configurable a un proveedor cloud vía LiteLLM.
+- `hatchling` como build backend (estándar actual para layout `src/`).
+- `psutil` para medición de rendimiento (CPU/RAM) multiplataforma — soporte
+  Windows y Linux desde v0.1 (no usar `resource`, que es solo Unix).
+- `pytest` + `pytest-cov` — testing desde el primer commit, no pospuesto.
+
+## Internacionalización (i18n)
+
+- **Español + inglés desde v0.1**, ambos con soporte completo (CLI, reporte,
+  y las respuestas generadas por el LLM).
+- Diccionario simple de traducciones (`unskein/i18n.py`), no `gettext`/catálogos
+  `.mo` — con solo 2 idiomas es innecesario y complica testing.
+- Detección de idioma con la misma jerarquía de config que el resto: env var
+  (`UNSKEIN_LANG`) → `.unskein.toml` (`[general] lang = "es"`) → flag
+  `--lang`. Si nada está configurado: `locale.getlocale()`, y si no es `es*`,
+  **default a inglés** (más seguro para adopción OSS amplia — no asumir que
+  quien instala el CLI habla español).
+- El `SYSTEM_PROMPT` de IA se parametriza por idioma — el LLM debe responder
+  (`AIReport.summary`, `Problem.description`) en el idioma seleccionado, no
+  solo el CLI/reporte. Ver `docs/architecture.md`.
+
+## Estructura del repo
+
+```
+src/unskein/
+├── cli.py                 # entry point, comando `scan`
+├── parsers/
+│   ├── base.py             # interfaz LanguageAdapter (el "adapter")
+│   └── python_parser.py    # implementación para Python con ast
+├── graph/
+│   ├── builder.py           # construcción del grafo con NetworkX
+│   └── metrics.py           # Ca, Ce, inestabilidad, ciclos
+├── ai/
+│   ├── client.py             # wrapper de litellm.completion
+│   └── prompts.py            # system prompt + construcción de prompts
+└── report/
+    └── markdown.py           # generación del reporte final
+```
+
+Layout `src/` deliberado (evita bugs de import en desarrollo, estándar actual
+para paquetes Python distribuibles).
+
+## Decisiones de diseño importantes (no revertir sin discutirlo)
+
+- **Separación estricta grafo (determinista) vs. IA (interpretativa).** El grafo
+  y las métricas de acoplamiento se calculan siempre, sin LLM. La IA solo
+  interpreta lo que el grafo ya calculó — nunca decide qué es un módulo o un
+  import.
+- **`is_external` se calcula comparando el primer segmento del import contra los
+  módulos del proyecto**, no contra una lista de stdlib/paquetes conocidos.
+- **Resolución de re-exports (indirección) es parte de v0.1**, no se pospuso.
+  Ver `docs/architecture.md` para el algoritmo completo (incluye límite de
+  profundidad y detección de ciclos de re-export).
+- **Fallos de IA nunca detienen el comando.** Si falla la config, la llamada, o
+  la validación del schema de salida, el reporte se genera igual sin la sección
+  de IA, con un aviso claro.
+- **Salida estructurada del LLM vía Pydantic**, con fallback de extracción de
+  JSON embebido para modelos económicos que no respetan bien `response_format`.
+- **Snippets de código en las recomendaciones de IA son v0.2**, no v0.1. En v0.1
+  la IA solo da resumen + problemas señalados, sin proponer código de solución.
+
+## Jerarquía de configuración (API keys y modelo de IA)
+
+Orden de precedencia (mayor a menor):
+1. Variable de entorno (`UNSKEIN_AI_MODEL`, `UNSKEIN_API_KEY`, `UNSKEIN_AI_API_BASE`)
+2. Archivo de config (`.unskein.toml` en el proyecto, o `~/.config/unskein/config.toml`)
+3. Flag `--api-key` (documentado explícitamente como inseguro, solo para pruebas)
+
+Nunca loguear la API key, ni siquiera en modo `--verbose`. `.env.example` sin
+valores reales debe existir desde el scaffold inicial, con `.gitignore` ya
+configurado para `.env` y `.unskein.toml`.
+
+## Criterios de rendimiento y estilo de código
+
+- **Funcional para composición entre capas, imperativo en los bucles calientes.**
+  El flujo de alto nivel (`discover → parse → resolve → analyze`) se escribe
+  como composición de funciones puras — favorece legibilidad y testabilidad.
+  Dentro de cada capa, en los bucles que recorren miles de nodos/edges
+  (`ast.walk`, cálculo de métricas por módulo), usar bucles explícitos o
+  comprensiones de listas, no cadenas de `map`/`filter`/`reduce` con lambdas.
+  **Motivo:** en CPython el estilo funcional puro no reduce RAM ni mejora
+  ciclos de CPU por sí solo — el overhead de invocación de funciones lambda
+  frecuentemente hace que sea más lento que un bucle plano. Esa ventaja sí
+  existe en lenguajes con compilación nativa (Rust, Haskell), pero no en un
+  intérprete de bytecode como CPython.
+- **Reducción de memoria real, técnicas concretas a aplicar:**
+  - Generadores (`Iterator[Path]`) en vez de listas materializadas donde el
+    pipeline lo permita — evita cargar en memoria más de lo necesario en
+    proyectos grandes.
+  - `@dataclass(slots=True)` en las estructuras que se instancian en masa
+    (`ImportEdge`, `ModuleInfo`) — reduce memoria por instancia de forma
+    significativa cuando hay miles de imports.
+  - `itertools` para composición de transformaciones sin el overhead de
+    lambdas anidadas.
+
+## Modelo de concurrencia
+
+- **Paralelización del parseo de archivos**, no asumida siempre: se activa solo
+  si `len(files) >= config.parallel_threshold` (configurable, ver abajo). Por
+  debajo del umbral, el overhead de arrancar procesos supera la ganancia.
+- **`ProcessPoolExecutor`**, no builds free-threaded — funciona en cualquier
+  Python 3.12+ sin depender de la madurez de wheels `cp314t`.
+- **`AnalysisConfig` parametriza el umbral y los workers** desde ya (no
+  hardcodeado), siguiendo la misma jerarquía de configuración que la API key
+  (env var → `.unskein.toml` → flag):
+  ```python
+  @dataclass
+  class AnalysisConfig:
+      parallel_threshold: int = 50
+      max_workers: int | None = None   # None = os.cpu_count()
+      queue_maxsize: int = 200
+  ```
+- **La decisión de paralelizar vive en una función aislada**,
+  `should_parallelize(file_count, config)` — punto de extensión explícito para
+  cuando se introduzca lógica adaptativa (v0.2+: calibrar según núcleos
+  disponibles, tamaño total en bytes, etc.) sin tocar el resto del pipeline.
+- **Cola única compartida entre workers de una misma etapa** (no sharding por
+  hash) — el autobalanceo dinámico de una cola compartida evita el "efecto
+  straggler" que el sharding estático puede introducir cuando el costo de
+  procesar cada archivo es desigual.
+- **Colas separadas por etapa del pipeline** (parse → resolve → metrics), estilo
+  SEDA (*staged event-driven architecture*): cada etapa tiene su propia cola
+  acotada de entrada y su propio `StageConfig` (workers, `queue_maxsize`),
+  dimensionado según si la etapa es CPU-bound (parseo) o liviana (resolución de
+  indirección, cálculo de métricas con NetworkX, difícil de paralelizar
+  internamente).
+- **No se usa un bus de eventos / pub-sub real (tópicos, múltiples
+  suscriptores) en v0.1.** El proceso es de una sola pasada, con un productor y
+  un consumidor lógico por etapa — un event bus añadiría complejidad sin
+  contraparte real en este flujo. Reconsiderar solo si se agrega un modo
+  *watch* (re-análisis incremental) o integración en vivo con un IDE.
+- **Hash-sharding queda diferido explícitamente** a una eventual arquitectura
+  distribuida en contenedores (enrutamiento determinista de archivos entre
+  nodos/colas externas tipo Redis o SQS) — no tiene sentido para concurrencia
+  local con colas en memoria, donde la cola compartida ya da balanceo óptimo.
+  No diseñar v0.1 anticipando esto.
+
+## Logging
+
+- `logging` estándar de la stdlib, logger `"unskein"`, `propagate=False`.
+- **Consola + archivo opcional.** Consola siempre activa (nivel `WARNING`, o
+  `DEBUG` con `--verbose`); archivo solo si se pasa `--log-file <ruta>` (nadie
+  escribe a disco sin pedirlo). Formato de archivo con timestamp/nivel/logger;
+  formato de consola limpio (solo el mensaje, sin ruido).
+- **La API key nunca aparece en ningún log**, en ningún handler, en ningún
+  nivel — regla ya establecida para la config de IA, se mantiene sin excepción.
+
+## Códigos de salida del CLI
+
+| Código | Significado |
+|---|---|
+| `0` | Análisis completado, sin problemas de severidad ≥ `--min-severity` |
+| `1` | Error de uso (ruta inválida, sin archivos `.py`, config inválida) |
+| `2` | Análisis completado, con problemas de severidad `high` encontrados |
+| `3` | Error interno inesperado (bug real — traceback completo visible) |
+
+Documentado en el `epilog` del `--help` de `typer`. Útil para quien quiera
+scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI dedicado.
+
+## Telemetría y métricas de rendimiento
+
+- **Cero telemetría de uso.** Nada sale del equipo del usuario — ni siquiera
+  anónimo. Declarado explícitamente en el README (sección de privacidad),
+  la comunidad OSS lo pregunta rápido.
+- **Medición de rendimiento es local y solo informativa**, vía `psutil`
+  (multiplataforma: Windows + Linux/macOS, no `resource` que es solo Unix).
+  Se muestra solo con `--verbose` (duración + pico de memoria del propio
+  análisis), nunca se envía a ningún servidor.
+
+## Roadmap de versiones
+
+| Versión | Alcance |
+|---|---|
+| v0.1 | Python, nivel módulo, dependencias + acoplamiento, salida texto/Markdown, IA = resumen + problemas señalados (sin snippets) |
+| v0.2 | Recomendaciones con snippets de código, salida JSON opcional |
+| v0.3 | Segundo lenguaje (TypeScript/JavaScript) vía tree-sitter |
+| v0.4 | Tercer lenguaje (Java) |
+| Fase 2 | CVE + mapa de arquitectura completo |
+
+## Estado actual
+
+El diseño de todas las capas de v0.1 está cerrado a nivel de arquitectura
+(ver `docs/architecture.md` para el detalle técnico completo de cada módulo).
+**Aún no existe código implementado** — este archivo y `docs/architecture.md`
+son el punto de partida para empezar el scaffold real.
+
+## Convenciones al trabajar en este proyecto
+
+- Dataclasses (o Pydantic donde haya validación de I/O externo, como la salida
+  del LLM) para todas las estructuras de datos del pipeline.
+- **Testing desde el primer commit, no pospuesto** (decisión revertida
+  respecto a una versión anterior de este documento). `pytest` +
+  `pytest-cov`, corriendo en CI contra Python 3.12/3.13/3.14. Fixtures con
+  mini-proyectos Python sintéticos (`simple_project`, `circular_imports`,
+  `reexport_chain`, `reexport_cycle`) — ver `docs/architecture.md`. Sin
+  umbral de cobertura numérico rígido de entrada; se revisa como señal, no
+  como gate automático, hasta que el proyecto tenga más rodaje.
+- No introducir dependencias de SDKs de proveedores de IA específicos — todo
+  pasa por LiteLLM.
+- Repo sigue la plantilla estándar OSS con licencia MIT: `CONTRIBUTING.md`,
+  `CODE_OF_CONDUCT.md` (Contributor Covenant), `SECURITY.md`,
+  `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md`, workflows de
+  CI/release en `.github/workflows/`. Versionado semver desde `0.1.0`,
+  `CHANGELOG.md` formato *Keep a Changelog*, publicación a PyPI vía Trusted
+  Publishing (OIDC desde GitHub Actions, sin token de PyPI almacenado).
