@@ -28,3 +28,8 @@ htmlcov/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 graft/
+
+# Personal editor/agent tooling (graft hooks, MCP config) — per-developer, not shared
+.claude/
+.mcp.json
+.ignore
