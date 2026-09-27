@@ -1,3 +1,5 @@
+import re
+
 from typer.testing import CliRunner
 
 from unskein import __version__
@@ -6,6 +8,13 @@ from unskein.cli import app, exit_code_for
 from unskein.errors import ExitCode
 
 runner = CliRunner()
+
+# Rich forces color on CI (GITHUB_ACTIONS, FORCE_COLOR) and splits option names with ANSI codes.
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def plain(text: str) -> str:
+    return ANSI_ESCAPE.sub("", text)
 
 
 def test_version_flag() -> None:
@@ -17,7 +26,9 @@ def test_version_flag() -> None:
 def test_scan_help_lists_exit_codes() -> None:
     result = runner.invoke(app, ["scan", "--help"])
     assert result.exit_code == 0
-    assert "--no-ai" in result.output
+    output = plain(result.output)
+    assert "--no-ai" in output
+    assert "Exit codes" in output
 
 
 def test_exit_code_high_severity() -> None:

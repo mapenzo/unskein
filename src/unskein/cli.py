@@ -9,11 +9,11 @@ from unskein.ai.models import AIReport, Severity
 from unskein.errors import ExitCode
 from unskein.graph.metrics import AnalysisResult
 
-app = typer.Typer(
-    add_completion=False,
-    no_args_is_help=True,
-    epilog="Exit codes: 0=OK, 1=usage error, 2=high-severity problems found, 3=internal error.",
+EXIT_CODES_EPILOG = (
+    "Exit codes: 0=OK, 1=usage error, 2=high-severity problems found, 3=internal error."
 )
+
+app = typer.Typer(add_completion=False, no_args_is_help=True, epilog=EXIT_CODES_EPILOG)
 
 
 @dataclass
@@ -61,7 +61,7 @@ def main(
     """AI-assisted static analysis of module dependencies and coupling."""
 
 
-@app.command()
+@app.command(epilog=EXIT_CODES_EPILOG)
 def scan(
     path: Annotated[Path, typer.Argument(help="Directory to analyze.")] = Path("."),
     no_ai: Annotated[bool, typer.Option("--no-ai", help="Skip AI interpretation.")] = False,
