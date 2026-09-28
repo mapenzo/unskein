@@ -1,6 +1,6 @@
 import networkx as nx
 
-from unskein.parsers.base import ParseResult
+from unskein.parsers.models import ParseResult
 
 
 def build_graph(result: ParseResult) -> nx.DiGraph:
