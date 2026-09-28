@@ -860,6 +860,9 @@ soporte de rendimiento es **Windows + Linux/macOS** desde v0.1, no solo Unix.
   `@dataclass(slots=True)` en estructuras instanciadas en masa (`ImportEdge`,
   `ModuleInfo`), `itertools` para composición sin overhead de lambdas
   anidadas.
+- **Clean Code obligatorio**, con docstrings estilo Google en todo módulo,
+  clase y función (privados incluidos), exigidos en CI con las reglas `D` de
+  ruff. Reglas completas en `CLAUDE.md`, sección *Clean Code (obligatorio)*.
 
 ## Testing (decisión revertida: desde el inicio, no pospuesto)
 

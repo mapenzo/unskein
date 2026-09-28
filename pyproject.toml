@@ -72,4 +72,13 @@ extend-exclude = ["tests/fixtures"]
 exclude = ["*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
+select = ["E", "F", "I", "B", "UP", "SIM", "D"]
+# __init__ arguments are documented in the class docstring (Google style).
+ignore = ["D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: descriptive names instead of docstrings (see CLAUDE.md, Clean Code).
+"tests/**" = ["D"]

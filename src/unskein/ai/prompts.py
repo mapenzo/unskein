@@ -1,3 +1,5 @@
+"""System prompt and prompt construction for the AI interpretation step."""
+
 from unskein.ai.models import AIContext
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang
@@ -21,14 +23,49 @@ Reply with a single JSON object matching the schema included in the user message
 
 
 def build_context(result: AnalysisResult) -> AIContext:
-    """Bounded serialization: never send the full graph to the LLM."""
+    """Summarize an analysis into a bounded context for the LLM.
+
+    Never sends the full graph: only aggregates and truncated highlights, to
+    keep context size and cost under control.
+
+    Args:
+        result: The deterministic analysis to summarize.
+
+    Returns:
+        Context with truncated cycles, top coupled modules and warnings.
+
+    Raises:
+        NotImplementedError: Not implemented yet.
+    """
     raise NotImplementedError
 
 
 def build_prompt(context: AIContext, lang: Lang) -> str:
+    """Build the user prompt, prefixed with the output language instruction.
+
+    Args:
+        context: Bounded analysis context.
+        lang: Language the LLM must answer in.
+
+    Returns:
+        The full user prompt.
+    """
     return f"{LANG_INSTRUCTION[lang]}\n\n" + _build_prompt_body(context)
 
 
 def _build_prompt_body(context: AIContext) -> str:
-    """Includes AIReport JSON schema inline for weak models ignoring response_format."""
+    """Render the context and the AIReport JSON schema as prompt text.
+
+    The schema is included inline because cheap local models often ignore
+    ``response_format``.
+
+    Args:
+        context: Bounded analysis context.
+
+    Returns:
+        Prompt body without the language instruction.
+
+    Raises:
+        NotImplementedError: Not implemented yet.
+    """
     raise NotImplementedError

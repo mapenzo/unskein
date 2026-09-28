@@ -1,4 +1,7 @@
-"""Generate docs/assets/banner.svg (README cover). Run: uv run python scripts/gen_banner.py"""
+"""Generate docs/assets/banner.svg (README cover).
+
+Run: uv run python scripts/gen_banner.py
+"""
 
 import math
 import random
@@ -44,6 +47,14 @@ DESC = (
 
 
 def catmull_rom(points: list[Point]) -> str:
+    """Convert points into a smooth SVG path through all of them.
+
+    Args:
+        points: Points the curve must pass through, in order.
+
+    Returns:
+        SVG path data made of cubic Bézier segments (Catmull-Rom spline).
+    """
     d = f"M{points[0][0]:.1f},{points[0][1]:.1f}"
     for i in range(len(points) - 1):
         p0 = points[i - 1] if i > 0 else points[i]
@@ -56,6 +67,16 @@ def catmull_rom(points: list[Point]) -> str:
 
 
 def thread_path(rng: random.Random, lane_y: int, end_x: int) -> str:
+    """Build one thread: random loops around the knot, then a straight lane.
+
+    Args:
+        rng: Seeded random generator, so the banner is reproducible.
+        lane_y: Vertical position of the thread's straight lane.
+        end_x: Horizontal position where the lane ends in a module node.
+
+    Returns:
+        SVG path data for the thread.
+    """
     cx, cy = KNOT
     angle = rng.uniform(0, 2 * math.pi)
     pts: list[Point] = []
@@ -68,6 +89,11 @@ def thread_path(rng: random.Random, lane_y: int, end_x: int) -> str:
 
 
 def build_svg() -> str:
+    """Build the banner SVG with light and dark palettes.
+
+    Returns:
+        The complete SVG document.
+    """
     rng = random.Random(SEED)
     rules, threads, nodes = [], [], []
     for i, (y, end_x) in enumerate(zip(LANES_Y, LANE_END, strict=True), start=1):

@@ -1,3 +1,5 @@
+"""Resolve imports that go through re-exporting facades to the defining module."""
+
 from dataclasses import replace
 
 from unskein.parsers.models import ParseResult, ReExport
@@ -8,6 +10,14 @@ ReExportIndex = dict[tuple[str, str], str]
 
 
 def build_reexport_index(re_exports: list[ReExport]) -> ReExportIndex:
+    """Index re-exports by (exporting module, symbol) for constant-time lookup.
+
+    Args:
+        re_exports: Re-exports detected by the parser.
+
+    Returns:
+        A mapping from (exporting module, symbol) to the module the symbol comes from.
+    """
     return {(re.exporting_module, re.symbol_name): re.original_module for re in re_exports}
 
 
@@ -17,6 +27,20 @@ def resolve_target(
     index: ReExportIndex,
     path: list[str] | None = None,
 ) -> tuple[str, list[str]]:
+    """Follow the re-export chain of a symbol until the module that defines it.
+
+    Cycles and chains longer than MAX_RESOLUTION_DEPTH stop the resolution with a
+    warning instead of failing.
+
+    Args:
+        module: Module the symbol is imported from.
+        symbol: Imported symbol, or None for a whole-module import (never resolved).
+        index: Re-export index built by `build_reexport_index`.
+        path: Modules already visited in this chain; callers leave it as None.
+
+    Returns:
+        The resolved module and the warnings produced while resolving.
+    """
     if path is None:
         path = []
 
@@ -34,7 +58,18 @@ def resolve_target(
 
 
 def resolve_indirection(result: ParseResult) -> ParseResult:
-    """Point internal symbol imports at the defining module; returns a new ParseResult."""
+    """Point internal symbol imports at the defining module.
+
+    External and whole-module imports are kept as they are; edges that resolve
+    back to their own source are dropped; warnings are deduplicated. The input is
+    not mutated.
+
+    Args:
+        result: Parse result whose imports should be resolved.
+
+    Returns:
+        A new parse result with resolved import targets.
+    """
     index = build_reexport_index(result.re_exports)
     warnings = dict.fromkeys(result.warnings)
     modules = []
