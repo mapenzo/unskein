@@ -1,75 +1,76 @@
-"""Typer command-line interface: the ``scan`` command and its orchestration."""
+"""Typer command-line interface: argument parsing, output and exit codes only.
 
-from dataclasses import dataclass
+The pipeline itself lives in ``unskein.scan`` so it stays usable without typer.
+"""
+
+import io
+import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
+from rich.console import Console
+from rich.markdown import Markdown
 
 from unskein import __version__
 from unskein.ai.models import AIReport, Severity
-from unskein.errors import ExitCode
-from unskein.graph.metrics import AnalysisResult
+from unskein.errors import ExitCode, UnskeinError
+from unskein.i18n import Lang, detect_lang, t, translate_error
+from unskein.logging_setup import setup_logging
+from unskein.perf import PerformanceStats, measure
+from unskein.report.markdown import ReportContext, render_report
+from unskein.scan import ScanContext, ScanOptions, execute_scan, prepare_scan
 
 EXIT_CODES_EPILOG = (
     "Exit codes: 0=OK, 1=usage error, 2=high-severity problems found, 3=internal error."
 )
 
-app = typer.Typer(add_completion=False, no_args_is_help=True, epilog=EXIT_CODES_EPILOG)
+app = typer.Typer(
+    add_completion=False,
+    no_args_is_help=True,
+    epilog=EXIT_CODES_EPILOG,
+    # Plain click help: rich tables squeeze the --x/--no-x columns unreadably at 80 columns.
+    rich_markup_mode=None,
+)
 
 
-@dataclass
-class ScanOptions:
-    """Options of one ``scan`` run, decoupled from typer so it can be tested directly.
+def run() -> None:
+    """Console entry point: run the app, mapping click usage errors to exit code 1.
 
-    Attributes:
-        path: Directory to analyze.
-        no_ai: Whether to skip the AI interpretation.
-        exclude: Extra exclude patterns (gitignore syntax).
-        min_severity: Lowest AI problem severity to report.
-        verbose: Whether to show progress and performance stats.
-        output: File to also write the Markdown report to.
-        log_file: File to also write DEBUG logs to.
-        api_key: Key from the insecure ``--api-key`` flag.
-        lang: Requested output language.
-        follow_symlinks: Whether discovery follows symlinked directories; None
-            when the flag was not given, so ``.unskein.toml`` decides.
-        encoding: Fallback encoding for files whose encoding cannot be detected.
-        include_tests: Whether test code is analyzed; None when the flag was
-            not given, so ``.unskein.toml`` decides.
-    """
-
-    path: Path
-    no_ai: bool = False
-    exclude: tuple[str, ...] = ()
-    min_severity: Severity = "low"
-    verbose: bool = False
-    output: Path | None = None
-    log_file: Path | None = None
-    api_key: str | None = None
-    lang: str | None = None
-    follow_symlinks: bool | None = None
-    encoding: str | None = None
-    include_tests: bool | None = None
-
-
-def run_scan(options: ScanOptions) -> tuple[AnalysisResult, AIReport | None]:
-    """Run the pipeline: discover -> parse -> resolve -> analyze -> AI (optional).
-
-    Kept apart from the typer command so it is testable and reusable as a library.
-
-    Args:
-        options: Options of this scan.
-
-    Returns:
-        The deterministic analysis and the AI report, or None when AI is
-        disabled, not configured or failed.
+    Click exits with 2 on usage errors, but unskein reserves 2 for
+    "high-severity problems found"; a script must be able to tell them apart.
+    Typer vendors its own click, so only typer's public exception types are
+    caught here (never ``click``'s).
 
     Raises:
-        UnskeinError: On usage errors such as an invalid path or no Python files.
-        NotImplementedError: Not implemented yet.
+        SystemExit: Always, with the process exit code.
     """
-    raise NotImplementedError
+    _tolerate_legacy_console_encodings()
+    try:
+        code = app(standalone_mode=False)
+    except typer.TyperException as e:
+        # Usage errors carry show(), which prints the usage line and the hint.
+        show = getattr(e, "show", None)
+        if show:
+            show()
+        else:
+            Console(stderr=True).print(f"[red]{e}[/red]")
+        sys.exit(ExitCode.USAGE_ERROR)
+    except typer.Abort:
+        sys.exit(ExitCode.USAGE_ERROR)
+    sys.exit(code or ExitCode.OK)
+
+
+def _tolerate_legacy_console_encodings() -> None:
+    """Replace characters the console cannot encode instead of crashing.
+
+    Windows pipes use the ANSI code page (e.g. cp1252), which lacks symbols
+    the report uses such as "→"; without this, printing a cycle ends the run
+    with an internal error. ``-o`` files are always written as full UTF-8.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="replace")
 
 
 def exit_code_for(ai_report: AIReport | None) -> ExitCode:
@@ -101,7 +102,7 @@ def _version_callback(value: bool) -> None:
 
 
 @app.callback()
-def main(
+def main(  # pylint: disable=unused-argument  # typer needs the eager param
     version: Annotated[
         bool,
         typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version."),
@@ -111,23 +112,31 @@ def main(
 
 
 @app.command(epilog=EXIT_CODES_EPILOG)
-def scan(
+def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     path: Annotated[Path, typer.Argument(help="Directory to analyze.")] = Path("."),
     no_ai: Annotated[bool, typer.Option("--no-ai", help="Skip AI interpretation.")] = False,
     exclude: Annotated[
         list[str] | None, typer.Option("--exclude", help="Extra exclude pattern (repeatable).")
     ] = None,
     min_severity: Annotated[
-        str, typer.Option("--min-severity", help="low | medium | high")
+        Severity, typer.Option("--min-severity", help="Lowest AI problem severity to report.")
     ] = "low",
-    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
-    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
-    log_file: Annotated[Path | None, typer.Option("--log-file")] = None,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="Show progress and performance stats.")
+    ] = False,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Also save the Markdown report here.")
+    ] = None,
+    log_file: Annotated[
+        Path | None, typer.Option("--log-file", help="Also write debug logs to this file.")
+    ] = None,
     api_key: Annotated[
         str | None,
         typer.Option("--api-key", help="INSECURE (shell history). Prefer UNSKEIN_API_KEY."),
     ] = None,
-    lang: Annotated[str | None, typer.Option("--lang", help="es | en")] = None,
+    lang: Annotated[
+        Literal["es", "en"] | None, typer.Option("--lang", help="Output language.")
+    ] = None,
     follow_symlinks: Annotated[
         bool | None,
         typer.Option(
@@ -149,4 +158,83 @@ def scan(
     ] = None,
 ) -> None:
     """Analyze a Python project and print a dependency/coupling report."""
-    raise NotImplementedError
+    setup_logging(verbose, log_file)
+    options = ScanOptions(
+        path=path,
+        no_ai=no_ai,
+        exclude=tuple(exclude or ()),
+        min_severity=min_severity,
+        api_key=api_key,
+        lang=lang,
+        follow_symlinks=follow_symlinks,
+        include_tests=include_tests,
+        encoding=encoding,
+    )
+    try:
+        code = _run_scan(options, output, verbose)
+    except Exception:  # pylint: disable=broad-exception-caught  # any bug -> exit 3
+        Console(stderr=True).print_exception()
+        code = ExitCode.INTERNAL_ERROR
+    raise typer.Exit(code)
+
+
+def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitCode:
+    """Prepare and execute the scan, print the report and pick the exit code.
+
+    Expected errors become translated messages (exit code 1); anything else
+    propagates to ``scan``, which shows the full traceback (exit code 3).
+
+    Args:
+        options: What the user asked for.
+        output: File to also write the raw Markdown report to.
+        verbose: Whether to print performance stats.
+
+    Returns:
+        The process exit code.
+    """
+    errors = Console(stderr=True)
+    try:
+        context = prepare_scan(options)
+    except UnskeinError as e:
+        # The TOML could not be read, so the language comes from flag, env and locale only.
+        errors.print(f"[red]{translate_error(e, detect_lang(options.lang))}[/red]")
+        return ExitCode.USAGE_ERROR
+    try:
+        outcome, stats = measure(lambda: execute_scan(context))
+    except UnskeinError as e:
+        errors.print(f"[red]{translate_error(e, context.lang)}[/red]")
+        return ExitCode.USAGE_ERROR
+    report = render_report(
+        ReportContext(
+            root=context.root,
+            result=outcome.result,
+            ai_report=outcome.ai_report,
+            ai_status=context.ai_status,
+            min_severity=context.min_severity,
+        ),
+        context.lang,
+    )
+    if output:
+        output.write_text(report, encoding="utf-8")
+    Console().print(Markdown(report))
+    if verbose:
+        _print_stats(stats, context)
+    return exit_code_for(outcome.ai_report)
+
+
+def _print_stats(stats: PerformanceStats, context: ScanContext) -> None:
+    """Print the local, informational performance stats.
+
+    Args:
+        stats: Duration and memory of the analysis.
+        context: The scan, for its output language.
+    """
+    lang: Lang = context.lang
+    Console(stderr=True).print(
+        t(
+            "cli.stats",
+            lang,
+            seconds=f"{stats.duration_seconds:.2f}",
+            memory=f"{stats.peak_memory_mb:.1f}",
+        )
+    )

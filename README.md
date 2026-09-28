@@ -28,8 +28,9 @@ unskein scan .
 ```
 
 > [!NOTE]
-> unskein is in **pre-alpha**. The design is settled ([docs/architecture.md](docs/architecture.md))
-> and v0.1 is being built in the open. The output below shows the target for v0.1.
+> unskein is in **pre-alpha**. `unskein scan <path> --no-ai` already works end to end
+> (graph, coupling, cycles, Markdown report in English or Spanish); the AI interpretation
+> is still being built. The sample below shows the full v0.1 target, AI section included.
 
 ## What you get
 
@@ -92,7 +93,7 @@ unskein never runs your code. It reads it with Python's own `ast` parser.
 ## Quickstart
 
 ```bash
-pip install unskein          # coming with v0.1
+pip install unskein          # not on PyPI yet; use `uv sync` from a clone
 unskein scan path/to/project
 ```
 

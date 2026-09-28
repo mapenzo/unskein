@@ -725,10 +725,21 @@ Estructura del reporte:
 ## Advertencias del análisis        (solo si hay parse_warnings)
 ```
 
+API: `render_report(context: ReportContext, lang) -> str`, con
+`ReportContext(root, result, ai_report, ai_status, min_severity)`. `root`
+nombra el reporte y hace **relativas** las rutas de los warnings.
+
 Reglas:
-- El "no hay IA" nunca es un hueco vacío ni un error crudo — siempre da un
-  resumen basado en números + sugerencia de cómo obtener más (quitar
-  `--no-ai`).
+- El "no hay IA" nunca es un hueco vacío ni un error crudo: `AIStatus`
+  (`PRESENT`, `DISABLED` por `--no-ai`, `NOT_CONFIGURED` sin modelo — con
+  cómo configurarlo —, `UNAVAILABLE`) elige el aviso de la sección.
+- **Warnings agrupados por `WarningCode`**: `### <título> (<n>)` con
+  `MAX_WARNING_EXAMPLES` (5) ejemplos `ruta:línea — mensaje` y "…y N más".
+  Con networkx: 264 star imports → 1 grupo, 5 líneas.
+- Ciclos como bucle cerrado (`a` → `b` → `a`), con aviso si se truncaron.
+- Todo texto sale del catálogo `i18n` (ES/EN); un test exige que cada
+  `WarningCode`, cada `ErrorKey` y cada clave tengan ambos idiomas con los
+  mismos placeholders.
 - `--min-severity` se aplica en esta capa (filtrando `ai_report.problems`
   antes de renderizar), no se le pide al LLM que filtre — mantiene la
   generación de IA independiente de la presentación.
@@ -756,20 +767,35 @@ Flags:
 | `--api-key` | API key vía flag (documentado como inseguro) |
 | `--version` | Versión del CLI |
 
-Orquestación separada del decorador de `typer` (`run_scan`, testeable sin
-invocar el CLI completo; reutilizable como librería más adelante):
+Orquestación en `scan.py`, separada de `typer` (testeable sin el CLI y
+reutilizable como librería), en **dos fases** para que cualquier error
+posterior a la config salga en el idioma configurado:
 
 ```
-run_scan:
-  1. valida que <path> existe
-  2. adapter = PythonAdapter()  # hardcodeado en v0.1, único lenguaje
-  3. discover_files → parse → resolve_indirection
-  4. analyze() → AnalysisResult
-  5. si no --no-ai: resolve_ai_config() → AIClient.generate_report()
-     (config ausente o fallo de IA → ai_report = None, se continúa igual)
-  6. filtra por --min-severity si aplica
-  7. devuelve (AnalysisResult, AIReport | None) a output_report()
+prepare_scan(options) -> ScanContext        # única fase que lee .unskein.toml
+  load_toml_config → detect_lang → resolve_analysis_config → AIStatus
+  (ConfigError → el CLI lo traduce con flag > env > locale, sin el toml)
+execute_scan(context) -> ScanOutcome
+  1. valida que <path> es un directorio          (UnskeinError PATH_NOT_FOUND)
+  2. adapter = PythonAdapter(config)             # único lenguaje en v0.1
+  3. discover (excludes + tests) → sin .py       (UnskeinError NO_FILES_FOUND)
+  4. adapter.parse (secuencial hasta el PR de paralelismo)
+     → resolve_indirection → analyze
+  5. IA: no se llama aún; AIStatus lo refleja en el reporte
 ```
+
+El CLI (`cli.py`) solo parsea flags, renderiza (`rich.markdown` en terminal,
+Markdown crudo UTF-8 con `-o`), muestra `--verbose` y elige el código de
+salida. Ayuda en formato click clásico (`rich_markup_mode=None`): las tablas
+de rich truncaban `--no-follow-symlinks` a 80 columnas.
+
+**Entry point `run()`** (también `python -m unskein`): ejecuta la app con
+`standalone_mode=False` y traduce errores de uso a **1** (click usa 2, que en
+unskein significa "severidad alta"). typer 0.27 trae su propio click
+vendorizado, así que solo se capturan tipos públicos de typer
+(`typer.TyperException`, `typer.Abort`), nunca los de `click`. También
+configura stdout/stderr con `errors="replace"`: las tuberías de Windows usan
+cp1252, sin `→`, y sin esto imprimir un ciclo acababa en código 3.
 
 Configuración (`config.py`): `load_toml_config(root)` es la única función con
 E/S (lee y valida cada archivo, combina); `resolve_analysis_config(toml,
@@ -833,7 +859,7 @@ app = typer.Typer(
 )
 ```
 
-`run_scan` determina el código según el resultado (`UnskeinError` → 1,
+El CLI determina el código según el resultado (`UnskeinError` o error de uso → 1,
 `ai_report` con algún `Problem.severity == "high"` → 2, excepción no
 capturada → 3 con traceback completo, éxito limpio → 0). Útil para quien
 quiera scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI
@@ -874,7 +900,7 @@ soporte de rendimiento es **Windows + Linux/macOS** desde v0.1, no solo Unix.
 
 - **Multi-lenguaje**: el punto de selección dinámica del adapter (por
   extensión de archivo o flag `--lang`) es exactamente donde hoy está
-  `adapter = PythonAdapter()` hardcodeado en `run_scan`. Al agregar TS/Java,
+  `adapter = PythonAdapter(config)` hardcodeado en `execute_scan`. Al agregar TS/Java,
   introducir un registro/factory ahí.
 - **`tree-sitter`** se adopta recién al implementar el segundo lenguaje, no
   antes — Python usa `ast` de la stdlib en v0.1 sin necesidad de esa capa.

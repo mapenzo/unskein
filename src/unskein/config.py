@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from unskein.errors import ConfigError
+from unskein.errors import ConfigError, ErrorKey
 
 ENV_AI_MODEL = "UNSKEIN_AI_MODEL"
 ENV_API_KEY = "UNSKEIN_API_KEY"
@@ -186,7 +186,7 @@ def _read_toml(path: Path) -> dict:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as e:
-        raise ConfigError("invalid_toml", {"file": str(path), "detail": str(e)}) from None
+        raise ConfigError(ErrorKey.INVALID_TOML, {"file": str(path), "detail": str(e)}) from None
     try:
         TomlConfig.model_validate(data)
     except ValidationError as e:
@@ -208,8 +208,8 @@ def _config_error(path: Path, error: ValidationError) -> ConfigError:
     field_name = ".".join(str(part) for part in first["loc"])
     params = {"file": str(path), "field": field_name}
     if first["type"] == "extra_forbidden":
-        return ConfigError("unknown_key", params)
-    return ConfigError("invalid_value", params | {"detail": first["msg"]})
+        return ConfigError(ErrorKey.UNKNOWN_KEY, params)
+    return ConfigError(ErrorKey.INVALID_VALUE, params | {"detail": first["msg"]})
 
 
 def load_toml_config(root: Path, user_config: Path = USER_CONFIG_PATH) -> TomlConfig:

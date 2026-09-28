@@ -1,9 +1,30 @@
+import os
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def isolated_config(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep every test independent of the developer's real config and environment.
+
+    Points the user-wide config at a file that does not exist and removes all
+    ``UNSKEIN_*`` environment variables.
+
+    Args:
+        tmp_path_factory: Pytest factory for temporary directories.
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    missing = tmp_path_factory.mktemp("home") / "config.toml"
+    monkeypatch.setattr("unskein.config.USER_CONFIG_PATH", missing)
+    for name in list(os.environ):
+        if name.startswith("UNSKEIN_"):
+            monkeypatch.delenv(name)
 
 
 @pytest.fixture
