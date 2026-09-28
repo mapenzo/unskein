@@ -1,3 +1,5 @@
+"""Spanish/English message catalog and language detection."""
+
 import locale
 import os
 from enum import StrEnum
@@ -6,6 +8,8 @@ from unskein.config import ENV_LANG
 
 
 class Lang(StrEnum):
+    """Languages supported by the CLI, the report and the AI answers."""
+
     ES = "es"
     EN = "en"
 
@@ -27,11 +31,36 @@ STRINGS: dict[str, dict[Lang, str]] = {
 
 
 def t(key: str, lang: Lang, **kwargs: object) -> str:
+    """Translate a message key and fill in its placeholders.
+
+    Args:
+        key: Message identifier in ``STRINGS``.
+        lang: Language to render the message in.
+        **kwargs: Values for the message's ``{placeholder}`` fields.
+
+    Returns:
+        The formatted message.
+
+    Raises:
+        KeyError: If the key has no entry in ``STRINGS``.
+    """
     return STRINGS[key][lang].format(**kwargs)
 
 
 def detect_lang(cli_lang: str | None = None, toml_lang: str | None = None) -> Lang:
-    """UNSKEIN_LANG -> .unskein.toml -> --lang -> system locale (es* else English)."""
+    """Pick the output language: UNSKEIN_LANG -> .unskein.toml -> --lang -> system locale.
+
+    Unsupported values are skipped. With nothing configured, a Spanish system
+    locale (``es*``) selects Spanish; anything else defaults to English, the
+    safer choice for broad OSS adoption.
+
+    Args:
+        cli_lang: Value of the ``--lang`` flag, if given.
+        toml_lang: Value of ``[general] lang`` in ``.unskein.toml``, if set.
+
+    Returns:
+        The selected language.
+    """
     for candidate in (os.environ.get(ENV_LANG), toml_lang, cli_lang):
         if candidate:
             try:

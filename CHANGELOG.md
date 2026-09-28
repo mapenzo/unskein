@@ -21,5 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Clean Code is now a mandatory project convention: Google-style docstrings on every
+  module, class and function (private ones included), enforced in CI with ruff's `D`
+  rules plus an AST-based test that also covers private names.
 - Parser data classes moved from `unskein.parsers.base` to `unskein.parsers.models`
   (still importable from `unskein.parsers`), removing an import cycle.

@@ -113,8 +113,14 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
 ```
 src/unskein/
 ├── cli.py                 # entry point, comando `scan`
+├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
+├── i18n.py                # diccionario ES/EN
+├── pipeline.py            # parse_all + should_parallelize
 ├── parsers/
+│   ├── models.py           # ImportEdge, ModuleInfo, ReExport, ParseResult
 │   ├── base.py             # interfaz LanguageAdapter (el "adapter")
+│   ├── discovery.py        # os.walk, excludes, encoding
+│   ├── indirection.py      # resolución de re-exports
 │   └── python_parser.py    # implementación para Python con ast
 ├── graph/
 │   ├── builder.py           # construcción del grafo con NetworkX
@@ -181,6 +187,58 @@ configurado para `.env` y `.unskein.toml`.
     significativa cuando hay miles de imports.
   - `itertools` para composición de transformaciones sin el overhead de
     lambdas anidadas.
+
+## Clean Code (obligatorio)
+
+Norma obligatoria para todo código nuevo o modificado. Un PR que no la cumpla
+no se mergea.
+
+**Docstrings — en todo módulo, clase, función y método, privados incluidos.**
+- Estilo **Google**, en **inglés** (como el resto del código).
+- Resumen de una línea en **modo imperativo** ("Return…", "Build…"),
+  terminado en punto. Línea en blanco antes de las secciones.
+- Secciones solo cuando aportan: `Args:` para cada parámetro (su significado,
+  no su tipo — el tipo ya está en el type hint), `Returns:` si no devuelve
+  `None` (`Yields:` en generadores), `Raises:` para las excepciones que el
+  llamador debe esperar.
+- Clases: los argumentos de `__init__` van en `Args:` del docstring de la
+  clase (nunca docstring en `__init__`). Dataclasses/modelos Pydantic:
+  sección `Attributes:` con cada campo.
+- Módulos y `__init__.py` de paquete: una línea con su responsabilidad.
+- Excepción: comandos de `typer` (`scan`, `main`) — su docstring se muestra
+  en `--help`, así que solo resumen, orientado al usuario, sin `Args:`
+  (las opciones ya tienen `help=`).
+- Tests **no** llevan docstring: el nombre del test describe el
+  comportamiento (`test_reexport_cycle_yields_one_warning_per_cycle`).
+  Helpers y fixtures de tests sí, cuando no sean triviales.
+- **Enforcement en CI, doble:** reglas `D` de ruff (`pydocstyle`,
+  `convention = "google"`) validan presencia y formato de los docstrings
+  públicos; como pydocstyle **no** revisa nombres privados (`_x`),
+  `tests/integration/test_docstrings.py` recorre `src/` y `scripts/` con
+  `ast` y falla si falta el docstring de cualquier módulo, clase o función,
+  privados incluidos (`__init__` exento). El formato Google de los privados
+  se sigue verificando en revisión.
+
+**Reglas de código:**
+- **Nombres que revelan intención.** Sin abreviaturas crípticas; booleanos
+  como predicado (`is_external`, `follow_symlinks`); funciones con verbo.
+- **Funciones pequeñas, una responsabilidad, sin efectos secundarios
+  ocultos.** Entre capas, funciones puras que devuelven valores nuevos en
+  vez de mutar la entrada (p. ej. `resolve_indirection`).
+- **Máximo 3 parámetros posicionales**; más allá, agruparlos en un
+  dataclass de configuración (patrón de `AnalysisConfig`).
+- **Sin números mágicos**: constantes con nombre (`MAX_CYCLES`,
+  `MAX_RESOLUTION_DEPTH`, `DEFAULT_TEST_PATTERNS`).
+- **Errores explícitos, nunca silenciados**: los esperados como warning en el
+  resultado o `UnskeinError`; nada de `except: pass`.
+- **Comentarios solo para el porqué** (restricción oculta, workaround,
+  decisión no obvia). El *qué* lo cuentan los nombres y el docstring.
+- **Sin código muerto ni comentado**; sin duplicación (DRY) salvo que
+  abstraer empeore la lectura.
+- **Regla del boy scout**: el código que se toca queda mejor de lo que
+  estaba (dentro del alcance del PR).
+- **Tests F.I.R.S.T.** (rápidos, independientes, repetibles, auto-validados,
+  escritos antes que el código — TDD).
 
 ## Modelo de concurrencia
 
@@ -270,8 +328,11 @@ scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI dedicado.
 
 El diseño de todas las capas de v0.1 está cerrado a nivel de arquitectura
 (ver `docs/architecture.md` para el detalle técnico completo de cada módulo).
-**Aún no existe código implementado** — este archivo y `docs/architecture.md`
-son el punto de partida para empezar el scaffold real.
+Implementado: scaffold, discovery, parser de Python y resolución de
+re-exports. Pendiente para el primer `unskein scan . --no-ai` end-to-end:
+grafo + métricas, reporte + `run_scan` + carga de config. Después: IA y
+parseo paralelo. Las piezas pendientes existen como stubs
+(`NotImplementedError`) con su contrato ya tipado.
 
 ## Convenciones al trabajar en este proyecto
 
