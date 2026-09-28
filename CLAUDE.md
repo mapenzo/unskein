@@ -99,9 +99,9 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
   y las respuestas generadas por el LLM).
 - Diccionario simple de traducciones (`unskein/i18n.py`), no `gettext`/catálogos
   `.mo` — con solo 2 idiomas es innecesario y complica testing.
-- Detección de idioma con la misma jerarquía de config que el resto: env var
-  (`UNSKEIN_LANG`) → `.unskein.toml` (`[general] lang = "es"`) → flag
-  `--lang`. Si nada está configurado: `locale.getlocale()`, y si no es `es*`,
+- Detección de idioma con la precedencia de las opciones no secretas: flag
+  `--lang` > env var (`UNSKEIN_LANG`) > `.unskein.toml` (`[general] lang =
+  "es"`). Si nada está configurado: `locale.getlocale()`, y si no es `es*`,
   **default a inglés** (más seguro para adopción OSS amplia — no asumir que
   quien instala el CLI habla español).
 - El `SYSTEM_PROMPT` de IA se parametriza por idioma — el LLM debe responder
@@ -154,12 +154,27 @@ para paquetes Python distribuibles).
 - **Snippets de código en las recomendaciones de IA son v0.2**, no v0.1. En v0.1
   la IA solo da resumen + problemas señalados, sin proponer código de solución.
 
-## Jerarquía de configuración (API keys y modelo de IA)
+## Jerarquía de configuración
 
-Orden de precedencia (mayor a menor):
+**Secretos y modelo de IA** — precedencia (mayor a menor):
 1. Variable de entorno (`UNSKEIN_AI_MODEL`, `UNSKEIN_API_KEY`, `UNSKEIN_AI_API_BASE`)
 2. Archivo de config (`.unskein.toml` en el proyecto, o `~/.config/unskein/config.toml`)
 3. Flag `--api-key` (documentado explícitamente como inseguro, solo para pruebas)
+
+**Resto de opciones (no secretas)** — `--lang`, `--include-tests`,
+`--follow-symlinks`, `--encoding`…: **flag > env var > `.unskein.toml` >
+default**. Lo escrito en la terminal siempre gana. Solo hay env vars donde
+están documentadas (`UNSKEIN_LANG`); no se inventa una por opción. Los
+booleanos son de tres estados (`--include-tests/--no-include-tests`, `None`
+si no se escribe) para poder ganarle al toml en ambos sentidos. Los
+`exclude` no compiten: se **suman** (toml + flags), como todo exclude.
+
+**`.unskein.toml`**: se leen `~/.config/unskein/config.toml` y el del
+proyecto, cada uno **validado por separado** con Pydantic (`extra="forbid"`,
+`strict=True`) para que el error nombre el archivo; luego se combinan tabla a
+tabla, ganando el del proyecto clave por clave. Clave desconocida (errata),
+tipo erróneo o TOML inválido → `ConfigError` (código 1), estructurado
+(`key` + `params`, nunca el valor ofensivo) para traducirlo en el CLI.
 
 Nunca loguear la API key, ni siquiera en modo `--verbose`. `.env.example` sin
 valores reales debe existir desde el scaffold inicial, con `.gitignore` ya
@@ -248,8 +263,8 @@ no se mergea.
 - **`ProcessPoolExecutor`**, no builds free-threaded — funciona en cualquier
   Python 3.12+ sin depender de la madurez de wheels `cp314t`.
 - **`AnalysisConfig` parametriza el umbral y los workers** desde ya (no
-  hardcodeado), siguiendo la misma jerarquía de configuración que la API key
-  (env var → `.unskein.toml` → flag):
+  hardcodeado), configurable desde `.unskein.toml` (`[analysis]`) con la
+  precedencia de las opciones no secretas (ver *Jerarquía de configuración*):
   ```python
   @dataclass
   class AnalysisConfig:

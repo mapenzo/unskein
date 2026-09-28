@@ -1,7 +1,14 @@
-"""Configuration dataclasses and the env var -> .unskein.toml -> CLI flag hierarchy."""
+"""Configuration dataclasses, ``.unskein.toml`` loading and precedence resolution."""
 
+import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from unskein.errors import ConfigError
 
 ENV_AI_MODEL = "UNSKEIN_AI_MODEL"
 ENV_API_KEY = "UNSKEIN_API_KEY"
@@ -88,48 +95,205 @@ class AIConfig:
     api_base: str | None = None
 
 
-def load_toml_config(root: Path) -> dict:
-    """Merge ~/.config/unskein/config.toml with <root>/.unskein.toml (project wins).
+class _TomlTable(BaseModel):
+    """Base for TOML tables: unknown keys and implicit type coercion are errors."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class TomlGeneral(_TomlTable):
+    """The ``[general]`` table.
+
+    Attributes:
+        lang: Output language.
+    """
+
+    lang: Literal["es", "en"] | None = None
+
+
+class TomlAI(_TomlTable):
+    """The ``[ai]`` table; None means "not set in any file".
+
+    Attributes:
+        model: LiteLLM model string.
+        api_key: Provider API key (prefer the ``UNSKEIN_API_KEY`` env var).
+        api_base: Custom endpoint.
+    """
+
+    model: str | None = None
+    api_key: str | None = Field(default=None, repr=False)
+    api_base: str | None = None
+
+
+class TomlAnalysis(_TomlTable):
+    """The ``[analysis]`` table; None means "not set", so defaults still apply.
+
+    Attributes:
+        parallel_threshold: See ``AnalysisConfig``.
+        max_workers: See ``AnalysisConfig``.
+        queue_maxsize: See ``AnalysisConfig``.
+        max_file_size_bytes: See ``AnalysisConfig``.
+        per_file_timeout_seconds: See ``AnalysisConfig``.
+        default_encoding: See ``AnalysisConfig``.
+        follow_symlinks: See ``AnalysisConfig``.
+        exclude: Extra exclude patterns, added to the CLI ones.
+        source_roots: See ``AnalysisConfig``.
+        include_tests: See ``AnalysisConfig``.
+    """
+
+    parallel_threshold: int | None = None
+    max_workers: int | None = None
+    queue_maxsize: int | None = None
+    max_file_size_bytes: int | None = None
+    per_file_timeout_seconds: int | None = None
+    default_encoding: str | None = None
+    follow_symlinks: bool | None = None
+    exclude: list[str] | None = None
+    source_roots: list[str] | None = None
+    include_tests: bool | None = None
+
+
+class TomlConfig(_TomlTable):
+    """A validated, merged ``.unskein.toml`` (all tables optional).
+
+    Attributes:
+        general: The ``[general]`` table.
+        ai: The ``[ai]`` table.
+        analysis: The ``[analysis]`` table.
+    """
+
+    general: TomlGeneral = TomlGeneral()
+    ai: TomlAI = TomlAI()
+    analysis: TomlAnalysis = TomlAnalysis()
+
+
+def _read_toml(path: Path) -> dict:
+    """Read and validate one TOML file; a missing file is an empty config.
+
+    Validating each file on its own lets errors name the file at fault.
 
     Args:
-        root: Project root where ``.unskein.toml`` may live.
+        path: TOML file to read.
 
     Returns:
-        The merged configuration tables.
+        The file's raw tables, already checked against ``TomlConfig``.
 
     Raises:
-        NotImplementedError: Not implemented yet.
+        ConfigError: If the file is not valid TOML or does not match the schema.
     """
-    raise NotImplementedError
+    if not path.is_file():
+        return {}
+    try:
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError("invalid_toml", {"file": str(path), "detail": str(e)}) from None
+    try:
+        TomlConfig.model_validate(data)
+    except ValidationError as e:
+        raise _config_error(path, e) from None
+    return data
 
 
-def load_analysis_config(root: Path, **cli_overrides: object) -> AnalysisConfig:
-    """Build AnalysisConfig from the env var -> .unskein.toml -> CLI flag hierarchy.
+def _config_error(path: Path, error: ValidationError) -> ConfigError:
+    """Turn the first Pydantic error into a ConfigError without the input value.
+
+    Args:
+        path: File that failed validation.
+        error: Pydantic validation error.
+
+    Returns:
+        ``unknown_key`` for unexpected keys, ``invalid_value`` otherwise.
+    """
+    first = error.errors()[0]
+    field_name = ".".join(str(part) for part in first["loc"])
+    params = {"file": str(path), "field": field_name}
+    if first["type"] == "extra_forbidden":
+        return ConfigError("unknown_key", params)
+    return ConfigError("invalid_value", params | {"detail": first["msg"]})
+
+
+def load_toml_config(root: Path, user_config: Path = USER_CONFIG_PATH) -> TomlConfig:
+    """Merge the user config with ``<root>/.unskein.toml``; the project wins key by key.
 
     Args:
         root: Project root where ``.unskein.toml`` may live.
-        **cli_overrides: Values given as CLI flags, keyed by field name.
+        user_config: User-wide config file (``~/.config/unskein/config.toml``).
+
+    Returns:
+        The validated, merged configuration.
+
+    Raises:
+        ConfigError: If either file is invalid TOML or has unknown keys or wrong types.
+    """
+    merged: dict[str, dict] = {}
+    for path in (user_config, root / PROJECT_CONFIG_NAME):
+        for table, values in _read_toml(path).items():
+            merged.setdefault(table, {}).update(values)
+    return TomlConfig.model_validate(merged)
+
+
+@dataclass(frozen=True)
+class AnalysisFlags:
+    """Analysis options given on the command line; None means "flag not given".
+
+    Attributes:
+        exclude: ``--exclude`` patterns (always added to the TOML ones).
+        include_tests: ``--include-tests`` / ``--no-include-tests``.
+        follow_symlinks: ``--follow-symlinks`` / ``--no-follow-symlinks``.
+        encoding: ``--encoding`` fallback encoding.
+    """
+
+    exclude: tuple[str, ...] = ()
+    include_tests: bool | None = None
+    follow_symlinks: bool | None = None
+    encoding: str | None = None
+
+
+def resolve_analysis_config(toml: TomlConfig, flags: AnalysisFlags) -> AnalysisConfig:
+    """Resolve analysis settings with precedence flag > .unskein.toml > default.
+
+    Exclude patterns are the exception: TOML and flag patterns are combined,
+    like every other exclude source.
+
+    Args:
+        toml: Validated, merged TOML configuration.
+        flags: Options given on the command line.
 
     Returns:
         The resolved analysis settings.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
     """
-    raise NotImplementedError
+    from_toml = toml.analysis.model_dump(exclude_none=True, exclude={"exclude"})
+    from_flags = {
+        "include_tests": flags.include_tests,
+        "follow_symlinks": flags.follow_symlinks,
+        "default_encoding": flags.encoding,
+    }
+    overrides = from_toml | {name: value for name, value in from_flags.items() if value is not None}
+    exclude = [*(toml.analysis.exclude or []), *flags.exclude]
+    return AnalysisConfig(**overrides, exclude=exclude)
 
 
-def load_ai_config(root: Path, cli_api_key: str | None = None) -> AIConfig | None:
-    """Build AIConfig from env var -> .unskein.toml -> --api-key.
+def resolve_ai_config(
+    toml: TomlConfig, env: Mapping[str, str], cli_api_key: str | None
+) -> AIConfig | None:
+    """Resolve AI settings; secrets follow env > .unskein.toml > ``--api-key``.
+
+    The API key flag comes last because it leaks into shell history. Model and
+    API base have no flag: env var, then TOML.
 
     Args:
-        root: Project root where ``.unskein.toml`` may live.
+        toml: Validated, merged TOML configuration.
+        env: Environment variables (``os.environ`` in production).
         cli_api_key: Key passed with the insecure ``--api-key`` flag, if any.
 
     Returns:
         The AI settings, or None when no model is configured in any layer.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
     """
-    raise NotImplementedError
+    model = env.get(ENV_AI_MODEL) or toml.ai.model
+    if not model:
+        return None
+    return AIConfig(
+        model=model,
+        api_key=env.get(ENV_API_KEY) or toml.ai.api_key or cli_api_key,
+        api_base=env.get(ENV_AI_API_BASE) or toml.ai.api_base,
+    )
