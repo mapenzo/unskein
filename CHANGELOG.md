@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Re-export resolution: imports through `__init__.py` facades now point at the module
   that defines the symbol, so cycles hidden behind a package facade become visible.
   Re-export cycles produce a single warning per cycle.
+- Dependency graph and coupling metrics: afferent/efferent coupling and instability per
+  module, dependency cycles (capped at 100, deterministic order) and the most coupled
+  modules by nearest-rank percentile of `Ca + Ce`.
 
 ### Changed
 

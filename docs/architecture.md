@@ -464,9 +464,14 @@ aplicados) y construye el grafo real.
 - **Construcción del grafo**: `networkx.DiGraph`. Solo contiene módulos
   internos del proyecto como nodos — las dependencias externas ya cumplieron
   su función en `is_external` y no aportan valor en el grafo de acoplamiento.
+  Son nodos también los módulos aislados (cuentan en el total con Ca=Ce=0) y
+  los destinos internos cuyo archivo no se pudo parsear. Una arista por par
+  importador/importado, con `weight` = número de sentencias de import. Nodos
+  insertados en orden alfabético → recorridos y reportes deterministas.
 - **Métricas de acoplamiento** (por módulo):
   - `Ca` (acoplamiento aferente) = `in_degree` — cuántos módulos dependen de este.
   - `Ce` (acoplamiento eferente) = `out_degree` — de cuántos módulos depende este.
+  - Ambos cuentan módulos distintos, no el `weight`.
   - `Instability = Ce / (Ca + Ce)`, rango `[0, 1]`.
   - Interpretación: I cercana a 1 = módulo de orquestación/aplicación
     (depende de muchos, nadie depende de él). I cercana a 0 = módulo
@@ -474,14 +479,30 @@ aplicados) y construye el grafo real.
     sí solo — lo problemático es Ca y Ce altos simultáneamente, o un módulo
     core que cambia con frecuencia.
 - **Detección de ciclos**: `nx.simple_cycles(graph)`. En grafos muy densos el
-  número de ciclos puede crecer exponencialmente — cortar tras encontrar los
-  primeros ~100 ciclos para evitar cuelgues en codebases patológicos.
+  número de ciclos puede crecer exponencialmente — se consumen como máximo
+  `MAX_CYCLES + 1` (100 + 1) con `itertools.islice`; el extra solo indica si
+  hay más (`cycles_truncated`). Cada ciclo se rota para empezar por su módulo
+  menor: el mismo ciclo siempre se escribe igual. Pendiente (issue #8):
+  componentes fuertemente conexas para dar el tamaño real de cada maraña
+  aunque la lista de ciclos se trunque.
 - **"God modules" / alto acoplamiento**: percentil superior (default 90%) de
   `Ca + Ce` combinado, como candidatos que la capa de IA interpretará.
+  Umbral por *nearest-rank* sobre todos los módulos (el
+  `ceil(p/100·n)`-ésimo menor valor): sin interpolación, siempre es una
+  puntuación real y explicable. Empates incluidos, puntuación 0 nunca;
+  orden por puntuación descendente y luego nombre.
+- **Fachadas con `import paquete as alias`**: el uso `alias.func()` no se
+  puede resolver estáticamente, así que el paquete raíz acumula un Ca muy
+  alto (en networkx, 253 de 288 módulos). Es un dato real — todo depende de
+  la fachada —, pero el reporte/IA deben interpretarlo como tal, no como un
+  "god module" clásico.
 
 Output consolidado (`AnalysisResult`): `graph`, `coupling_metrics`, `cycles`,
-`high_coupling_modules`, `parse_warnings`. Este objeto es el punto de unión
-entre el análisis determinista y la interpretación por IA/reporte.
+`high_coupling_modules`, `parse_warnings`, `cycles_truncated`. `analyze()` es
+composición pura `build_graph → compute_coupling → find_cycles →
+find_high_coupling` y espera un `ParseResult` ya pasado por
+`resolve_indirection`. Este objeto es el punto de unión entre el análisis
+determinista y la interpretación por IA/reporte.
 
 ---
 
