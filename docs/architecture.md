@@ -639,7 +639,7 @@ vez de implementar tracking propio.
 
 ### Degradación
 
-Si falla la config (`load_ai_config` devuelve `None`), la llamada, o la
+Si falla la config (`resolve_ai_config` devuelve `None`), la llamada, o la
 validación del schema, el reporte se genera igual sin la sección de IA, con
 aviso claro. **Nunca** debe caerse el comando completo por un fallo del LLM.
 
@@ -681,8 +681,9 @@ def t(key: str, lang: Lang, **kwargs) -> str:
 
 ### Detección del idioma
 
-Misma jerarquía de configuración que el resto del proyecto: env var
-(`UNSKEIN_LANG`) → `.unskein.toml` (`[general] lang = "es"`) → flag `--lang`.
+Precedencia de las opciones no secretas: flag `--lang` > env var
+(`UNSKEIN_LANG`) > `.unskein.toml` (`[general] lang = "es"`). Si el toml es
+inválido, el idioma se decide sin él (para poder traducir ese mismo error).
 Si nada está configurado, se usa `locale.getlocale()`; si no es `es*`,
 **default a inglés** — más seguro para adopción OSS amplia, no asumir que
 quien instala el CLI habla español.
@@ -764,15 +765,17 @@ run_scan:
   2. adapter = PythonAdapter()  # hardcodeado en v0.1, único lenguaje
   3. discover_files → parse → resolve_indirection
   4. analyze() → AnalysisResult
-  5. si no --no-ai: load_ai_config() → AIClient.generate_report()
+  5. si no --no-ai: resolve_ai_config() → AIClient.generate_report()
      (config ausente o fallo de IA → ai_report = None, se continúa igual)
   6. filtra por --min-severity si aplica
   7. devuelve (AnalysisResult, AIReport | None) a output_report()
 ```
 
-`load_ai_config` implementa la jerarquía de configuración (env var → `.unskein.toml`
-→ flag `--api-key`), devolviendo `None` si no hay modelo configurado en
-ninguna capa.
+Configuración (`config.py`): `load_toml_config(root)` es la única función con
+E/S (lee y valida cada archivo, combina); `resolve_analysis_config(toml,
+flags)` (flag > toml > default, excludes sumados) y `resolve_ai_config(toml,
+env, cli_api_key)` (secretos: env > toml > flag; `None` si no hay modelo en
+ninguna capa) son puras y se testean sin disco ni entorno real.
 
 Manejo de errores: `UnskeinError` para casos de uso esperados (ruta inválida,
 sin archivos Python) → mensaje limpio sin traceback. Cualquier excepción no

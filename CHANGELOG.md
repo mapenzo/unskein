@@ -21,9 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency graph and coupling metrics: afferent/efferent coupling and instability per
   module, dependency cycles (capped at 100, deterministic order) and the most coupled
   modules by nearest-rank percentile of `Ca + Ce`.
+- Configuration loading: `~/.config/unskein/config.toml` merged with the project's
+  `.unskein.toml` (project wins), validated so typos and wrong types are reported with
+  the file and field; env vars and CLI flags on top. API keys never appear in `repr`
+  or error messages.
+- `--no-include-tests` and `--no-follow-symlinks`, so a flag can override
+  `.unskein.toml` in both directions.
 
 ### Changed
 
+- Precedence for non-secret options is now flag > env var > `.unskein.toml` (so
+  `--lang` beats `UNSKEIN_LANG`); secrets keep env var > `.unskein.toml` > `--api-key`.
 - Analysis warnings are now structured (`ParseWarning` with a `WarningCode`, file, line
   and language-neutral detail) instead of English strings, so reports can translate
   them and group them by kind.

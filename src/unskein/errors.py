@@ -21,3 +21,20 @@ class ExitCode(IntEnum):
 
 class UnskeinError(Exception):
     """Expected usage error: shown as a clean message, no traceback, exit code 1."""
+
+
+class ConfigError(UnskeinError):
+    """Invalid configuration, kept structured so the CLI can translate it.
+
+    Only the message key reaches ``str()``/``repr()``; params never carry the
+    offending value, so a misplaced secret cannot leak into output or logs.
+
+    Args:
+        key: Message key: ``invalid_toml``, ``unknown_key`` or ``invalid_value``.
+        params: Language-neutral message data, such as ``file`` and ``field``.
+    """
+
+    def __init__(self, key: str, params: dict[str, str]):
+        super().__init__(key)
+        self.key = key
+        self.params = params

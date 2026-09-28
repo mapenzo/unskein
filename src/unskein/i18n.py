@@ -2,6 +2,7 @@
 
 import locale
 import os
+from collections.abc import Mapping
 from enum import StrEnum
 
 from unskein.config import ENV_LANG
@@ -47,8 +48,12 @@ def t(key: str, lang: Lang, **kwargs: object) -> str:
     return STRINGS[key][lang].format(**kwargs)
 
 
-def detect_lang(cli_lang: str | None = None, toml_lang: str | None = None) -> Lang:
-    """Pick the output language: UNSKEIN_LANG -> .unskein.toml -> --lang -> system locale.
+def detect_lang(
+    cli_lang: str | None = None,
+    toml_lang: str | None = None,
+    env: Mapping[str, str] = os.environ,
+) -> Lang:
+    """Pick the output language: --lang > UNSKEIN_LANG > .unskein.toml > system locale.
 
     Unsupported values are skipped. With nothing configured, a Spanish system
     locale (``es*``) selects Spanish; anything else defaults to English, the
@@ -57,11 +62,12 @@ def detect_lang(cli_lang: str | None = None, toml_lang: str | None = None) -> La
     Args:
         cli_lang: Value of the ``--lang`` flag, if given.
         toml_lang: Value of ``[general] lang`` in ``.unskein.toml``, if set.
+        env: Environment variables (``os.environ`` in production).
 
     Returns:
         The selected language.
     """
-    for candidate in (os.environ.get(ENV_LANG), toml_lang, cli_lang):
+    for candidate in (cli_lang, env.get(ENV_LANG), toml_lang):
         if candidate:
             try:
                 return Lang(candidate.lower()[:2])

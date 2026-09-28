@@ -32,9 +32,11 @@ class ScanOptions:
         log_file: File to also write DEBUG logs to.
         api_key: Key from the insecure ``--api-key`` flag.
         lang: Requested output language.
-        follow_symlinks: Whether discovery follows symlinked directories.
+        follow_symlinks: Whether discovery follows symlinked directories; None
+            when the flag was not given, so ``.unskein.toml`` decides.
         encoding: Fallback encoding for files whose encoding cannot be detected.
-        include_tests: Whether test code is analyzed.
+        include_tests: Whether test code is analyzed; None when the flag was
+            not given, so ``.unskein.toml`` decides.
     """
 
     path: Path
@@ -46,9 +48,9 @@ class ScanOptions:
     log_file: Path | None = None
     api_key: str | None = None
     lang: str | None = None
-    follow_symlinks: bool = False
+    follow_symlinks: bool | None = None
     encoding: str | None = None
-    include_tests: bool = False
+    include_tests: bool | None = None
 
 
 def run_scan(options: ScanOptions) -> tuple[AnalysisResult, AIReport | None]:
@@ -126,10 +128,22 @@ def scan(
         typer.Option("--api-key", help="INSECURE (shell history). Prefer UNSKEIN_API_KEY."),
     ] = None,
     lang: Annotated[str | None, typer.Option("--lang", help="es | en")] = None,
-    follow_symlinks: Annotated[bool, typer.Option("--follow-symlinks")] = False,
+    follow_symlinks: Annotated[
+        bool | None,
+        typer.Option(
+            "--follow-symlinks/--no-follow-symlinks",
+            help="Follow symlinked directories (default: no, or .unskein.toml).",
+            show_default=False,
+        ),
+    ] = None,
     include_tests: Annotated[
-        bool, typer.Option("--include-tests", help="Also analyze test code (excluded by default).")
-    ] = False,
+        bool | None,
+        typer.Option(
+            "--include-tests/--no-include-tests",
+            help="Also analyze test code (default: no, or .unskein.toml).",
+            show_default=False,
+        ),
+    ] = None,
     encoding: Annotated[
         str | None, typer.Option("--encoding", help="Fallback encoding when undetectable.")
     ] = None,

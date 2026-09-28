@@ -29,6 +29,8 @@ def test_scan_help_lists_exit_codes() -> None:
     output = plain(result.output)
     assert "--no-ai" in output
     assert "--include-tests" in output
+    assert "--no-include-tests" in output
+    assert "--no-follow-symlinks" in output
     assert "Exit codes" in output
 
 
