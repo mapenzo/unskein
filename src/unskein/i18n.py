@@ -129,6 +129,18 @@ _REPORT: dict[str, dict[Lang, str]] = {
     },
     "report.metric.cycles": {Lang.ES: "Ciclos de dependencia", Lang.EN: "Dependency cycles"},
     "report.metric.warnings": {Lang.ES: "Advertencias", Lang.EN: "Warnings"},
+    "report.metric.tangles": {Lang.ES: "Marañas", Lang.EN: "Tangles"},
+    "report.summary_tangles.one": {
+        Lang.ES: "1 maraña de módulos que dependen entre sí ({size} módulos).",
+        Lang.EN: "1 tangle of mutually dependent modules ({size} modules).",
+    },
+    "report.summary_tangles.other": {
+        Lang.ES: "{count} marañas de módulos que dependen entre sí; la mayor tiene {size} módulos.",
+        Lang.EN: "{count} tangles of mutually dependent modules; the largest has {size} modules.",
+    },
+    "report.tangles_heading": {Lang.ES: "Marañas", Lang.EN: "Tangles"},
+    "report.tangle_size": {Lang.ES: "{size} módulos", Lang.EN: "{size} modules"},
+    "report.cycles_heading": {Lang.ES: "Ciclos", Lang.EN: "Cycles"},
     "report.cycles": {Lang.ES: "Ciclos de dependencia", Lang.EN: "Dependency cycles"},
     "report.no_cycles": {
         Lang.ES: "No se encontraron ciclos de dependencia.",

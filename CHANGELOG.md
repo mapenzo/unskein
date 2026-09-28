@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Exit codes are enforced: usage errors now exit with 1 (click's default 2 collided with
   "high-severity problems found"), unexpected errors exit with 3 showing the traceback.
 - Pylint configuration aligned with the Clean Code rules, for IDEs.
+- Tangles: groups of mutually dependent modules (strongly connected components),
+  exact and never truncated, shown before the cycle list with their size, so a
+  "100+ cycles" report reveals it is really one knot of, say, 279 modules (#8).
 
 ### Fixed
 

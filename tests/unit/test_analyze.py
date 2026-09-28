@@ -29,6 +29,7 @@ def test_circular_imports_analysis(circular_imports: Path) -> None:
     module_a = result.coupling_metrics["app.a"]
     assert (module_a.afferent, module_a.efferent) == (1, 1)
     assert result.high_coupling_modules == ["app.a", "app.b"]
+    assert result.tangles == [["app.a", "app.b"]]
 
 
 def test_resolved_reexports_reach_the_graph(reexport_chain: Path) -> None:

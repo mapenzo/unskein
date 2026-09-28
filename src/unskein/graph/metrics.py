@@ -45,6 +45,8 @@ class AnalysisResult:
         high_coupling_modules: Modules in the top coupling percentile.
         parse_warnings: Warnings collected while parsing and resolving.
         cycles_truncated: Whether cycle detection stopped at its limit.
+        tangles: Groups of mutually dependent modules (strongly connected
+            components with more than one module), largest first; never truncated.
     """
 
     graph: nx.DiGraph
@@ -53,6 +55,7 @@ class AnalysisResult:
     high_coupling_modules: list[str]
     parse_warnings: list[ParseWarning] = field(default_factory=list)
     cycles_truncated: bool = False
+    tangles: list[list[str]] = field(default_factory=list)
 
 
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
@@ -105,6 +108,24 @@ def find_cycles(graph: nx.DiGraph, limit: int = MAX_CYCLES) -> tuple[list[list[s
     return [_canonical_cycle(cycle) for cycle in found[:limit]], truncated
 
 
+def find_tangles(graph: nx.DiGraph) -> list[list[str]]:
+    """Find groups of modules that all depend on each other, directly or not.
+
+    A tangle is a strongly connected component with more than one module:
+    every cycle lives inside one. Unlike cycle enumeration it is linear and
+    exact, so it shows the true size of a knot even when ``find_cycles`` is
+    truncated (networkx: 100+ cycles, but one tangle of 279 modules).
+
+    Args:
+        graph: Internal module dependency graph.
+
+    Returns:
+        Tangles with their members sorted, largest first, then by first member.
+    """
+    tangles = [sorted(c) for c in nx.strongly_connected_components(graph) if len(c) > 1]
+    return sorted(tangles, key=lambda members: (-len(members), members[0]))
+
+
 def find_high_coupling(
     metrics: dict[str, CouplingMetrics], percentile: int = HIGH_COUPLING_PERCENTILE
 ) -> list[str]:
@@ -155,4 +176,5 @@ def analyze(result: ParseResult) -> AnalysisResult:
         high_coupling_modules=find_high_coupling(coupling),
         parse_warnings=list(result.warnings),
         cycles_truncated=cycles_truncated,
+        tangles=find_tangles(graph),
     )
