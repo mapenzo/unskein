@@ -194,8 +194,8 @@ _REPORT: dict[str, dict[Lang, str]] = {
 
 _CLI: dict[str, dict[Lang, str]] = {
     "cli.stats": {
-        Lang.ES: "Duración: {seconds} s, memoria tras el análisis: {memory} MB",
-        Lang.EN: "Duration: {seconds} s, memory after the run: {memory} MB",
+        Lang.ES: "Duración: {seconds} s, pico de memoria: {memory} MB",
+        Lang.EN: "Duration: {seconds} s, peak memory: {memory} MB",
     },
 }
 

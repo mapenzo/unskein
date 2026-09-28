@@ -156,6 +156,7 @@ def test_unexpected_error_exits_3_with_traceback(
 def test_verbose_shows_performance_stats(circular_imports: Path) -> None:
     output = plain(scan_cli(str(circular_imports), "--no-ai", "--lang", "en", "-v").output)
     assert "Duration" in output
+    assert "peak memory" in output
 
 
 def test_invalid_choice_is_rejected(circular_imports: Path) -> None:

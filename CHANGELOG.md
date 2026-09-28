@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `--verbose` now reports the real peak memory of the run. It used to read the resident
+  memory after the analysis, so memory freed before the end was invisible (a 200 MB
+  spike showed as 21 MB) (#9).
 - Printing the report to a Windows pipe (cp1252) no longer crashes with an internal
   error on symbols such as "→"; unencodable characters are replaced.
 
