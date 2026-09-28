@@ -1,9 +1,12 @@
 """Coupling metrics, cycle detection and the consolidated analysis result."""
 
+import math
 from dataclasses import dataclass, field
+from itertools import islice
 
 import networkx as nx
 
+from unskein.graph.builder import build_graph
 from unskein.parsers.models import ParseResult
 
 MAX_CYCLES = 100
@@ -55,32 +58,51 @@ class AnalysisResult:
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
     """Compute Ca and Ce for every module in the graph.
 
+    Ca counts distinct importing modules and Ce distinct imported modules;
+    the edge ``weight`` (number of import statements) is ignored.
+
     Args:
         graph: Internal module dependency graph.
 
     Returns:
         Coupling metrics keyed by module name.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
     """
-    raise NotImplementedError
+    return {
+        module: CouplingMetrics(module, graph.in_degree(module), graph.out_degree(module))
+        for module in graph.nodes
+    }
+
+
+def _canonical_cycle(cycle: list[str]) -> list[str]:
+    """Rotate a cycle so it starts at its smallest module name.
+
+    Args:
+        cycle: Modules of one cycle, in dependency order.
+
+    Returns:
+        The same cycle and direction, starting at its minimum element.
+    """
+    start = cycle.index(min(cycle))
+    return cycle[start:] + cycle[:start]
 
 
 def find_cycles(graph: nx.DiGraph, limit: int = MAX_CYCLES) -> tuple[list[list[str]], bool]:
     """Find dependency cycles, stopping after ``limit`` to avoid blowups in dense graphs.
+
+    The number of simple cycles can grow exponentially, so at most
+    ``limit + 1`` are ever enumerated: the extra one only tells whether more exist.
 
     Args:
         graph: Internal module dependency graph.
         limit: Maximum number of cycles to collect.
 
     Returns:
-        The cycles found and whether the search was truncated at ``limit``.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
+        The cycles found, each rotated to start at its smallest module, and
+        whether the search was truncated at ``limit``.
     """
-    raise NotImplementedError
+    found = list(islice(nx.simple_cycles(graph), limit + 1))
+    truncated = len(found) > limit
+    return [_canonical_cycle(cycle) for cycle in found[:limit]], truncated
 
 
 def find_high_coupling(
@@ -88,29 +110,49 @@ def find_high_coupling(
 ) -> list[str]:
     """Select modules whose combined ``Ca + Ce`` is in the top percentile.
 
+    The threshold is the nearest-rank percentile of all modules' scores (the
+    ``ceil(percentile / 100 * n)``-th smallest score): no interpolation, so it
+    is always a real score and easy to explain in the report. Ties at the
+    threshold are all selected; modules with no coupling never are.
+
     Args:
         metrics: Coupling metrics keyed by module name.
         percentile: Percentile threshold; modules at or above it are selected.
 
     Returns:
-        Names of the most coupled modules, candidates for AI interpretation.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
+        Names of the most coupled modules, candidates for AI interpretation,
+        ordered by score descending, then by name.
     """
-    raise NotImplementedError
+    if not metrics:
+        return []
+    score = {name: m.afferent + m.efferent for name, m in metrics.items()}
+    ordered = sorted(score.values())
+    rank = max(1, math.ceil(percentile / 100 * len(ordered)))
+    threshold = ordered[rank - 1]
+    selected = [name for name, s in score.items() if s > 0 and s >= threshold]
+    return sorted(selected, key=lambda name: (-score[name], name))
 
 
 def analyze(result: ParseResult) -> AnalysisResult:
     """Run graph construction, coupling metrics and cycle detection.
+
+    Expects re-exports to be resolved already (``resolve_indirection``);
+    otherwise dependencies routed through package facades point at the facade.
 
     Args:
         result: Parse result with re-exports already resolved.
 
     Returns:
         The consolidated deterministic analysis.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
     """
-    raise NotImplementedError
+    graph = build_graph(result)
+    coupling = compute_coupling(graph)
+    cycles, cycles_truncated = find_cycles(graph)
+    return AnalysisResult(
+        graph=graph,
+        coupling_metrics=coupling,
+        cycles=cycles,
+        high_coupling_modules=find_high_coupling(coupling),
+        parse_warnings=list(result.warnings),
+        cycles_truncated=cycles_truncated,
+    )
