@@ -1,8 +1,11 @@
 import locale
+import string
 
 import pytest
 
-from unskein.i18n import STRINGS, Lang, detect_lang, t
+from unskein.errors import ConfigError, ErrorKey, UnskeinError
+from unskein.i18n import STRINGS, Lang, detect_lang, t, translate_error, translate_warning
+from unskein.parsers.models import ParseWarning, WarningCode
 
 
 def test_every_key_has_both_languages() -> None:
@@ -40,3 +43,48 @@ def test_spanish_locale_detected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("UNSKEIN_LANG", raising=False)
     monkeypatch.setattr(locale, "getlocale", lambda: ("es_CO", "UTF-8"))
     assert detect_lang() is Lang.ES
+
+
+def placeholders(template: str) -> set[str]:
+    """Return the ``{field}`` names used in a message template.
+
+    Args:
+        template: Message with ``str.format`` placeholders.
+
+    Returns:
+        The placeholder names.
+    """
+    return {field for _, field, _, _ in string.Formatter().parse(template) if field}
+
+
+def test_translations_use_the_same_placeholders() -> None:
+    for key, translations in STRINGS.items():
+        assert placeholders(translations[Lang.ES]) == placeholders(translations[Lang.EN]), key
+
+
+def test_every_error_key_is_translated() -> None:
+    for key in ErrorKey:
+        assert key in STRINGS, key
+
+
+def test_every_warning_code_has_message_and_title() -> None:
+    for code in WarningCode:
+        assert f"warning.{code}" in STRINGS, code
+        assert f"warning_title.{code}" in STRINGS, code
+
+
+def test_config_error_is_a_structured_unskein_error() -> None:
+    error = ConfigError(ErrorKey.UNKNOWN_KEY, {"file": "a.toml", "field": "x"})
+    assert isinstance(error, UnskeinError)
+    assert error.key is ErrorKey.UNKNOWN_KEY
+
+
+def test_translate_error_fills_params() -> None:
+    error = UnskeinError(ErrorKey.PATH_NOT_FOUND, {"path": "nope"})
+    assert "nope" in translate_error(error, Lang.ES)
+    assert translate_error(error, Lang.ES) != translate_error(error, Lang.EN)
+
+
+def test_translate_warning_uses_detail() -> None:
+    warning = ParseWarning(WarningCode.STAR_IMPORT, None, 3, "app.b")
+    assert "app.b" in translate_warning(warning, Lang.EN)

@@ -27,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or error messages.
 - `--no-include-tests` and `--no-follow-symlinks`, so a flag can override
   `.unskein.toml` in both directions.
+- `unskein scan` works end to end: Markdown report in English or Spanish (terminal via
+  rich, raw file with `-o`), warnings grouped by kind with paths relative to the
+  project, `--verbose` stats and `--log-file`. The AI section explains why it is
+  empty (disabled, not configured, or not available yet).
+- Exit codes are enforced: usage errors now exit with 1 (click's default 2 collided with
+  "high-severity problems found"), unexpected errors exit with 3 showing the traceback.
+- Pylint configuration aligned with the Clean Code rules, for IDEs.
+
+### Fixed
+
+- Printing the report to a Windows pipe (cp1252) no longer crashes with an internal
+  error on symbols such as "→"; unencodable characters are replaced.
 
 ### Changed
 

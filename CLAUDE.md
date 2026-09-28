@@ -112,7 +112,8 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
 
 ```
 src/unskein/
-├── cli.py                 # entry point, comando `scan`
+├── cli.py                 # typer: flags, salida, códigos de salida (capa fina)
+├── scan.py                # orquestación: prepare_scan + execute_scan
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
 ├── i18n.py                # diccionario ES/EN
 ├── pipeline.py            # parse_all + should_parallelize
@@ -241,7 +242,11 @@ no se mergea.
   ocultos.** Entre capas, funciones puras que devuelven valores nuevos en
   vez de mutar la entrada (p. ej. `resolve_indirection`).
 - **Máximo 3 parámetros posicionales**; más allá, agruparlos en un
-  dataclass de configuración (patrón de `AnalysisConfig`).
+  dataclass de configuración (patrón de `AnalysisConfig`). Excepción
+  documentada: los comandos `typer` (`scan`), donde cada parámetro *es* una
+  flag del CLI y no se pueden agrupar; se marcan con `# pylint: disable=...`
+  en línea y la lógica se delega enseguida a un dataclass (`ScanOptions`).
+  Los dataclasses de datos/config pueden tener hasta 12 campos.
 - **Sin números mágicos**: constantes con nombre (`MAX_CYCLES`,
   `MAX_RESOLUTION_DEPTH`, `DEFAULT_TEST_PATTERNS`).
 - **Errores explícitos, nunca silenciados**: los esperados como warning en el
@@ -253,7 +258,12 @@ no se mergea.
 - **Regla del boy scout**: el código que se toca queda mejor de lo que
   estaba (dentro del alcance del PR).
 - **Tests F.I.R.S.T.** (rápidos, independientes, repetibles, auto-validados,
-  escritos antes que el código — TDD).
+  escritos antes que el código — TDD). Aislados del entorno real: una
+  fixture `autouse` apunta la config de usuario a un archivo inexistente y
+  elimina las `UNSKEIN_*`.
+- **Pylint** (`[tool.pylint]` en `pyproject.toml`) está alineado con estas
+  reglas para el IDE; ruff sigue siendo el gate de CI. Desactivar un aviso
+  solo con motivo escrito (en la config o en línea), nunca "para que calle".
 
 ## Modelo de concurrencia
 
@@ -343,11 +353,13 @@ scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI dedicado.
 
 El diseño de todas las capas de v0.1 está cerrado a nivel de arquitectura
 (ver `docs/architecture.md` para el detalle técnico completo de cada módulo).
-Implementado: scaffold, discovery, parser de Python y resolución de
-re-exports. Pendiente para el primer `unskein scan . --no-ai` end-to-end:
-grafo + métricas, reporte + `run_scan` + carga de config. Después: IA y
-parseo paralelo. Las piezas pendientes existen como stubs
-(`NotImplementedError`) con su contrato ya tipado.
+Implementado y funcionando end-to-end (`unskein scan <path> --no-ai`):
+discovery, parser de Python, resolución de re-exports, grafo + métricas,
+carga de config, reporte Markdown ES/EN y CLI con códigos de salida.
+Pendiente: IA (`ai/`, hoy stubs → el reporte muestra `AIStatus`), parseo
+paralelo (`pipeline._parse_parallel`), #8 (SCC) y #9 (`peak_memory_mb`).
+Las piezas pendientes existen como stubs (`NotImplementedError`) con su
+contrato ya tipado.
 
 ## Convenciones al trabajar en este proyecto
 

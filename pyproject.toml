@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.scripts]
-unskein = "unskein.cli:app"
+unskein = "unskein.cli:run"
 
 [project.urls]
 Homepage = "https://github.com/mapenzo/unskein"
@@ -62,6 +62,32 @@ norecursedirs = ["tests/fixtures"]
 [tool.coverage.run]
 source = ["unskein"]
 branch = true
+
+[tool.pylint.main]
+# Fixture projects are deliberately odd code (cycles, unused re-exports).
+ignore-paths = ["tests/fixtures"]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.design]
+# Config and options dataclasses are plain data bags (AnalysisConfig has 11 fields).
+max-attributes = 12
+
+[tool.pylint."messages control"]
+disable = [
+    # Docstrings are enforced by ruff's D rules and tests/integration/test_docstrings.py,
+    # which also exempt tests on purpose (descriptive names instead, see CLAUDE.md).
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    # Dataclasses and Pydantic models legitimately have no public methods.
+    "too-few-public-methods",
+    # Tests prefer explicit comparisons (== [], == 0, == "") for readable failures.
+    "use-implicit-booleaness-not-comparison",
+    "use-implicit-booleaness-not-comparison-to-string",
+    "use-implicit-booleaness-not-comparison-to-zero",
+]
 
 [tool.ruff]
 line-length = 100

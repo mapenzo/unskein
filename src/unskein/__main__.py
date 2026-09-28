@@ -1,5 +1,5 @@
-"""Run the unskein CLI with ``python -m unskein``."""
+"""Run the unskein CLI with ``python -m unskein``, with the same exit codes as ``unskein``."""
 
-from unskein.cli import app
+from unskein.cli import run
 
-app()
+run()
