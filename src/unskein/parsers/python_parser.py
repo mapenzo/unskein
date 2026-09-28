@@ -11,7 +11,14 @@ import pathspec
 from unskein.config import AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
-from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult, ReExport
+from unskein.parsers.models import (
+    ImportEdge,
+    ModuleInfo,
+    ParseResult,
+    ParseWarning,
+    ReExport,
+    WarningCode,
+)
 
 
 @dataclass(slots=True)
@@ -26,7 +33,7 @@ class FileParseResult:
 
     module: ModuleInfo | None
     re_exports: list[ReExport] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[ParseWarning] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,16 +166,17 @@ class _ImportCollector:
         self.is_package = file_path.name == "__init__.py"
         self.edges: list[ImportEdge] = []
         self.re_exports: list[ReExport] = []
-        self.warnings: list[str] = []
+        self.warnings: list[ParseWarning] = []
 
-    def warn(self, line: int, message: str) -> None:
+    def warn(self, code: WarningCode, line: int, detail: str) -> None:
         """Record a warning located at a line of the current file.
 
         Args:
+            code: Kind of problem.
             line: Line number the warning refers to.
-            message: Description of the problem.
+            detail: Language-neutral data describing the occurrence.
         """
-        self.warnings.append(f"{self.file_path}:{line}: {message}")
+        self.warnings.append(ParseWarning(code, self.file_path, line, detail))
 
     def add(self, name: str, symbol: str | None, line: int) -> str | None:
         """Record an import edge towards a module.
@@ -189,10 +197,10 @@ class _ImportCollector:
             return None
         target = self.index.closest_module(name)
         if target is None:
-            self.warn(line, f"internal import '{name}' not found, skipped")
+            self.warn(WarningCode.UNRESOLVED_IMPORT, line, name)
             return None
         if target != name:
-            self.warn(line, f"internal import '{name}' not found, using '{target}'")
+            self.warn(WarningCode.UNRESOLVED_IMPORT, line, f"{name} -> {target}")
         if target != self.source:
             self.edges.append(ImportEdge(self.source, target, False, symbol, line))
         return target
@@ -210,7 +218,8 @@ class _ImportCollector:
         package = self.source.split(".") if self.is_package else self.source.split(".")[:-1]
         up = node.level - 1
         if up >= len(package):
-            self.warn(node.lineno, "relative import goes beyond the top-level package")
+            relative = "." * node.level + (node.module or "")
+            self.warn(WarningCode.RELATIVE_BEYOND_TOP, node.lineno, relative)
             return None
         parts = package[: len(package) - up]
         if node.module:
@@ -245,7 +254,7 @@ class _ImportCollector:
         """
         for alias in node.names:
             if alias.name == "*":
-                self.warn(node.lineno, f"'from {base} import *': exported names are unknown")
+                self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
                 self.add(base, None, node.lineno)
                 continue
             submodule = f"{base}.{alias.name}"
@@ -278,19 +287,16 @@ def parse_file(
     try:
         size = file_path.stat().st_size
         if size > config.max_file_size_bytes:
-            return FileParseResult(
-                None,
-                warnings=[
-                    f"{file_path}: {size} bytes exceeds max_file_size_bytes "
-                    f"({config.max_file_size_bytes}), skipped"
-                ],
-            )
+            detail = f"{size} > {config.max_file_size_bytes}"
+            warning = ParseWarning(WarningCode.FILE_TOO_LARGE, file_path, None, detail)
+            return FileParseResult(None, warnings=[warning])
         encoding = detect_encoding(file_path, config.default_encoding)
         tree = ast.parse(file_path.read_text(encoding=encoding), filename=str(file_path))
     except (OSError, SyntaxError, UnicodeDecodeError, RecursionError) as e:
-        return FileParseResult(
-            None, warnings=[f"{file_path}: could not parse ({type(e).__name__}: {e})"]
-        )
+        line = e.lineno if isinstance(e, SyntaxError) else None
+        detail = f"{type(e).__name__}: {e}"
+        warning = ParseWarning(WarningCode.PARSE_ERROR, file_path, line, detail)
+        return FileParseResult(None, warnings=[warning])
     collector = _ImportCollector(file_path, name, index)
     collector.visit(tree)
     return FileParseResult(

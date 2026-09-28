@@ -53,7 +53,18 @@ class ParseResult:
     modules: list[ModuleInfo]
     language: str
     re_exports: list[ReExport] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[ParseWarning] = field(default_factory=list)
+
+class WarningCode(StrEnum):
+    STAR_IMPORT, RELATIVE_BEYOND_TOP, UNRESOLVED_IMPORT, FILE_TOO_LARGE,
+    PARSE_ERROR, REEXPORT_CYCLE, REEXPORT_DEPTH_EXCEEDED
+
+@dataclass(frozen=True, slots=True)
+class ParseWarning:
+    code: WarningCode
+    path: Path | None   # None en problemas de proyecto (ciclos de re-export)
+    line: int | None
+    detail: str         # dato técnico neutro de idioma, nunca una frase traducida
 
 # parsers/base.py
 class LanguageAdapter(ABC):
@@ -85,6 +96,12 @@ Decisiones clave:
   (no contra una lista de stdlib/paquetes conocidos — más robusto).
 - `ParseResult.warnings` en vez de excepciones duras: un archivo con sintaxis
   inválida no debe tumbar el análisis completo del proyecto.
+- Los warnings son **estructurados** (`ParseWarning`: `code` + `path` +
+  `line` + `detail`), no strings: el reporte los traduce a ES/EN a partir del
+  `code` y los agrupa por tipo (un proyecto con 264 star imports muestra una
+  línea, no 264). `detail` solo lleva datos neutros de idioma (nombres de
+  módulo, tamaños, texto de la excepción). `frozen` → hashables, así la
+  deduplicación de `resolve_indirection` sigue funcionando.
 - `resolve_indirection` tiene implementación default en la clase base porque
   la lógica de "seguir la cadena de re-exports" es un problema de grafos, igual
   en cualquier lenguaje. Lo que cambia por lenguaje es cómo se *detecta* un
@@ -116,10 +133,12 @@ def resolve_target(
     if symbol is None or (module, symbol) not in index:
         return module, []
     if module in path:
-        members = ", ".join(f"'{m}'" for m in sorted(path[path.index(module):]))
-        return module, [f"Re-export cycle for '{symbol}' between {members}, stopping resolution"]
+        members = ", ".join(sorted(path[path.index(module):]))
+        detail = f"{symbol}: {members}"
+        return module, [ParseWarning(WarningCode.REEXPORT_CYCLE, None, None, detail)]
     if len(path) >= MAX_RESOLUTION_DEPTH:
-        return module, [f"Max re-export depth exceeded for '{symbol}' at '{module}'"]
+        detail = f"{symbol}: {module}"
+        return module, [ParseWarning(WarningCode.REEXPORT_DEPTH_EXCEEDED, None, None, detail)]
 
     path.append(module)
     return resolve_target(index[(module, symbol)], symbol, index, path)
@@ -270,8 +289,15 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   sigue con el nombre exportado: si un eslabón posterior re-exporta con otro
   nombre, la resolución se detiene en el módulo intermedio.
 - **Errores por archivo** → warning, el archivo se omite y el análisis sigue:
-  tamaño > `max_file_size_bytes` (ni se lee), `OSError`, `SyntaxError`
-  (incluye bytes nulos desde 3.12), `UnicodeDecodeError`, `RecursionError`.
+  tamaño > `max_file_size_bytes` (ni se lee; `FILE_TOO_LARGE`, detail
+  `"<tamaño> > <límite>"`), `OSError`, `SyntaxError` (incluye bytes nulos
+  desde 3.12; `line` = línea del error), `UnicodeDecodeError`,
+  `RecursionError` (todos `PARSE_ERROR`, detail `"<Excepción>: <mensaje>"`).
+- **`detail` por código**: `STAR_IMPORT` → módulo base; `UNRESOLVED_IMPORT`
+  → `"nombre -> ancestro"` o solo `"nombre"` si se omitió;
+  `RELATIVE_BEYOND_TOP` → el relativo tal cual (`"...m"`);
+  `REEXPORT_CYCLE` → `"Símbolo: m1, m2"` (miembros ordenados);
+  `REEXPORT_DEPTH_EXCEEDED` → `"Símbolo: módulo"`.
 
 Limitaciones conocidas, documentadas explícitamente (no bugs a "arreglar" sin
 discutirlo primero):
@@ -285,9 +311,6 @@ discutirlo primero):
   silenciosamente.
 - **Imports dinámicos vía `importlib.import_module()` con strings son
   invisibles** — limitación conocida y común en análisis estático puro.
-- **Warnings en inglés** — `ParseResult.warnings` son strings sin traducir.
-  El i18n completo requiere warnings estructurados (`code` + `detail`)
-  traducidos en la capa de reporte; se hace junto con `report/markdown.py`.
 
 ---
 

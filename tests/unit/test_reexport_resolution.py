@@ -9,7 +9,7 @@ from unskein.parsers.indirection import (
     resolve_indirection,
     resolve_target,
 )
-from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult, ReExport
+from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult, ReExport, WarningCode
 from unskein.parsers.python_parser import PythonAdapter
 
 Edge = tuple[str, str, str | None]
@@ -54,8 +54,10 @@ def test_facade_edges_are_resolved_too(reexport_chain: Path) -> None:
 def test_reexport_cycle_yields_one_warning_per_cycle(reexport_cycle: Path) -> None:
     resolved = resolve_indirection(parse_fixture(reexport_cycle))
     assert ("app.user", "app.a", "Thing") in internal_edges(resolved)
-    assert len(resolved.warnings) == 1
-    assert "app.a" in resolved.warnings[0] and "app.b" in resolved.warnings[0]
+    [warning] = resolved.warnings
+    assert warning.code is WarningCode.REEXPORT_CYCLE
+    assert warning.detail == "Thing: app.a, app.b"
+    assert warning.path is None
 
 
 def test_external_and_module_imports_are_untouched() -> None:
@@ -90,7 +92,7 @@ def test_cycle_warning_is_identical_from_any_entry_point() -> None:
     )
     warnings = {resolve_target(m, "Thing", index)[1][0] for m in ("app", "app.a", "app.b")}
     assert len(warnings) == 1
-    assert "'app'" not in next(iter(warnings))
+    assert next(iter(warnings)).detail == "Thing: app.a, app.b"
 
 
 def test_follows_multilevel_chain() -> None:
@@ -114,11 +116,11 @@ def test_cycle_degrades_with_warning() -> None:
     )
     target, warnings = resolve_target("app.a", "Thing", index)
     assert target == "app.a"
-    assert len(warnings) == 1
+    assert [w.code for w in warnings] == [WarningCode.REEXPORT_CYCLE]
 
 
 def test_depth_limit_degrades_with_warning() -> None:
     chain = [ReExport(f"m{i}", f"m{i + 1}", "X") for i in range(MAX_RESOLUTION_DEPTH + 5)]
     target, warnings = resolve_target("m0", "X", build_reexport_index(chain))
     assert target == f"m{MAX_RESOLUTION_DEPTH}"
-    assert len(warnings) == 1
+    assert [w.code for w in warnings] == [WarningCode.REEXPORT_DEPTH_EXCEEDED]
