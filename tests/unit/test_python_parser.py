@@ -1,9 +1,13 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import pathspec
 
+from unskein.config import AnalysisConfig
 from unskein.parsers.discovery import detect_encoding, load_exclude_spec
 from unskein.parsers.python_parser import PythonAdapter
+
+MakeProject = Callable[[dict[str, str]], Path]
 
 
 def test_normalize_module_name_collapses_init(tmp_path: Path) -> None:
@@ -14,6 +18,27 @@ def test_normalize_module_name_collapses_init(tmp_path: Path) -> None:
     assert adapter.normalize_module_name(tmp_path / "app/services/__init__.py", tmp_path) == (
         "app.services"
     )
+
+
+def test_src_layout_is_detected_automatically(make_project: MakeProject) -> None:
+    root = make_project({"src/pkg/__init__.py": "", "src/pkg/core.py": "", "scripts/run.py": ""})
+    adapter = PythonAdapter()
+    assert adapter.normalize_module_name(root / "src/pkg/core.py", root) == "pkg.core"
+    assert adapter.normalize_module_name(root / "src/pkg/__init__.py", root) == "pkg"
+    assert adapter.normalize_module_name(root / "scripts/run.py", root) == "scripts.run"
+
+
+def test_src_dir_that_is_a_package_is_not_a_source_root(make_project: MakeProject) -> None:
+    root = make_project({"src/__init__.py": "", "src/core.py": ""})
+    assert PythonAdapter().normalize_module_name(root / "src/core.py", root) == "src.core"
+
+
+def test_configured_source_roots_override_detection(make_project: MakeProject) -> None:
+    root = make_project({"lib/pkg/a.py": "", "src/other/b.py": "", "tools/t.py": ""})
+    adapter = PythonAdapter(AnalysisConfig(source_roots=["lib"]))
+    assert adapter.normalize_module_name(root / "lib/pkg/a.py", root) == "pkg.a"
+    assert adapter.normalize_module_name(root / "src/other/b.py", root) == "src.other.b"
+    assert adapter.normalize_module_name(root / "tools/t.py", root) == "tools.t"
 
 
 def test_discover_files_finds_all_py_files(simple_project: Path) -> None:
@@ -35,6 +60,40 @@ def test_discover_files_merges_unskeinignore_and_cli_excludes(tmp_path: Path) ->
     spec = load_exclude_spec(tmp_path, ["skip_cli.py"])
     files = [p.name for p in PythonAdapter().discover_files(tmp_path, spec)]
     assert files == ["keep.py"]
+
+
+TEST_LAYOUT = {
+    "pkg/__init__.py": "",
+    "pkg/testing.py": "",
+    "pkg/latest.py": "",
+    "pkg/test_core.py": "",
+    "pkg/core_test.py": "",
+    "tests/unit/test_x.py": "",
+    "tests/helpers.py": "",
+    "test/legacy.py": "",
+    "conftest.py": "",
+}
+
+
+def discovered(root: Path, include_tests: bool) -> list[str]:
+    spec = load_exclude_spec(root, [], include_tests=include_tests)
+    return sorted(
+        p.relative_to(root).as_posix() for p in PythonAdapter().discover_files(root, spec)
+    )
+
+
+def test_test_code_is_excluded_by_default(make_project: MakeProject) -> None:
+    root = make_project(TEST_LAYOUT)
+    assert discovered(root, include_tests=False) == [
+        "pkg/__init__.py",
+        "pkg/latest.py",
+        "pkg/testing.py",
+    ]
+
+
+def test_include_tests_keeps_test_code(make_project: MakeProject) -> None:
+    root = make_project(TEST_LAYOUT)
+    assert discovered(root, include_tests=True) == sorted(TEST_LAYOUT)
 
 
 def test_discover_files_does_not_follow_symlinks_by_default(tmp_path: Path) -> None:

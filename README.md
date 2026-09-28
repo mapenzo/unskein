@@ -109,6 +109,11 @@ unskein scan . --lang es                       # informe en español
 Paths in `.gitignore` are skipped automatically. To exclude code that *is* tracked in
 git, such as generated files, list it in a `.unskeinignore` file with the same syntax.
 
+Test code (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`) is left out by default,
+since tests import almost everything and would drown out the real architecture. Pass
+`--include-tests` to analyze it too. Projects using a `src/` layout are detected
+automatically; for other layouts, set `source_roots` in `.unskein.toml`.
+
 ### Exit codes
 
 | Code | Meaning |
