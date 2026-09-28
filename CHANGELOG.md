@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Analysis warnings are now structured (`ParseWarning` with a `WarningCode`, file, line
+  and language-neutral detail) instead of English strings, so reports can translate
+  them and group them by kind.
 - Clean Code is now a mandatory project convention: Google-style docstrings on every
   module, class and function (private ones included), enforced in CI with ruff's `D`
   rules plus an AST-based test that also covers private names.

@@ -7,7 +7,7 @@ from itertools import islice
 import networkx as nx
 
 from unskein.graph.builder import build_graph
-from unskein.parsers.models import ParseResult
+from unskein.parsers.models import ParseResult, ParseWarning
 
 MAX_CYCLES = 100
 HIGH_COUPLING_PERCENTILE = 90
@@ -51,7 +51,7 @@ class AnalysisResult:
     coupling_metrics: dict[str, CouplingMetrics]
     cycles: list[list[str]]
     high_coupling_modules: list[str]
-    parse_warnings: list[str] = field(default_factory=list)
+    parse_warnings: list[ParseWarning] = field(default_factory=list)
     cycles_truncated: bool = False
 
 

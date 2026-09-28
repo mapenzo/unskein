@@ -1,7 +1,51 @@
 """Hold the language-neutral data produced by parsing: modules, imports and re-exports."""
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
+
+
+class WarningCode(StrEnum):
+    """Kinds of non-fatal problems found while parsing and resolving a project.
+
+    Attributes:
+        STAR_IMPORT: ``from x import *``; the exported names cannot be known.
+        RELATIVE_BEYOND_TOP: A relative import climbs above the top-level package.
+        UNRESOLVED_IMPORT: An internal import names a module that does not exist.
+        FILE_TOO_LARGE: A file exceeds ``max_file_size_bytes`` and was not read.
+        PARSE_ERROR: A file could not be read or parsed and was skipped.
+        REEXPORT_CYCLE: Re-exports of a symbol form a cycle.
+        REEXPORT_DEPTH_EXCEEDED: A re-export chain is longer than the resolution limit.
+    """
+
+    STAR_IMPORT = "star_import"
+    RELATIVE_BEYOND_TOP = "relative_beyond_top"
+    UNRESOLVED_IMPORT = "unresolved_import"
+    FILE_TOO_LARGE = "file_too_large"
+    PARSE_ERROR = "parse_error"
+    REEXPORT_CYCLE = "reexport_cycle"
+    REEXPORT_DEPTH_EXCEEDED = "reexport_depth_exceeded"
+
+
+@dataclass(frozen=True, slots=True)
+class ParseWarning:
+    """A non-fatal problem, kept structured so the report can translate and group it.
+
+    Frozen so identical warnings deduplicate in sets and dict keys.
+
+    Attributes:
+        code: Kind of problem.
+        path: Source file it refers to, or None for project-level problems
+            such as re-export cycles.
+        line: Line in that file, when known.
+        detail: Language-neutral data for the message (module names, sizes,
+            the underlying exception text); never a translated sentence.
+    """
+
+    code: WarningCode
+    path: Path | None
+    line: int | None
+    detail: str
 
 
 @dataclass(slots=True)
@@ -70,4 +114,4 @@ class ParseResult:
     modules: list[ModuleInfo]
     language: str
     re_exports: list[ReExport] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[ParseWarning] = field(default_factory=list)

@@ -4,6 +4,7 @@ import pathspec
 
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.parsers.indirection import resolve_indirection
+from unskein.parsers.models import WarningCode
 from unskein.parsers.python_parser import PythonAdapter
 
 
@@ -39,8 +40,7 @@ def test_resolved_reexports_reach_the_graph(reexport_chain: Path) -> None:
 
 def test_warnings_are_carried_over(reexport_cycle: Path) -> None:
     result = analyze_fixture(reexport_cycle)
-    assert len(result.parse_warnings) == 1
-    assert "cycle" in result.parse_warnings[0].lower()
+    assert [w.code for w in result.parse_warnings] == [WarningCode.REEXPORT_CYCLE]
 
 
 def test_simple_project_has_no_cycles(simple_project: Path) -> None:

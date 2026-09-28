@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from unskein.parsers.models import ParseResult, ReExport
+from unskein.parsers.models import ParseResult, ParseWarning, ReExport, WarningCode
 
 MAX_RESOLUTION_DEPTH = 10
 
@@ -26,7 +26,7 @@ def resolve_target(
     symbol: str | None,
     index: ReExportIndex,
     path: list[str] | None = None,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[ParseWarning]]:
     """Follow the re-export chain of a symbol until the module that defines it.
 
     Cycles and chains longer than MAX_RESOLUTION_DEPTH stop the resolution with a
@@ -47,11 +47,13 @@ def resolve_target(
     if symbol is None or (module, symbol) not in index:
         return module, []
     if module in path:
-        # Canonical (sorted) members so every entry point into the cycle yields the same text.
-        members = ", ".join(f"'{m}'" for m in sorted(path[path.index(module) :]))
-        return module, [f"Re-export cycle for '{symbol}' between {members}, stopping resolution"]
+        # Canonical (sorted) members so every entry point into the cycle yields the same warning.
+        members = ", ".join(sorted(path[path.index(module) :]))
+        detail = f"{symbol}: {members}"
+        return module, [ParseWarning(WarningCode.REEXPORT_CYCLE, None, None, detail)]
     if len(path) >= MAX_RESOLUTION_DEPTH:
-        return module, [f"Max re-export depth exceeded for '{symbol}' at '{module}'"]
+        detail = f"{symbol}: {module}"
+        return module, [ParseWarning(WarningCode.REEXPORT_DEPTH_EXCEEDED, None, None, detail)]
 
     path.append(module)
     return resolve_target(index[(module, symbol)], symbol, index, path)
