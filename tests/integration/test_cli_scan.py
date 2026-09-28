@@ -28,6 +28,7 @@ def test_scan_help_lists_exit_codes() -> None:
     assert result.exit_code == 0
     output = plain(result.output)
     assert "--no-ai" in output
+    assert "--include-tests" in output
     assert "Exit codes" in output
 
 

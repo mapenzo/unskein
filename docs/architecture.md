@@ -216,20 +216,45 @@ archivo que ya lo declara explícitamente.
 ## 3. Parser de Python (`parsers/python_parser.py`)
 
 Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
+`PythonAdapter(config: AnalysisConfig)` recibe la config por constructor, así
+`parse(files, root)` mantiene la firma del contrato común.
 
-- **`discover_files`**: recorre con `rglob("*.py")`, respeta `.gitignore` (vía
-  `pathspec`) y patrones adicionales de `--exclude`.
-- **`normalize_module_name`**: convención dotted-path desde el root del
-  proyecto (`app/services/user.py` → `app.services.user`), colapsando
-  `__init__.py` al nombre del paquete.
-- **`parse`**: usa `ast.walk` sobre cada archivo, capturando tres casos de
-  import de Python:
-  - `ast.Import` (`import os`, `import app.services.user`)
-  - `ast.ImportFrom` absoluto (`from app.services import UserService`)
-  - `ast.ImportFrom` relativo (`from . import user`, `from ..models import Base`)
-    — resuelto contando `node.level` contra los segmentos del módulo actual.
-- **Detección de re-exports**: solo se inspecciona dentro de archivos
-  `__init__.py`, buscando `ImportFrom` cuyo origen sea interno al proyecto.
+- **`discover_files`**: `os.walk` (ver sección 2.5). El código de tests se
+  excluye por defecto (`tests/`, `test/`, `test_*.py`, `*_test.py`,
+  `conftest.py`) porque infla el `Ca` de casi todo el proyecto;
+  `--include-tests` / `include_tests = true` lo reactiva.
+- **`normalize_module_name`**: dotted-path relativo a la *source root* más
+  específica que contenga el archivo, colapsando `__init__.py` al nombre del
+  paquete. Source roots: `[analysis] source_roots` en `.unskein.toml`; sin
+  config, se auto-detecta `src/` (directorio `src` sin `__init__.py`). El root
+  del proyecto es siempre la raíz de respaldo — `src/pkg/core.py` →
+  `pkg.core`, `scripts/run.py` → `scripts.run`. Las rutas se normalizan con
+  `os.path.abspath`, no `resolve()`: un symlink seguido conserva su nombre
+  dentro del proyecto.
+- **`parse`**: calcula primero los nombres de todos los archivos
+  (`ProjectIndex`), luego llama `parse_file(path, name, index, config)` por
+  archivo — función de módulo pura y picklable, unidad de trabajo del futuro
+  `ProcessPoolExecutor`. `ast.walk` captura:
+
+  | Caso | `target` | `symbol_name` |
+  |---|---|---|
+  | `import a.b.c` | prefijo más largo existente en el proyecto | `None` |
+  | `from a.b import c`, `a.b.c` es módulo | `a.b.c` | `None` |
+  | `from a.b import X`, `X` es símbolo | `a.b` | `X` |
+  | relativo (`from ..m import X`) | resuelto con `node.level` desde el paquete del archivo | igual |
+  | `from x import *` | `x` + warning | `None` |
+
+  Import interno inexistente → ancestro existente más cercano + warning (o se
+  omite con warning si no hay ninguno, p. ej. namespace packages). Relativo
+  más allá del paquete raíz → warning, se omite. Auto-import → sin arista.
+- **Detección de re-exports**: solo en `__init__.py`, cada `ImportFrom`
+  interno de un *símbolo* (no de un submódulo) genera
+  `ReExport(paquete, módulo_origen, asname or name)`. Con alias, la cadena se
+  sigue con el nombre exportado: si un eslabón posterior re-exporta con otro
+  nombre, la resolución se detiene en el módulo intermedio.
+- **Errores por archivo** → warning, el archivo se omite y el análisis sigue:
+  tamaño > `max_file_size_bytes` (ni se lee), `OSError`, `SyntaxError`
+  (incluye bytes nulos desde 3.12), `UnicodeDecodeError`, `RecursionError`.
 
 Limitaciones conocidas, documentadas explícitamente (no bugs a "arreglar" sin
 discutirlo primero):
@@ -243,6 +268,9 @@ discutirlo primero):
   silenciosamente.
 - **Imports dinámicos vía `importlib.import_module()` con strings son
   invisibles** — limitación conocida y común en análisis estático puro.
+- **Warnings en inglés** — `ParseResult.warnings` son strings sin traducir.
+  El i18n completo requiere warnings estructurados (`code` + `detail`)
+  traducidos en la capa de reporte; se hace junto con `report/markdown.py`.
 
 ---
 

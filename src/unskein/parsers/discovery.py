@@ -6,10 +6,13 @@ from pathlib import Path
 import pathspec
 
 IGNORE_FILES = (".gitignore", ".unskeinignore")
+DEFAULT_TEST_PATTERNS = ("tests/", "test/", "test_*.py", "*_test.py", "conftest.py")
 
 
-def load_exclude_spec(root: Path, cli_exclude: list[str]) -> pathspec.PathSpec:
-    patterns: list[str] = []
+def load_exclude_spec(
+    root: Path, cli_exclude: list[str], include_tests: bool = False
+) -> pathspec.PathSpec:
+    patterns: list[str] = [] if include_tests else list(DEFAULT_TEST_PATTERNS)
     for name in IGNORE_FILES:
         ignore_file = root / name
         if ignore_file.exists():
