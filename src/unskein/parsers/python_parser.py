@@ -7,8 +7,9 @@ from pathlib import Path
 import pathspec
 
 from unskein.config import AnalysisConfig
-from unskein.parsers.base import ImportEdge, LanguageAdapter, ModuleInfo, ParseResult, ReExport
+from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
+from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult, ReExport
 
 
 @dataclass(slots=True)

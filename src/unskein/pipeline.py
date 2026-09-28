@@ -1,7 +1,8 @@
 from pathlib import Path
 
 from unskein.config import AnalysisConfig
-from unskein.parsers.base import LanguageAdapter, ParseResult
+from unskein.parsers.base import LanguageAdapter
+from unskein.parsers.models import ParseResult
 
 
 def should_parallelize(file_count: int, config: AnalysisConfig) -> bool:

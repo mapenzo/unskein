@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 
 import networkx as nx
 
-from unskein.parsers.base import ParseResult
+from unskein.parsers.models import ParseResult
 
 MAX_CYCLES = 100
 HIGH_COUPLING_PERCENTILE = 90

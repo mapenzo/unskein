@@ -13,13 +13,18 @@ discovery → parse → resolve_indirection → analyze (grafo + métricas) → 
 
 ---
 
-## 1. El adapter (`parsers/base.py`)
+## 1. El adapter (`parsers/base.py`, `parsers/models.py`)
 
 Contrato común para que cualquier lenguaje (Python en v0.1, TS/Java después)
-se integre al pipeline sin reescribirlo.
+se integre al pipeline sin reescribirlo. Los datos (`ImportEdge`,
+`ModuleInfo`, `ReExport`, `ParseResult`) viven en `parsers/models.py`, sin
+dependencias; `parsers/base.py` solo contiene `LanguageAdapter`. Así
+`indirection.py` depende de `models` y `base` de ambos, sin ciclo (antes
+`base` ↔ `indirection` se importaban mutuamente — unskein lo detectaba en
+su propio código).
 
 ```python
-from abc import ABC, abstractmethod
+# parsers/models.py
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,6 +55,7 @@ class ParseResult:
     re_exports: list[ReExport] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
+# parsers/base.py
 class LanguageAdapter(ABC):
     @property
     @abstractmethod
@@ -102,25 +108,36 @@ def build_reexport_index(re_exports: list[ReExport]) -> ReExportIndex:
     return {(re.exporting_module, re.symbol_name): re.original_module for re in re_exports}
 
 def resolve_target(
-    module: str, symbol: str | None, index: ReExportIndex, visited: set[str] | None = None,
+    module: str, symbol: str | None, index: ReExportIndex, path: list[str] | None = None,
 ) -> tuple[str, list[str]]:
-    if visited is None:
-        visited = set()
-    warnings = []
+    if path is None:
+        path = []
 
     if symbol is None or (module, symbol) not in index:
-        return module, warnings
-    if module in visited:
-        warnings.append(f"Ciclo de re-exports detectado en '{module}', deteniendo resolución")
-        return module, warnings
-    if len(visited) >= MAX_RESOLUTION_DEPTH:
-        warnings.append(f"Profundidad máxima de re-exports excedida en '{module}'")
-        return module, warnings
+        return module, []
+    if module in path:
+        members = ", ".join(f"'{m}'" for m in sorted(path[path.index(module):]))
+        return module, [f"Re-export cycle for '{symbol}' between {members}, stopping resolution"]
+    if len(path) >= MAX_RESOLUTION_DEPTH:
+        return module, [f"Max re-export depth exceeded for '{symbol}' at '{module}'"]
 
-    visited.add(module)
-    next_module = index[(module, symbol)]
-    return resolve_target(next_module, symbol, index, visited)
+    path.append(module)
+    return resolve_target(index[(module, symbol)], symbol, index, path)
 ```
+
+`resolve_indirection(result) -> ParseResult` aplica `resolve_target` a cada
+arista **interna con símbolo** y devuelve un `ParseResult` nuevo (función
+pura, no muta la entrada):
+- Externos e imports de módulo completo (`symbol_name is None`) quedan igual.
+- Las aristas de la propia fachada también se resuelven (`app/__init__` →
+  módulo que define el símbolo): la fachada depende realmente de él.
+- Si la resolución termina en el propio módulo origen, la arista se descarta
+  (igual que los auto-imports en el parser).
+- Warnings deduplicados y añadidos tras los del parser. El warning de ciclo
+  es **canónico**: nombra el símbolo y los miembros del ciclo ordenados (se
+  guarda el camino como `list`, no `set`, para saber dónde empieza el ciclo),
+  así cualquier punto de entrada al mismo ciclo produce el mismo texto → un
+  único warning por ciclo.
 
 Decisiones:
 - Ciclos de re-export no rompen el análisis, degradan con warning (misma

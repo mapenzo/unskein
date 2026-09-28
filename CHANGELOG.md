@@ -15,3 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (syntax errors, undecodable files, oversized files, deeply nested code).
 - Automatic `src/` layout detection and configurable `source_roots`.
 - Test code excluded from analysis by default; `--include-tests` to opt back in.
+- Re-export resolution: imports through `__init__.py` facades now point at the module
+  that defines the symbol, so cycles hidden behind a package facade become visible.
+  Re-export cycles produce a single warning per cycle.
+
+### Changed
+
+- Parser data classes moved from `unskein.parsers.base` to `unskein.parsers.models`
+  (still importable from `unskein.parsers`), removing an import cycle.

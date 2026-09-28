@@ -4,7 +4,7 @@ from pathlib import Path
 import pathspec
 
 from unskein.config import AnalysisConfig
-from unskein.parsers.base import ParseResult
+from unskein.parsers.models import ParseResult
 from unskein.parsers.python_parser import PythonAdapter
 
 MakeProject = Callable[[dict[str, str]], Path]
