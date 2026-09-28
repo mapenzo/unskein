@@ -29,6 +29,7 @@ class ScanOptions:
     lang: str | None = None
     follow_symlinks: bool = False
     encoding: str | None = None
+    include_tests: bool = False
 
 
 def run_scan(options: ScanOptions) -> tuple[AnalysisResult, AIReport | None]:
@@ -80,6 +81,9 @@ def scan(
     ] = None,
     lang: Annotated[str | None, typer.Option("--lang", help="es | en")] = None,
     follow_symlinks: Annotated[bool, typer.Option("--follow-symlinks")] = False,
+    include_tests: Annotated[
+        bool, typer.Option("--include-tests", help="Also analyze test code (excluded by default).")
+    ] = False,
     encoding: Annotated[
         str | None, typer.Option("--encoding", help="Fallback encoding when undetectable.")
     ] = None,

@@ -33,6 +33,8 @@ class AnalysisConfig:
     default_encoding: str | None = None
     follow_symlinks: bool = False
     exclude: list[str] = field(default_factory=list)
+    source_roots: list[str] | None = None
+    include_tests: bool = False
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
 

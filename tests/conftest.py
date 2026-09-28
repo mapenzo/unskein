@@ -1,8 +1,23 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def make_project(tmp_path: Path) -> Callable[[dict[str, str]], Path]:
+    """Write {relative_path: source} under tmp_path and return the project root."""
+
+    def _make(files: dict[str, str]) -> Path:
+        for rel, source in files.items():
+            path = tmp_path / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(source, encoding="utf-8")
+        return tmp_path
+
+    return _make
 
 
 @pytest.fixture
