@@ -116,9 +116,11 @@ def test_output_file_gets_raw_markdown(circular_imports: Path, tmp_path: Path) -
 
 
 def test_missing_path_exits_1_with_translated_message(tmp_path: Path) -> None:
-    result = scan_cli(str(tmp_path / "nope"), "--lang", "es")
+    # A long path must not be hard-wrapped: users copy paths out of error messages.
+    missing = tmp_path / ("very_long_directory_name_" * 4) / "nope"
+    result = scan_cli(str(missing), "--lang", "es")
     assert result.exit_code == ExitCode.USAGE_ERROR
-    assert "no existe" in plain(result.output)
+    assert f"La ruta '{missing}' no existe" in plain(result.output)
     assert "Traceback" not in result.output
 
 
@@ -189,3 +191,10 @@ def test_legacy_console_encoding_does_not_crash(circular_imports: Path) -> None:
         env={**os.environ, "PYTHONIOENCODING": "cp1252"},
     )
     assert completed.returncode == ExitCode.OK
+
+
+def test_error_message_shows_brackets_in_paths_literally(tmp_path: Path) -> None:
+    missing = tmp_path / "proj[v2]" / "[bold]x"
+    result = scan_cli(str(missing), "--lang", "en")
+    assert result.exit_code == ExitCode.USAGE_ERROR
+    assert f"Path '{missing}' does not exist" in plain(result.output)

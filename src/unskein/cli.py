@@ -54,7 +54,7 @@ def run() -> None:
         if show:
             show()
         else:
-            Console(stderr=True).print(f"[red]{e}[/red]")
+            _print_to_stderr(str(e), style="red")
         sys.exit(ExitCode.USAGE_ERROR)
     except typer.Abort:
         sys.exit(ExitCode.USAGE_ERROR)
@@ -192,17 +192,16 @@ def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitC
     Returns:
         The process exit code.
     """
-    errors = Console(stderr=True)
     try:
         context = prepare_scan(options)
     except UnskeinError as e:
         # The TOML could not be read, so the language comes from flag, env and locale only.
-        errors.print(f"[red]{translate_error(e, detect_lang(options.lang))}[/red]")
+        _print_to_stderr(translate_error(e, detect_lang(options.lang)), style="red")
         return ExitCode.USAGE_ERROR
     try:
         outcome, stats = measure(lambda: execute_scan(context))
     except UnskeinError as e:
-        errors.print(f"[red]{translate_error(e, context.lang)}[/red]")
+        _print_to_stderr(translate_error(e, context.lang), style="red")
         return ExitCode.USAGE_ERROR
     report = render_report(
         ReportContext(
@@ -230,7 +229,7 @@ def _print_stats(stats: PerformanceStats, context: ScanContext) -> None:
         context: The scan, for its output language.
     """
     lang: Lang = context.lang
-    Console(stderr=True).print(
+    _print_to_stderr(
         t(
             "cli.stats",
             lang,
@@ -238,3 +237,17 @@ def _print_stats(stats: PerformanceStats, context: ScanContext) -> None:
             memory=f"{stats.peak_memory_mb:.1f}",
         )
     )
+
+
+def _print_to_stderr(message: str, style: str | None = None) -> None:
+    """Print a message to stderr exactly as given.
+
+    Messages embed user paths: rich markup is off so ``[v2]`` in a path is not
+    read as a style tag, and soft wrapping leaves line breaks to the terminal
+    so paths stay intact for copy and paste.
+
+    Args:
+        message: Text to print.
+        style: Optional rich style for the whole message, e.g. ``"red"``.
+    """
+    Console(stderr=True, soft_wrap=True).print(message, style=style, markup=False, highlight=False)
