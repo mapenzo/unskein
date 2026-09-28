@@ -90,7 +90,9 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
   con fallback configurable a un proveedor cloud vía LiteLLM.
 - `hatchling` como build backend (estándar actual para layout `src/`).
 - `psutil` para medición de rendimiento (CPU/RAM) multiplataforma — soporte
-  Windows y Linux desde v0.1 (no usar `resource`, que es solo Unix).
+  Windows y Linux desde v0.1. `resource` (solo Unix) únicamente como rama
+  Unix del pico de memoria, que `psutil` no expone fuera de Windows; nunca
+  como única vía (#9).
 - `pytest` + `pytest-cov` — testing desde el primer commit, no pospuesto.
 
 ## Internacionalización (i18n)
@@ -334,10 +336,10 @@ scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI dedicado.
 - **Cero telemetría de uso.** Nada sale del equipo del usuario — ni siquiera
   anónimo. Declarado explícitamente en el README (sección de privacidad),
   la comunidad OSS lo pregunta rápido.
-- **Medición de rendimiento es local y solo informativa**, vía `psutil`
-  (multiplataforma: Windows + Linux/macOS, no `resource` que es solo Unix).
-  Se muestra solo con `--verbose` (duración + pico de memoria del propio
-  análisis), nunca se envía a ningún servidor.
+- **Medición de rendimiento es local y solo informativa** (Windows +
+  Linux/macOS). Se muestra solo con `--verbose` (duración + **pico real** de
+  memoria del proceso: `psutil` `peak_wset` en Windows, `resource.ru_maxrss`
+  en Unix), nunca se envía a ningún servidor.
 
 ## Roadmap de versiones
 
@@ -357,7 +359,7 @@ Implementado y funcionando end-to-end (`unskein scan <path> --no-ai`):
 discovery, parser de Python, resolución de re-exports, grafo + métricas,
 carga de config, reporte Markdown ES/EN y CLI con códigos de salida.
 Pendiente: IA (`ai/`, hoy stubs → el reporte muestra `AIStatus`), parseo
-paralelo (`pipeline._parse_parallel`) y #9 (`peak_memory_mb`).
+paralelo (`pipeline._parse_parallel`).
 Las piezas pendientes existen como stubs (`NotImplementedError`) con su
 contrato ya tipado.
 

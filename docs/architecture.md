@@ -883,26 +883,29 @@ informativa**, mostrada al propio usuario con `--verbose`, nunca enviada a
 ningún servidor:
 
 ```python
-import psutil
-import time
-from dataclasses import dataclass
-
-@dataclass
-class PerformanceStats:
-    duration_seconds: float
-    peak_memory_mb: float
+def peak_rss_bytes() -> int:
+    if sys.platform == "win32":
+        return psutil.Process().memory_info().peak_wset
+    import resource  # solo Unix
+    max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return max_rss if sys.platform == "darwin" else max_rss * 1024  # Linux: KiB
 
 def measure(fn):
-    process = psutil.Process()
     start = time.perf_counter()
     result = fn()
     duration = time.perf_counter() - start
-    peak_mb = process.memory_info().rss / (1024 * 1024)
-    return result, PerformanceStats(duration, peak_mb)
+    return result, PerformanceStats(duration, peak_rss_bytes() / (1024 * 1024))
 ```
 
-`psutil` en vez de `resource` (stdlib, pero solo Unix) — necesario porque el
-soporte de rendimiento es **Windows + Linux/macOS** desde v0.1, no solo Unix.
+**Pico real** (#9): la versión anterior leía el RSS *después* del análisis,
+así que un pico de 200 MB liberado antes de terminar aparecía como 21 MB.
+`psutil` solo expone el pico en Windows (`peak_wset`); en Linux/macOS la
+fuente portable es `resource.ru_maxrss` (KiB en Linux, bytes en macOS), por
+eso `resource` se usa **solo en la rama Unix**. Es la marca máxima de todo
+el proceso (incluye el arranque, no se puede reiniciar): la cifra honesta de
+cuánta memoria usó unskein. La memoria de los workers del futuro parseo
+paralelo no está incluida — se decide en ese PR (p. ej. `RUSAGE_CHILDREN`).
+La rama macOS no tiene runner en CI.
 
 ## Notas sobre extensión futura (no implementar en v0.1)
 
