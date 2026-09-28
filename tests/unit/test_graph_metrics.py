@@ -7,6 +7,7 @@ from unskein.graph.metrics import (
     compute_coupling,
     find_cycles,
     find_high_coupling,
+    find_tangles,
 )
 from unskein.pipeline import should_parallelize
 
@@ -115,3 +116,31 @@ def test_should_parallelize_uses_threshold() -> None:
     config = AnalysisConfig(parallel_threshold=50)
     assert not should_parallelize(49, config)
     assert should_parallelize(50, config)
+
+
+def test_acyclic_graph_has_no_tangles() -> None:
+    assert find_tangles(graph_of(("a", "b"), ("b", "c"))) == []
+
+
+def test_two_module_cycle_is_one_tangle() -> None:
+    assert find_tangles(graph_of(("b", "a"), ("a", "b"), ("a", "c"))) == [["a", "b"]]
+
+
+def test_dense_graph_is_one_tangle_even_when_cycles_are_truncated() -> None:
+    graph = nx.complete_graph(6, create_using=nx.DiGraph)
+    graph = nx.relabel_nodes(graph, {i: f"m{i}" for i in range(6)})
+    assert find_cycles(graph)[1] is True
+    assert find_tangles(graph) == [[f"m{i}" for i in range(6)]]
+
+
+def test_tangles_are_ordered_by_size_then_name() -> None:
+    graph = graph_of(
+        ("x", "y"),
+        ("y", "x"),
+        ("a", "b"),
+        ("b", "c"),
+        ("c", "a"),
+        ("p", "q"),
+        ("q", "p"),
+    )
+    assert find_tangles(graph) == [["a", "b", "c"], ["p", "q"], ["x", "y"]]

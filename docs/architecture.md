@@ -505,9 +505,13 @@ aplicados) y construye el grafo real.
   número de ciclos puede crecer exponencialmente — se consumen como máximo
   `MAX_CYCLES + 1` (100 + 1) con `itertools.islice`; el extra solo indica si
   hay más (`cycles_truncated`). Cada ciclo se rota para empezar por su módulo
-  menor: el mismo ciclo siempre se escribe igual. Pendiente (issue #8):
-  componentes fuertemente conexas para dar el tamaño real de cada maraña
-  aunque la lista de ciclos se trunque.
+  menor: el mismo ciclo siempre se escribe igual.
+- **Marañas** (`find_tangles`, #8): componentes fuertemente conexas de más
+  de un módulo (`nx.strongly_connected_components`, lineal y exacto, nunca
+  se trunca). Todo ciclo vive dentro de una maraña, así que dan el tamaño
+  real del problema aunque la lista de ciclos se corte en 100: en networkx,
+  "100+ ciclos" es en realidad **una maraña de 279 de 288 módulos**.
+  Miembros ordenados; marañas de mayor a menor tamaño.
 - **"God modules" / alto acoplamiento**: percentil superior (default 90%) de
   `Ca + Ce` combinado, como candidatos que la capa de IA interpretará.
   Umbral por *nearest-rank* sobre todos los módulos (el
@@ -521,9 +525,9 @@ aplicados) y construye el grafo real.
   "god module" clásico.
 
 Output consolidado (`AnalysisResult`): `graph`, `coupling_metrics`, `cycles`,
-`high_coupling_modules`, `parse_warnings`, `cycles_truncated`. `analyze()` es
-composición pura `build_graph → compute_coupling → find_cycles →
-find_high_coupling` y espera un `ParseResult` ya pasado por
+`high_coupling_modules`, `parse_warnings`, `cycles_truncated`, `tangles`.
+`analyze()` es composición pura `build_graph → compute_coupling →
+find_cycles → find_tangles → find_high_coupling` y espera un `ParseResult` ya pasado por
 `resolve_indirection`. Este objeto es el punto de unión entre el análisis
 determinista y la interpretación por IA/reporte.
 
@@ -736,7 +740,11 @@ Reglas:
 - **Warnings agrupados por `WarningCode`**: `### <título> (<n>)` con
   `MAX_WARNING_EXAMPLES` (5) ejemplos `ruta:línea — mensaje` y "…y N más".
   Con networkx: 264 star imports → 1 grupo, 5 líneas.
-- Ciclos como bucle cerrado (`a` → `b` → `a`), con aviso si se truncaron.
+- Sección de ciclos: primero las **marañas** (tamaño + hasta
+  `MAX_TANGLE_MEMBERS_SHOWN` = 10 miembros y "…y N más"), luego los ciclos
+  como ejemplos, en bucle cerrado (`a` → `b` → `a`), con aviso si se
+  truncaron. El resumen menciona la maraña mayor y la tabla de métricas
+  cuenta las marañas.
 - Todo texto sale del catálogo `i18n` (ES/EN); un test exige que cada
   `WarningCode`, cada `ErrorKey` y cada clave tengan ambos idiomas con los
   mismos placeholders.

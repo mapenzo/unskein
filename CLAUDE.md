@@ -357,7 +357,7 @@ Implementado y funcionando end-to-end (`unskein scan <path> --no-ai`):
 discovery, parser de Python, resolución de re-exports, grafo + métricas,
 carga de config, reporte Markdown ES/EN y CLI con códigos de salida.
 Pendiente: IA (`ai/`, hoy stubs → el reporte muestra `AIStatus`), parseo
-paralelo (`pipeline._parse_parallel`), #8 (SCC) y #9 (`peak_memory_mb`).
+paralelo (`pipeline._parse_parallel`) y #9 (`peak_memory_mb`).
 Las piezas pendientes existen como stubs (`NotImplementedError`) con su
 contrato ya tipado.
 

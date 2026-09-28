@@ -12,6 +12,7 @@ from unskein.parsers.models import ParseWarning, WarningCode
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.report.markdown import (
     MAX_MODULES_IN_TABLE,
+    MAX_TANGLE_MEMBERS_SHOWN,
     MAX_WARNING_EXAMPLES,
     AIStatus,
     ReportContext,
@@ -189,3 +190,42 @@ def test_warnings_are_grouped_by_kind_with_relative_paths(tmp_path: Path) -> Non
 
 def test_no_warnings_section_when_clean(simple_project: Path) -> None:
     assert "## Analysis warnings" not in render(simple_project, analyzed(simple_project))
+
+
+def test_tangles_come_before_cycles(circular_imports: Path) -> None:
+    report = render(circular_imports, analyzed(circular_imports))
+    assert "### Tangles" in report
+    assert "- **2 modules**: `app.a`, `app.b`" in report
+    assert report.index("### Tangles") < report.index("### Cycles")
+
+
+def test_tangle_members_are_truncated(tmp_path: Path) -> None:
+    members = [f"m{i:02d}" for i in range(MAX_TANGLE_MEMBERS_SHOWN + 2)]
+    result = AnalysisResult(
+        graph=nx.DiGraph(),
+        coupling_metrics={},
+        cycles=[members[:2]],
+        high_coupling_modules=[],
+        tangles=[members],
+    )
+    report = render(tmp_path, result)
+    assert f"`m{MAX_TANGLE_MEMBERS_SHOWN - 1:02d}`" in report
+    assert f"`m{MAX_TANGLE_MEMBERS_SHOWN:02d}`" not in report
+    assert "…and 2 more" in report
+
+
+def test_summary_and_metrics_mention_tangles_only_when_present(
+    circular_imports: Path, simple_project: Path
+) -> None:
+    tangled = render(circular_imports, analyzed(circular_imports))
+    assert "1 tangle" in tangled.split("## General metrics", maxsplit=1)[0]
+    assert "| Tangles | 1 |" in tangled
+    clean = render(simple_project, analyzed(simple_project))
+    assert "tangle" not in clean.split("## General metrics", maxsplit=1)[0].lower()
+    assert "| Tangles | 0 |" in clean
+
+
+def test_tangles_in_spanish(circular_imports: Path) -> None:
+    report = render(circular_imports, analyzed(circular_imports), Lang.ES)
+    assert "### Marañas" in report
+    assert "- **2 módulos**: `app.a`, `app.b`" in report

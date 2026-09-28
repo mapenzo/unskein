@@ -13,6 +13,7 @@ from unskein.parsers.models import ParseWarning, WarningCode
 SEVERITY_ORDER: dict[Severity, int] = {"low": 0, "medium": 1, "high": 2}
 MAX_MODULES_IN_TABLE = 15
 MAX_WARNING_EXAMPLES = 5
+MAX_TANGLE_MEMBERS_SHOWN = 10
 
 
 class AIStatus(StrEnum):
@@ -130,10 +131,28 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
             "report.summary_top_module", lang, module=top.module, ca=top.afferent, ce=top.efferent
         )
         lines.append(top_line)
+    if result.tangles:
+        lines.append(_tangle_summary(result.tangles, lang))
     if context.ai_report:
         health = t(f"report.health.{context.ai_report.architecture_health}", lang)
         lines += ["", context.ai_report.summary, "", t("report.health", lang, health=health)]
     return lines
+
+
+def _tangle_summary(tangles: list[list[str]], lang: Lang) -> str:
+    """Summarize how many tangles there are and how big the largest one is.
+
+    Args:
+        tangles: Tangles of the analysis, largest first.
+        lang: Report language.
+
+    Returns:
+        One sentence, singular or plural.
+    """
+    largest = len(tangles[0])
+    if len(tangles) == 1:
+        return t("report.summary_tangles.one", lang, size=largest)
+    return t("report.summary_tangles.other", lang, count=len(tangles), size=largest)
 
 
 def _metrics(result: AnalysisResult, lang: Lang) -> list[str]:
@@ -150,6 +169,7 @@ def _metrics(result: AnalysisResult, lang: Lang) -> list[str]:
         ("report.metric.modules", result.graph.number_of_nodes()),
         ("report.metric.dependencies", result.graph.number_of_edges()),
         ("report.metric.cycles", _cycle_count(result)),
+        ("report.metric.tangles", len(result.tangles)),
         ("report.metric.warnings", len(result.parse_warnings)),
     ]
     lines = [
@@ -163,7 +183,10 @@ def _metrics(result: AnalysisResult, lang: Lang) -> list[str]:
 
 
 def _cycles(result: AnalysisResult, lang: Lang) -> list[str]:
-    """List every dependency cycle as a closed loop of modules.
+    """List the tangles first, then every cycle found as an example loop.
+
+    Tangles give the true extent of the problem (never truncated); cycles,
+    which can be truncated, illustrate concrete dependency paths inside them.
 
     Args:
         result: The deterministic analysis.
@@ -175,12 +198,31 @@ def _cycles(result: AnalysisResult, lang: Lang) -> list[str]:
     lines = [f"## {t('report.cycles', lang)}", ""]
     if not result.cycles:
         return [*lines, t("report.no_cycles", lang)]
+    lines += [f"### {t('report.tangles_heading', lang)}", ""]
+    lines += [_tangle_line(tangle, lang) for tangle in result.tangles]
+    lines += ["", f"### {t('report.cycles_heading', lang)}", ""]
     for cycle in result.cycles:
         loop = [*cycle, cycle[0]]
         lines.append("- " + " → ".join(f"`{module}`" for module in loop))
     if result.cycles_truncated:
         lines += ["", t("report.cycles_truncated", lang, shown=len(result.cycles))]
     return lines
+
+
+def _tangle_line(members: list[str], lang: Lang) -> str:
+    """Render one tangle as its size and up to ``MAX_TANGLE_MEMBERS_SHOWN`` members.
+
+    Args:
+        members: Modules of the tangle, sorted.
+        lang: Report language.
+
+    Returns:
+        One Markdown list item.
+    """
+    shown = ", ".join(f"`{m}`" for m in members[:MAX_TANGLE_MEMBERS_SHOWN])
+    hidden = len(members) - MAX_TANGLE_MEMBERS_SHOWN
+    more = f" {t('report.more', lang, count=hidden)}" if hidden > 0 else ""
+    return f"- **{t('report.tangle_size', lang, size=len(members))}**: {shown}{more}"
 
 
 def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
