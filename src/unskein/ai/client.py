@@ -1,12 +1,18 @@
 """Provider-agnostic LLM client built on LiteLLM."""
 
 import logging
+import re
+
+from pydantic import ValidationError
 
 from unskein.ai.models import AIContext, AIReport
 from unskein.config import AIConfig
 from unskein.i18n import Lang
 
 logger = logging.getLogger("unskein")
+
+JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+REASONING_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def extract_json_block(raw: str) -> str | None:
@@ -19,11 +25,49 @@ def extract_json_block(raw: str) -> str | None:
 
     Returns:
         The JSON text, or None if none was found.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
     """
-    raise NotImplementedError
+    fenced = JSON_FENCE.search(raw)
+    if fenced:
+        return fenced.group(1)
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end < start:
+        return None
+    return raw[start : end + 1]
+
+
+def strip_reasoning_blocks(raw: str) -> str:
+    """Remove ``<think>...</think>`` sections some models leave in their answer.
+
+    Their braces would otherwise confuse the JSON extraction.
+
+    Args:
+        raw: Raw text returned by the model.
+
+    Returns:
+        The text without reasoning sections.
+    """
+    return REASONING_BLOCK.sub("", raw)
+
+
+def parse_report(raw: str) -> AIReport | None:
+    """Validate model output against ``AIReport``, falling back to embedded JSON.
+
+    Args:
+        raw: Raw text returned by the model.
+
+    Returns:
+        The validated report, or None if the output does not match the schema.
+    """
+    cleaned = strip_reasoning_blocks(raw)
+    for candidate in (cleaned, extract_json_block(cleaned)):
+        if candidate is None:
+            continue
+        try:
+            return AIReport.model_validate_json(candidate)
+        except ValidationError:
+            continue
+    logger.debug("Model output does not match the AIReport schema")
+    return None
 
 
 class AIClient:
