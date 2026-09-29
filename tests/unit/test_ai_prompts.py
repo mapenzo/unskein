@@ -7,7 +7,7 @@ from pathlib import Path
 import networkx as nx
 import pathspec
 
-from unskein.ai.models import AIContext, AIReport
+from unskein.ai.models import AIContext, AIReport, Problem
 from unskein.ai.prompts import (
     MAX_CYCLES_IN_PROMPT,
     MAX_MODULES_IN_PROMPT,
@@ -17,6 +17,7 @@ from unskein.ai.prompts import (
     SYSTEM_PROMPT,
     build_context,
     build_messages,
+    ground_report,
 )
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
 from unskein.i18n import Lang
@@ -183,3 +184,61 @@ def test_a_large_project_stays_under_the_prompt_size_limit() -> None:
     context = build_context(synthetic_result(module_count=2000, cycle_count=90, tangle_count=9))
     messages = build_messages(context, Lang.EN)
     assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
+
+
+def problem(modules: list[str], snippet: str | None = None) -> Problem:
+    """Build a problem affecting some modules.
+
+    Args:
+        modules: Affected modules.
+        snippet: Optional code snippet.
+
+    Returns:
+        The problem.
+    """
+    return Problem(
+        severity="high",
+        title=f"about {','.join(modules)}",
+        description="d",
+        affected_modules=modules,
+        recommendation="r",
+        code_snippet=snippet,
+    )
+
+
+def report_with(*problems: Problem) -> AIReport:
+    """Build a report holding the given problems.
+
+    Args:
+        *problems: Problems of the report.
+
+    Returns:
+        The report.
+    """
+    return AIReport(summary="s", architecture_health="concerning", problems=list(problems))
+
+
+def test_unknown_modules_are_removed_from_a_problem() -> None:
+    graph = nx.DiGraph([("a", "b")])
+    grounded = ground_report(report_with(problem(["a", "ghost", "b"])), graph)
+    assert grounded.problems[0].affected_modules == ["a", "b"]
+
+
+def test_a_problem_naming_no_known_module_is_dropped() -> None:
+    graph = nx.DiGraph([("a", "b")])
+    grounded = ground_report(report_with(problem(["ghost"]), problem(["a"])), graph)
+    assert [p.affected_modules for p in grounded.problems] == [["a"]]
+
+
+def test_code_snippets_are_cleared_until_v02() -> None:
+    graph = nx.DiGraph([("a", "b")])
+    grounded = ground_report(report_with(problem(["a"], snippet="print('x')")), graph)
+    assert grounded.problems[0].code_snippet is None
+
+
+def test_grounding_does_not_mutate_the_input() -> None:
+    graph = nx.DiGraph([("a", "b")])
+    original = report_with(problem(["a", "ghost"], snippet="x"))
+    ground_report(original, graph)
+    assert original.problems[0].affected_modules == ["a", "ghost"]
+    assert original.problems[0].code_snippet == "x"

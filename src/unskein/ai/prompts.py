@@ -1,12 +1,17 @@
 """System prompt and prompt construction for the AI interpretation step."""
 
 import json
+import logging
 from collections import Counter
 from dataclasses import asdict
+
+import networkx as nx
 
 from unskein.ai.models import AIContext, AIReport, ModuleCoupling, TangleSummary
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang
+
+logger = logging.getLogger("unskein")
 
 MAX_TANGLES_IN_PROMPT = 5
 MAX_TANGLE_MEMBERS_IN_PROMPT = 20
@@ -112,3 +117,28 @@ def build_messages(context: AIContext, lang: Lang) -> list[dict[str, str]]:
         {"role": "system", "content": f"{SYSTEM_PROMPT}\n{LANG_INSTRUCTION[lang]}"},
         {"role": "user", "content": user},
     ]
+
+
+def ground_report(report: AIReport, graph: nx.DiGraph) -> AIReport:
+    """Anchor an AI report to the graph, so the LLM can never invent a module.
+
+    Removes from each problem the modules that are not in the graph and drops
+    problems left with none. Also clears ``code_snippet``, which arrives in v0.2.
+
+    Args:
+        report: Validated report from the LLM.
+        graph: Internal module dependency graph, the source of truth.
+
+    Returns:
+        A new report; the input is not modified.
+    """
+    problems = []
+    for problem in report.problems:
+        known = [module for module in problem.affected_modules if module in graph]
+        if not known:
+            logger.debug("Dropped AI problem %r: it names no known module", problem.title)
+            continue
+        problems.append(
+            problem.model_copy(update={"affected_modules": known, "code_snippet": None})
+        )
+    return report.model_copy(update={"problems": problems})
