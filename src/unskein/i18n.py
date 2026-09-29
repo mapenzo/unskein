@@ -177,12 +177,6 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.EN: "No AI model configured. Set `UNSKEIN_AI_MODEL` or `[ai] model` in "
         "`.unskein.toml` to get an interpretation of these results.",
     },
-    "report.ai.unavailable": {
-        Lang.ES: "La interpretación con IA llegará en una versión futura; este reporte "
-        "contiene solo el análisis determinista.",
-        Lang.EN: "AI interpretation will arrive in a future version; this report "
-        "contains the deterministic analysis only.",
-    },
     "report.ai.failed.timeout": {
         Lang.ES: "El modelo no respondió a tiempo. El análisis determinista está completo.",
         Lang.EN: "The model did not answer in time. The deterministic analysis is complete.",

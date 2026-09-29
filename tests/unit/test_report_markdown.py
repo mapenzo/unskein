@@ -150,7 +150,6 @@ def test_ai_status_messages(simple_project: Path) -> None:
     result = analyzed(simple_project)
     assert "--no-ai" in render(simple_project, result, ai_status=AIStatus.DISABLED)
     assert "UNSKEIN_AI_MODEL" in render(simple_project, result, ai_status=AIStatus.NOT_CONFIGURED)
-    assert "future version" in render(simple_project, result, ai_status=AIStatus.UNAVAILABLE)
 
 
 def test_ai_problems_are_rendered_and_filtered(simple_project: Path) -> None:

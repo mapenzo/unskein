@@ -1,8 +1,10 @@
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from unskein.ai.models import AIFailure, AIReport, Problem
 from unskein.errors import ConfigError, ErrorKey, UnskeinError
 from unskein.i18n import Lang
 from unskein.report.markdown import AIStatus
@@ -38,12 +40,94 @@ def test_invalid_toml_raises_config_error(make_project: MakeProject) -> None:
         prepare(ScanOptions(path=root))
 
 
-def test_ai_status_reflects_flags_and_config(make_project: MakeProject) -> None:
+def test_no_ai_flag_drops_the_ai_config(make_project: MakeProject) -> None:
     root = make_project({"a.py": ""})
     model_env = {"UNSKEIN_AI_MODEL": "ollama/x"}
-    assert prepare(ScanOptions(path=root, no_ai=True), model_env).ai_status is AIStatus.DISABLED
-    assert prepare(ScanOptions(path=root)).ai_status is AIStatus.NOT_CONFIGURED
-    assert prepare(ScanOptions(path=root), model_env).ai_status is AIStatus.UNAVAILABLE
+    context = prepare(ScanOptions(path=root, no_ai=True), model_env)
+    assert context.ai_disabled is True
+    assert context.ai_config is None
+    configured = prepare(ScanOptions(path=root), model_env)
+    assert configured.ai_config is not None
+    assert configured.ai_config.model == "ollama/x"
+    assert prepare(ScanOptions(path=root)).ai_config is None
+
+
+def test_status_is_disabled_with_no_ai(circular_imports: Path, tmp_path: Path) -> None:
+    options = ScanOptions(path=circular_imports, no_ai=True)
+    assert execute_scan(prepare(options, tmp=tmp_path)).ai_status is AIStatus.DISABLED
+
+
+def test_status_is_not_configured_without_a_model(circular_imports: Path, tmp_path: Path) -> None:
+    outcome = execute_scan(prepare(ScanOptions(path=circular_imports), tmp=tmp_path))
+    assert outcome.ai_status is AIStatus.NOT_CONFIGURED
+    assert outcome.ai_report is None
+
+
+def test_status_is_present_with_a_valid_answer(
+    circular_imports: Path, tmp_path: Path, fake_llm: Any
+) -> None:
+    fake_llm.content = AIReport(
+        summary="s", architecture_health="fair", problems=[]
+    ).model_dump_json()
+    options = ScanOptions(path=circular_imports)
+    context = prepare(options, {"UNSKEIN_AI_MODEL": "ollama/x"}, tmp=tmp_path)
+    outcome = execute_scan(context)
+    assert outcome.ai_status is AIStatus.PRESENT
+    assert outcome.ai_report is not None
+    assert len(fake_llm.calls) == 1
+
+
+def test_status_is_failed_with_an_unusable_answer(
+    circular_imports: Path, tmp_path: Path, fake_llm: Any
+) -> None:
+    fake_llm.content = "garbage"
+    context = prepare(
+        ScanOptions(path=circular_imports), {"UNSKEIN_AI_MODEL": "ollama/x"}, tmp=tmp_path
+    )
+    outcome = execute_scan(context)
+    assert outcome.ai_status is AIStatus.FAILED
+    assert outcome.ai_outcome is not None
+    assert outcome.ai_outcome.failure is AIFailure.INVALID_RESPONSE
+
+
+def test_the_client_is_not_built_when_ai_is_disabled(
+    circular_imports: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(config: object) -> None:
+        raise AssertionError("AIClient built with --no-ai")
+
+    monkeypatch.setattr("unskein.scan.AIClient", refuse)
+    options = ScanOptions(path=circular_imports, no_ai=True)
+    execute_scan(prepare(options, {"UNSKEIN_AI_MODEL": "ollama/x"}, tmp=tmp_path))
+
+
+def test_hallucinated_modules_are_dropped_from_the_report(
+    circular_imports: Path, tmp_path: Path, fake_llm: Any
+) -> None:
+    problems = [
+        Problem(
+            severity="high",
+            title="ghost",
+            description="d",
+            affected_modules=["ghost.mod"],
+            recommendation="r",
+        ),
+        Problem(
+            severity="high",
+            title="real",
+            description="d",
+            affected_modules=["app.a", "ghost.mod"],
+            recommendation="r",
+        ),
+    ]
+    report = AIReport(summary="s", architecture_health="concerning", problems=problems)
+    fake_llm.content = report.model_dump_json()
+    context = prepare(
+        ScanOptions(path=circular_imports), {"UNSKEIN_AI_MODEL": "ollama/x"}, tmp=tmp_path
+    )
+    grounded = execute_scan(context).ai_report
+    assert grounded is not None
+    assert [(p.title, p.affected_modules) for p in grounded.problems] == [("real", ["app.a"])]
 
 
 def test_execute_analyzes_the_project(circular_imports: Path, tmp_path: Path) -> None:

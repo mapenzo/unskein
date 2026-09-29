@@ -23,14 +23,12 @@ class AIStatus(StrEnum):
         PRESENT: An AI report is available.
         DISABLED: The user passed ``--no-ai``.
         NOT_CONFIGURED: No AI model is configured in any layer.
-        UNAVAILABLE: AI is configured but produced no report (or is not available yet).
         FAILED: AI is configured but produced no report; see ``ReportContext.ai_failure``.
     """
 
     PRESENT = "present"
     DISABLED = "disabled"
     NOT_CONFIGURED = "not_configured"
-    UNAVAILABLE = "unavailable"
     FAILED = "failed"
 
 

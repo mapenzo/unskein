@@ -10,8 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from unskein import config as config_module
-from unskein.ai.models import AIReport, Severity
+from unskein.ai.client import AIClient
+from unskein.ai.models import AIOutcome, AIReport, Severity
+from unskein.ai.prompts import build_context, build_messages, ground_report
 from unskein.config import (
+    AIConfig,
     AnalysisConfig,
     AnalysisFlags,
     load_toml_config,
@@ -64,14 +67,16 @@ class ScanContext:
         root: Directory to analyze.
         lang: Output language.
         analysis: Resolved analysis settings.
-        ai_status: Whether and why AI interpretation will (not) run.
+        ai_config: Model settings, or None when the AI cannot or must not run.
+        ai_disabled: Whether the user passed ``--no-ai``.
         min_severity: Lowest AI problem severity to report.
     """
 
     root: Path
     lang: Lang
     analysis: AnalysisConfig
-    ai_status: AIStatus
+    ai_config: AIConfig | None
+    ai_disabled: bool
     min_severity: Severity
 
 
@@ -81,11 +86,18 @@ class ScanOutcome:
 
     Attributes:
         result: The deterministic analysis.
-        ai_report: The AI interpretation, or None.
+        ai_status: Whether and why the AI section has content.
+        ai_outcome: What the AI call produced; None when no call was made.
     """
 
     result: AnalysisResult
-    ai_report: AIReport | None
+    ai_status: AIStatus
+    ai_outcome: AIOutcome | None = None
+
+    @property
+    def ai_report(self) -> AIReport | None:
+        """Return the grounded AI report, or None when there is none."""
+        return self.ai_outcome.report if self.ai_outcome else None
 
 
 def prepare_scan(
@@ -118,34 +130,18 @@ def prepare_scan(
         follow_symlinks=options.follow_symlinks,
         encoding=options.encoding,
     )
+    ai_config = None if options.no_ai else resolve_ai_config(toml, env, options.api_key)
     return ScanContext(
         root=options.path,
         lang=detect_lang(options.lang, toml.general.lang, env),
         analysis=resolve_analysis_config(toml, flags),
-        ai_status=_ai_status(options, resolve_ai_config(toml, env, options.api_key) is not None),
+        ai_config=ai_config,
+        ai_disabled=options.no_ai,
         min_severity=options.min_severity,
     )
 
 
-def _ai_status(options: ScanOptions, ai_configured: bool) -> AIStatus:
-    """Decide the AI status before running anything.
-
-    AI is never called in this version: ``UNAVAILABLE`` means a model is
-    configured but the AI client is not implemented yet.
-
-    Args:
-        options: What the user asked for.
-        ai_configured: Whether a model is configured in some layer.
-
-    Returns:
-        The AI status for the report.
-    """
-    if options.no_ai:
-        return AIStatus.DISABLED
-    return AIStatus.UNAVAILABLE if ai_configured else AIStatus.NOT_CONFIGURED
-
-
-def execute_scan(context: ScanContext) -> ScanOutcome:
+def analyze_project(context: ScanContext) -> AnalysisResult:
     """Run discovery, parsing, re-export resolution and analysis.
 
     Parsing is sequential for now: ``pipeline.parse_all`` would route projects
@@ -155,7 +151,7 @@ def execute_scan(context: ScanContext) -> ScanOutcome:
         context: A prepared scan.
 
     Returns:
-        The analysis (and, in the future, the AI report).
+        The deterministic analysis.
 
     Raises:
         UnskeinError: If the path is not a directory or holds no Python files.
@@ -177,4 +173,44 @@ def execute_scan(context: ScanContext) -> ScanOutcome:
         result.graph.number_of_nodes(),
         result.graph.number_of_edges(),
     )
-    return ScanOutcome(result=result, ai_report=None)
+    return result
+
+
+def interpret(result: AnalysisResult, context: ScanContext) -> ScanOutcome:
+    """Add the AI interpretation to an analysis when it is enabled and configured.
+
+    The client, and with it LiteLLM, is only built here and only when needed.
+    An AI failure never raises: it becomes a ``FAILED`` status.
+
+    Args:
+        result: The deterministic analysis.
+        context: The prepared scan.
+
+    Returns:
+        The analysis with the AI status and, on success, the grounded report.
+    """
+    if context.ai_disabled:
+        return ScanOutcome(result, AIStatus.DISABLED)
+    if context.ai_config is None:
+        return ScanOutcome(result, AIStatus.NOT_CONFIGURED)
+    client = AIClient(context.ai_config)
+    outcome = client.generate_report(build_messages(build_context(result), context.lang))
+    if outcome.report is None:
+        return ScanOutcome(result, AIStatus.FAILED, outcome)
+    grounded = AIOutcome(report=ground_report(outcome.report, result.graph))
+    return ScanOutcome(result, AIStatus.PRESENT, grounded)
+
+
+def execute_scan(context: ScanContext) -> ScanOutcome:
+    """Analyze the project, then interpret it with the AI when enabled.
+
+    Args:
+        context: A prepared scan.
+
+    Returns:
+        The analysis and the AI outcome.
+
+    Raises:
+        UnskeinError: If the path is not a directory or holds no Python files.
+    """
+    return interpret(analyze_project(context), context)
