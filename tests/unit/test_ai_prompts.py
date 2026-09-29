@@ -322,6 +322,9 @@ def test_nothing_dropped_counts_zero() -> None:
         "app/core/__init__.py",
         "src/app/core.py",
         "app\\core.py",
+        "`app.core`.",
+        "./app/core.py",
+        "app.core.py",
     ],
 )
 def test_loosely_written_module_names_are_matched_to_the_graph(written: str) -> None:
@@ -339,8 +342,21 @@ def test_a_src_root_is_stripped_down_to_a_top_level_module() -> None:
 
 def test_other_leading_segments_are_never_guessed_away() -> None:
     graph = nx.DiGraph([("core", "util")])
-    grounding = ground_report(report_with(problem(["app/core.py", "app.core"])), graph)
+    grounding = ground_report(report_with(problem(["app/core.py"])), graph)
     assert grounding.dropped_problems == 1
+    assert grounding.report.problems == []
+
+
+def test_a_real_src_package_is_matched_before_stripping_the_root() -> None:
+    graph = nx.DiGraph([("src.app.core", "src.app.util")])
+    grounding = ground_report(report_with(problem(["src/app/core.py"])), graph)
+    assert grounding.report.problems[0].affected_modules == ["src.app.core"]
+
+
+@pytest.mark.parametrize("written", ["", ".", "`", "src", "src/__init__.py", "__init__.py"])
+def test_empty_or_bare_names_match_nothing(written: str) -> None:
+    graph = nx.DiGraph([("app.core", "app.util")])
+    assert ground_report(report_with(problem([written])), graph).dropped_problems == 1
 
 
 def test_normalized_duplicates_are_listed_once() -> None:

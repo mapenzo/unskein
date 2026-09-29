@@ -592,10 +592,11 @@ El import de LiteLLM es perezoso y endurecido: `LITELLM_LOCAL_MODEL_COST_MAP=Tru
 ### Anclaje al grafo (`ground_report`)
 
 Cada nombre de módulo se normaliza antes de compararlo con el grafo
-(`normalize_module_name`): se quitan espacios, comillas/backticks y el punto final, y
-una ruta (`app/core.py`, `app/__init__.py`, `src/app/core.py`) se convierte a nombre con
-puntos. Solo se quita un segmento inicial `src` (raíz de fuentes); ningún otro se
-adivina. Luego se eliminan de cada problema los módulos que no son nodos del grafo
+(`normalize_module_name`): se quitan espacios, comillas/backticks y puntos en los
+extremos, y una ruta (`app/core.py`, `./app/core.py`, `app/__init__.py`,
+`src/app/core.py`) o un nombre con `.py` se convierte a nombre con puntos. Un segmento
+inicial `src` (raíz de fuentes) solo se quita si el nombre con él no existe en el
+grafo; ningún otro segmento se adivina. Luego se eliminan de cada problema los módulos que no son nodos del grafo
 (sin duplicados) y se descartan los problemas que se quedan sin ninguno;
 `code_snippet` se fuerza a `None` (v0.2). `ground_report` devuelve
 `GroundingResult(report, dropped_problems)`; si hubo descartes, se avisa por consola

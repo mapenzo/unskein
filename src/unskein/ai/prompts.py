@@ -22,7 +22,7 @@ MAX_MODULES_IN_PROMPT = 15
 INSTABILITY_DECIMALS = 2
 MAX_PROMPT_CHARS = 16_000
 
-NAME_QUOTES = "`'\""
+NAME_DECORATION = "`'\". \t\n"
 PYTHON_SUFFIX = ".py"
 PACKAGE_INIT = "__init__"
 SOURCE_ROOT = "src"
@@ -147,9 +147,11 @@ class GroundingResult:
 def normalize_module_name(written: str, graph: nx.DiGraph) -> str | None:
     """Match a module name as the LLM wrote it to a module of the graph.
 
-    Tolerates quoting, a trailing dot and file paths (``app/core.py``,
-    ``app/__init__.py``). A leading ``src`` segment is dropped because it is the
-    source root, never part of a module name; no other segment is guessed away.
+    Tolerates spaces, quoting and dots around the name (```app.core`.``,
+    ``./app/core.py``), file paths (``app/core.py``, ``app/__init__.py``) and a
+    ``.py`` suffix on a dotted name. A leading ``src`` segment is dropped only
+    when the name does not match with it, because it is usually the source root;
+    no other segment is guessed away.
 
     Args:
         written: The module name as written by the LLM.
@@ -158,7 +160,7 @@ def normalize_module_name(written: str, graph: nx.DiGraph) -> str | None:
     Returns:
         The module as named in the graph, or None when it matches none.
     """
-    name = written.strip().strip(NAME_QUOTES).strip().rstrip(".")
+    name = written.strip(NAME_DECORATION)
     if name in graph:
         return name
     parts = [part for part in re.split(r"[/\\]", name) if part]
@@ -166,10 +168,10 @@ def normalize_module_name(written: str, graph: nx.DiGraph) -> str | None:
         parts[-1] = parts[-1].removesuffix(PYTHON_SUFFIX)
     if parts and parts[-1] == PACKAGE_INIT:
         parts.pop()
-    if parts and parts[0] == SOURCE_ROOT and len(parts) > 1:
-        parts.pop(0)
-    dotted = ".".join(parts)
-    return dotted if dotted in graph else None
+    candidates = [".".join(parts)]
+    if len(parts) > 1 and parts[0] == SOURCE_ROOT:
+        candidates.append(".".join(parts[1:]))
+    return next((candidate for candidate in candidates if candidate in graph), None)
 
 
 def ground_report(report: AIReport, graph: nx.DiGraph) -> GroundingResult:

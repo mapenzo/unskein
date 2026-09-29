@@ -155,7 +155,8 @@ def test_dropped_problems_are_counted_and_logged(
     outcome = execute_scan(context)
     assert outcome.ai_outcome is not None
     assert outcome.ai_outcome.dropped_problems == 1
-    assert "1" in caplog.text
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Discarded 1 AI problem(s) that named no module of the project" in messages
     assert "secret title" not in caplog.text
 
 
