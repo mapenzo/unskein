@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "litellm>=1.50",
+    "litellm>=1.95.0,<2",
     "networkx>=3.3",
     "pathspec>=0.12",
     "psutil>=6.0",
