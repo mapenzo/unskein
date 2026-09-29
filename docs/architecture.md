@@ -552,7 +552,11 @@ cada uno y su longitud real en `CycleSummary.length`), los 15 módulos con mayor
 lado, para que el LLM sepa que hay más. Los ciclos se resumen porque `find_cycles`
 no acota su longitud (dentro de una maraña son casi tan largos como ella); el peor
 caso medido (maraña de 120 módulos, 100 ciclos, nombres de ~45 caracteres, 2000
-módulos) queda por debajo de `MAX_PROMPT_CHARS` (16 000).
+módulos) queda por debajo de `MAX_PROMPT_CHARS` (16 000). Si aun así el mensaje no
+cabe (p. ej. nombres de módulo muy largos), `build_messages` aplica `shrink_context`
+en silencio (solo `DEBUG`): parte a la mitad cada lista y los miembros de cada
+maraña/ciclo, sin bajar de uno y conservando los totales, hasta que cabe o ya no se
+puede reducir más; en ese caso se envía en su tamaño mínimo.
 
 ### Prompt
 

@@ -6,7 +6,14 @@ import networkx as nx
 import pathspec
 import pytest
 
-from unskein.ai.models import AIContext, AIReport, Problem
+from unskein.ai.models import (
+    AIContext,
+    AIReport,
+    CycleSummary,
+    ModuleCoupling,
+    Problem,
+    TangleSummary,
+)
 from unskein.ai.prompts import (
     MAX_CYCLE_MEMBERS_IN_PROMPT,
     MAX_CYCLES_IN_PROMPT,
@@ -19,6 +26,7 @@ from unskein.ai.prompts import (
     build_context,
     build_messages,
     ground_report,
+    shrink_context,
 )
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
 from unskein.i18n import Lang
@@ -248,6 +256,62 @@ def test_the_worst_case_tangle_stays_under_the_prompt_size_limit() -> None:
     context = build_context(tangle_result(tangle_size=120, tangle_count=6, module_count=2000))
     messages = build_messages(context, Lang.EN)
     assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
+
+
+def long_named_context(name_length: int, count: int) -> AIContext:
+    """Build a context whose lists are full of very long module names.
+
+    Args:
+        name_length: Length of every module name.
+        count: Items per list and members per tangle or cycle.
+
+    Returns:
+        The context, far above the prompt size limit for long names.
+    """
+    names = [f"m{index}".ljust(name_length, "x") for index in range(count)]
+    return AIContext(
+        total_modules=count,
+        total_dependencies=count,
+        tangles=[TangleSummary(size=count, members=names) for _ in range(count)],
+        total_tangles=count,
+        cycles=[CycleSummary(length=count, members=names) for _ in range(count)],
+        total_cycles=count,
+        cycles_truncated=False,
+        top_coupled_modules=[
+            ModuleCoupling(module=name, ca=1, ce=1, instability=0.5) for name in names
+        ],
+        warning_counts={},
+    )
+
+
+def test_an_oversized_context_is_shrunk_to_fit_the_prompt() -> None:
+    messages = build_messages(long_named_context(name_length=120, count=20), Lang.EN)
+    assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
+
+
+def test_shrinking_keeps_totals_and_the_first_items() -> None:
+    context = long_named_context(name_length=120, count=20)
+    data, _ = user_blocks(build_messages(context, Lang.EN))
+    sent = json.loads(data)
+    assert sent["total_tangles"] == 20 and sent["total_cycles"] == 20
+    assert 1 <= len(sent["top_coupled_modules"]) < 20
+    assert sent["top_coupled_modules"][0]["module"] == context.top_coupled_modules[0].module
+    assert sent["tangles"][0]["size"] == 20
+
+
+def test_shrink_halves_lists_and_members_but_keeps_at_least_one() -> None:
+    shrunk = shrink_context(long_named_context(name_length=5, count=5))
+    assert len(shrunk.top_coupled_modules) == 2
+    assert len(shrunk.tangles) == 2 and len(shrunk.tangles[0].members) == 2
+    assert len(shrunk.cycles) == 2 and len(shrunk.cycles[0].members) == 2
+    single = shrink_context(long_named_context(name_length=5, count=1))
+    assert single == long_named_context(name_length=5, count=1)
+
+
+def test_an_unfittable_context_is_still_sent_at_its_smallest() -> None:
+    messages = build_messages(long_named_context(name_length=MAX_PROMPT_CHARS, count=3), Lang.EN)
+    data, _ = user_blocks(messages)
+    assert len(json.loads(data)["top_coupled_modules"]) == 1
 
 
 def problem(modules: list[str], snippet: str | None = None) -> Problem:
