@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `unskein scan` works end to end: Markdown report in English or Spanish (terminal via
   rich, raw file with `-o`), warnings grouped by kind with paths relative to the
   project, `--verbose` stats and `--log-file`. The AI section explains why it is
-  empty (disabled, not configured, or not available yet).
+  empty (disabled, not configured, or the call failed).
 - Exit codes are enforced: usage errors now exit with 1 (click's default 2 collided with
   "high-severity problems found"), unexpected errors exit with 3 showing the traceback.
 - Pylint configuration aligned with the Clean Code rules, for IDEs.
@@ -54,7 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The "AI is not available yet" notice is gone: the report now says either that the AI is disabled or not configured, or why the call failed.
+- The placeholder notice about the AI arriving later is gone: the report now says
+  either that the AI is disabled or not configured, or why the call failed.
 - Precedence for non-secret options is now flag > env var > `.unskein.toml` (so
   `--lang` beats `UNSKEIN_LANG`); secrets keep env var > `.unskein.toml` > `--api-key`.
 - Analysis warnings are now structured (`ParseWarning` with a `WarningCode`, file, line

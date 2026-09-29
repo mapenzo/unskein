@@ -676,7 +676,9 @@ Estructura del reporte:
 ## Métricas generales
 ## Ciclos de dependencia
 ## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado)
-## Problemas señalados (IA)         (omitida solo si no hay AIReport; con aviso)
+## Problemas señalados (IA)         (siempre presente: los problemas si hay AIReport;
+                                    si no, el aviso de por qué no hay: DISABLED,
+                                    NOT_CONFIGURED o FAILED)
 ## Advertencias del análisis        (solo si hay parse_warnings)
 ```
 
