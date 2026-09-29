@@ -1,7 +1,10 @@
 """Provider-agnostic LLM client built on LiteLLM."""
 
 import logging
+import os
 import re
+from dataclasses import dataclass
+from types import ModuleType
 
 from pydantic import ValidationError
 
@@ -13,6 +16,68 @@ logger = logging.getLogger("unskein")
 
 JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 REASONING_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+DIRECT_CALL_TIMEOUT_SECONDS = 60
+PROXY_MODEL_PREFIX = "litellm_proxy/"
+DEFAULT_TEMPERATURE = 0.2
+REASONING_TEMPERATURE = 1.0
+ENV_LOCAL_COST_MAP = "LITELLM_LOCAL_MODEL_COST_MAP"
+
+
+@dataclass(frozen=True)
+class ModelProfile:
+    """How to call one model, resolved once when the client is built.
+
+    Attributes:
+        temperature: Sampling temperature; reasoning models only accept 1.0.
+        response_format: The ``AIReport`` class when the model supports JSON
+            schemas, otherwise plain JSON mode.
+        timeout_seconds: Per-call limit for direct calls; None when a LiteLLM
+            Proxy is in charge of timeouts.
+    """
+
+    temperature: float
+    response_format: type[AIReport] | dict[str, str]
+    timeout_seconds: int | None
+
+
+def load_litellm() -> ModuleType:
+    """Import LiteLLM lazily, with remote lookups and telemetry turned off.
+
+    The import costs about 1.5 s that ``--no-ai`` must not pay, and by default
+    LiteLLM downloads its price map from a remote URL on import, a network
+    request nobody asked for. Safe to call repeatedly.
+
+    Returns:
+        The ``litellm`` module.
+    """
+    os.environ.setdefault(ENV_LOCAL_COST_MAP, "True")
+    import litellm  # pylint: disable=import-outside-toplevel  # lazy: see docstring
+
+    litellm.telemetry = False
+    litellm.suppress_debug_info = True
+    return litellm
+
+
+def build_profile(model: str) -> ModelProfile:
+    """Decide how to call a model from what LiteLLM knows about it.
+
+    Args:
+        model: LiteLLM model string, e.g. ``ollama/qwen2.5-coder:7b``.
+
+    Returns:
+        The temperature, response format and timeout to use with that model.
+    """
+    litellm = load_litellm()
+    is_reasoning = litellm.supports_reasoning(model)
+    supports_schema = litellm.supports_response_schema(model)
+    return ModelProfile(
+        temperature=REASONING_TEMPERATURE if is_reasoning else DEFAULT_TEMPERATURE,
+        response_format=AIReport if supports_schema else {"type": "json_object"},
+        timeout_seconds=None
+        if model.startswith(PROXY_MODEL_PREFIX)
+        else DIRECT_CALL_TIMEOUT_SECONDS,
+    )
 
 
 def extract_json_block(raw: str) -> str | None:

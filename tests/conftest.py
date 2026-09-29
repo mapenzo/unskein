@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from unskein.ai.client import load_litellm
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
@@ -64,3 +66,20 @@ def reexport_chain() -> Path:
 @pytest.fixture
 def reexport_cycle() -> Path:
     return FIXTURES_DIR / "reexport_cycle"
+
+
+@pytest.fixture(autouse=True)
+def no_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail any test that reaches the network through ``litellm.completion``.
+
+    Tests that need a model answer install ``fake_llm`` on top of this.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    litellm = load_litellm()
+
+    def refuse(**kwargs: object) -> None:
+        raise AssertionError("test called a real LLM; use the fake_llm fixture")
+
+    monkeypatch.setattr(litellm, "completion", refuse)
