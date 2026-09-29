@@ -1,8 +1,10 @@
 """System prompt and prompt construction for the AI interpretation step."""
 
+import json
 from collections import Counter
+from dataclasses import asdict
 
-from unskein.ai.models import AIContext, ModuleCoupling, TangleSummary
+from unskein.ai.models import AIContext, AIReport, ModuleCoupling, TangleSummary
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang
 
@@ -14,8 +16,8 @@ INSTABILITY_DECIMALS = 2
 MAX_PROMPT_CHARS = 16_000
 
 LANG_INSTRUCTION: dict[Lang, str] = {
-    Lang.ES: "Responde en español.",
-    Lang.EN: "Respond in English.",
+    Lang.ES: "Write the summary, the problem descriptions and the recommendations in Spanish.",
+    Lang.EN: "Write the summary, the problem descriptions and the recommendations in English.",
 }
 
 SYSTEM_PROMPT = """\
@@ -23,7 +25,21 @@ You are a software architecture reviewer. You receive pre-computed dependency an
 coupling metrics for a Python project. Interpret ONLY the data provided.
 Do not invent modules, files or facts not present in the data. When the data is
 insufficient for a conclusion, say so explicitly instead of giving generic advice.
-Reply with a single JSON object matching the schema included in the user message.
+
+Data guide: ca = modules that depend on a module, ce = modules it depends on,
+instability = ce / (ca + ce). A tangle is a group of modules that all depend on each
+other, directly or not; size is its real size, members may be truncated. Lists are
+truncated: compare them with their totals.
+
+Severity rubric:
+- high: a tangle or a dependency cycle.
+- medium: a module with top ca + ce and extreme instability (near 0 or near 1).
+- low: anything else worth mentioning.
+
+Rules:
+- Copy module names exactly as given.
+- JSON keys and the values of "severity" and "architecture_health" stay in English.
+- Reply with a single JSON object matching the schema in the user message, nothing else.
 """
 
 
@@ -70,32 +86,29 @@ def build_context(result: AnalysisResult) -> AIContext:
     )
 
 
-def build_prompt(context: AIContext, lang: Lang) -> str:
-    """Build the user prompt, prefixed with the output language instruction.
+def build_messages(context: AIContext, lang: Lang) -> list[dict[str, str]]:
+    """Build the system and user messages for the interpretation call.
+
+    The JSON schema of ``AIReport`` goes inside the prompt as well as in the API
+    parameter, because cheap local models often ignore ``response_format``.
+    Serialization is deterministic, so the same project yields the same prompt.
 
     Args:
         context: Bounded analysis context.
-        lang: Language the LLM must answer in.
+        lang: Language the LLM must write its free text in.
 
     Returns:
-        The full user prompt.
+        The ``[system, user]`` messages.
     """
-    return f"{LANG_INSTRUCTION[lang]}\n\n" + _build_prompt_body(context)
-
-
-def _build_prompt_body(context: AIContext) -> str:
-    """Render the context and the AIReport JSON schema as prompt text.
-
-    The schema is included inline because cheap local models often ignore
-    ``response_format``.
-
-    Args:
-        context: Bounded analysis context.
-
-    Returns:
-        Prompt body without the language instruction.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
-    """
-    raise NotImplementedError
+    data = json.dumps(asdict(context), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    schema = json.dumps(
+        AIReport.model_json_schema(), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+    user = (
+        f"Analysis data:\n```json\n{data}\n```\n\n"
+        f"Answer with a JSON object that matches this JSON schema:\n```json\n{schema}\n```"
+    )
+    return [
+        {"role": "system", "content": f"{SYSTEM_PROMPT}\n{LANG_INSTRUCTION[lang]}"},
+        {"role": "user", "content": user},
+    ]

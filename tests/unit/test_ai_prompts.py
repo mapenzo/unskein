@@ -1,18 +1,25 @@
 """Tests for AI prompt context construction."""
 
+import json
+import re
 from pathlib import Path
 
 import networkx as nx
 import pathspec
 
+from unskein.ai.models import AIContext, AIReport
 from unskein.ai.prompts import (
     MAX_CYCLES_IN_PROMPT,
     MAX_MODULES_IN_PROMPT,
+    MAX_PROMPT_CHARS,
     MAX_TANGLE_MEMBERS_IN_PROMPT,
     MAX_TANGLES_IN_PROMPT,
+    SYSTEM_PROMPT,
     build_context,
+    build_messages,
 )
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
+from unskein.i18n import Lang
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.python_parser import PythonAdapter
 
@@ -105,3 +112,74 @@ def test_top_coupled_modules_are_ranked_by_ca_plus_ce_then_name() -> None:
     top = build_context(result).top_coupled_modules
     assert [m.module for m in top] == ["hub", "a", "leaf", "z"]
     assert (top[0].ca, top[0].ce, top[0].instability) == (2, 1, 0.33)
+
+
+def user_blocks(messages: list[dict[str, str]]) -> list[str]:
+    """Return the fenced JSON blocks of the user message.
+
+    Args:
+        messages: Messages built by ``build_messages``.
+
+    Returns:
+        The text of each ```json block, in order.
+    """
+    return re.findall(r"```json\n(.*?)\n```", messages[1]["content"], re.DOTALL)
+
+
+def small_context(circular_imports: Path) -> AIContext:
+    """Build the context of the circular-imports fixture.
+
+    Args:
+        circular_imports: Fixture project directory.
+
+    Returns:
+        Its AI context.
+    """
+    return build_context(analyze_fixture(circular_imports))
+
+
+def test_messages_are_system_then_user(circular_imports: Path) -> None:
+    messages = build_messages(small_context(circular_imports), Lang.EN)
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert SYSTEM_PROMPT in messages[0]["content"]
+
+
+def test_language_instruction_targets_the_free_text_fields(circular_imports: Path) -> None:
+    context = small_context(circular_imports)
+    assert "Spanish" in build_messages(context, Lang.ES)[0]["content"]
+    assert "English" in build_messages(context, Lang.EN)[0]["content"]
+
+
+def test_system_prompt_states_the_severity_rubric_and_literal_names() -> None:
+    assert "high" in SYSTEM_PROMPT and "tangle" in SYSTEM_PROMPT
+    assert "exactly as given" in SYSTEM_PROMPT
+    assert "Do not invent" in SYSTEM_PROMPT
+
+
+def test_user_message_holds_the_data_then_the_schema(circular_imports: Path) -> None:
+    data, schema = user_blocks(build_messages(small_context(circular_imports), Lang.EN))
+    assert json.loads(data)["cycles"] == [["app.a", "app.b"]]
+    assert json.loads(schema) == AIReport.model_json_schema()
+
+
+def test_the_same_project_gives_the_same_prompt(circular_imports: Path) -> None:
+    context = small_context(circular_imports)
+    assert build_messages(context, Lang.EN) == build_messages(context, Lang.EN)
+
+
+def test_unicode_and_brace_module_names_stay_literal_and_valid() -> None:
+    graph = nx.DiGraph()
+    graph.add_edge("pkg.módulo_ñ", "pkg.{weird}")
+    result = AnalysisResult(
+        graph=graph, coupling_metrics=compute_coupling(graph), cycles=[], high_coupling_modules=[]
+    )
+    data, _ = user_blocks(build_messages(build_context(result), Lang.EN))
+    names = {m["module"] for m in json.loads(data)["top_coupled_modules"]}
+    assert names == {"pkg.módulo_ñ", "pkg.{weird}"}
+    assert "\\u" not in data
+
+
+def test_a_large_project_stays_under_the_prompt_size_limit() -> None:
+    context = build_context(synthetic_result(module_count=2000, cycle_count=90, tangle_count=9))
+    messages = build_messages(context, Lang.EN)
+    assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
