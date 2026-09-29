@@ -58,6 +58,8 @@ exclude = ["/graft", "/.claude", "/.mcp.json"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 norecursedirs = ["tests/fixtures"]
+# Third-party noise raised by pydantic while importing litellm; kept narrow on purpose.
+filterwarnings = ["ignore:Item 'summary' on TypedDict class:UserWarning"]
 
 [tool.coverage.run]
 source = ["unskein"]

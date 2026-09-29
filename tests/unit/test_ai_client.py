@@ -250,3 +250,13 @@ def test_an_empty_api_key_does_not_mangle_the_logged_message(
     )
     make_client(api_key="").generate_report(MESSAGES)
     assert "provider says nothing" in unskein_logs.text
+
+
+@pytest.mark.parametrize("content", [GOOD_REPORT, "not json"])
+def test_the_api_key_never_reaches_logs_or_the_outcome_without_an_exception(
+    fake_llm: Any, unskein_logs: Any, content: str
+) -> None:
+    fake_llm.content = content
+    outcome = make_client(api_key=SECRET).generate_report(MESSAGES)
+    assert SECRET not in unskein_logs.text
+    assert SECRET not in repr(outcome)

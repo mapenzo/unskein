@@ -230,6 +230,8 @@ class AIClient:
         Returns:
             The text with every occurrence of the key replaced.
         """
+        # Only the exact key string is replaced: a provider that echoes a masked or
+        # transformed key (truncated, base64, URL-encoded) is not covered.
         if not self.config.api_key:
             return text
         return text.replace(self.config.api_key, REDACTED)
