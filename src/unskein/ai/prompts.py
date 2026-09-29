@@ -13,6 +13,9 @@ from unskein.i18n import Lang
 
 logger = logging.getLogger("unskein")
 
+# Instability from which a module others depend on counts as volatile in the rubric.
+UNSTABLE_THRESHOLD = 0.7
+
 MAX_TANGLES_IN_PROMPT = 5
 MAX_TANGLE_MEMBERS_IN_PROMPT = 20
 MAX_CYCLES_IN_PROMPT = 10
@@ -26,7 +29,7 @@ LANG_INSTRUCTION: dict[Lang, str] = {
     Lang.EN: "Write the summary, the problem descriptions and the recommendations in English.",
 }
 
-SYSTEM_PROMPT = """\
+SYSTEM_PROMPT = f"""\
 You are a software architecture reviewer. You receive pre-computed dependency and
 coupling metrics for a Python project. Interpret ONLY the data provided.
 Do not invent modules, files or facts not present in the data. When the data is
@@ -39,8 +42,11 @@ truncated: compare them with their totals.
 
 Severity rubric:
 - high: a tangle or a dependency cycle.
-- medium: a module with top ca + ce and extreme instability (near 0 or near 1).
+- medium: a module with top ca + ce that is volatile while others rely on it
+  (instability >= {UNSTABLE_THRESHOLD} and ca > 0), or whose ce is far above the rest.
 - low: anything else worth mentioning.
+Never flag a module only for low instability: a stable module many others depend on is
+healthy.
 
 Rules:
 - Copy module names exactly as given.
