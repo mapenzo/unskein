@@ -4,7 +4,7 @@ import json
 import logging
 import re
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import networkx as nx
 
@@ -103,12 +103,50 @@ def build_context(result: AnalysisResult) -> AIContext:
     )
 
 
+def shrink_context(context: AIContext) -> AIContext:
+    """Halve every list of a context, and the members of each tangle and cycle.
+
+    Keeps at least one item of each non-empty list, the order (most relevant
+    first) and every real total, so the LLM still sees what was left out.
+
+    Args:
+        context: The context to shrink.
+
+    Returns:
+        A smaller context, equal to the input when nothing can shrink further.
+    """
+    return replace(
+        context,
+        tangles=[
+            replace(tangle, members=_halved(tangle.members)) for tangle in _halved(context.tangles)
+        ],
+        cycles=[
+            replace(cycle, members=_halved(cycle.members)) for cycle in _halved(context.cycles)
+        ],
+        top_coupled_modules=_halved(context.top_coupled_modules),
+    )
+
+
+def _halved[T](items: list[T]) -> list[T]:
+    """Return the first half of a list, never fewer than one item.
+
+    Args:
+        items: The list to cut.
+
+    Returns:
+        The first ``len // 2`` items, or the list itself when it has one or none.
+    """
+    return items[: max(1, len(items) // 2)]
+
+
 def build_messages(context: AIContext, lang: Lang) -> list[dict[str, str]]:
     """Build the system and user messages for the interpretation call.
 
     The JSON schema of ``AIReport`` goes inside the prompt as well as in the API
     parameter, because cheap local models often ignore ``response_format``.
     Serialization is deterministic, so the same project yields the same prompt.
+    A context too large for ``MAX_PROMPT_CHARS`` is shrunk silently until it
+    fits, or until it cannot shrink further and is sent at its smallest.
 
     Args:
         context: Bounded analysis context.
@@ -117,18 +155,37 @@ def build_messages(context: AIContext, lang: Lang) -> list[dict[str, str]]:
     Returns:
         The ``[system, user]`` messages.
     """
-    data = json.dumps(asdict(context), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
-    schema = json.dumps(
-        AIReport.model_json_schema(), sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
-    user = (
-        f"Analysis data:\n```json\n{data}\n```\n\n"
-        f"Answer with a JSON object that matches this JSON schema:\n```json\n{schema}\n```"
-    )
+    user = _user_message(context)
+    while len(user) > MAX_PROMPT_CHARS:
+        shrunk = shrink_context(context)
+        if shrunk == context:
+            break
+        context = shrunk
+        user = _user_message(context)
+        logger.debug("Shrank the AI context to %d characters", len(user))
     return [
         {"role": "system", "content": f"{SYSTEM_PROMPT}\n{LANG_INSTRUCTION[lang]}"},
         {"role": "user", "content": user},
     ]
+
+
+def _user_message(context: AIContext) -> str:
+    """Serialize the analysis data and the report schema into the user message.
+
+    Args:
+        context: Bounded analysis context.
+
+    Returns:
+        The user message, with one fenced JSON block for each.
+    """
+    data = json.dumps(asdict(context), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    schema = json.dumps(
+        AIReport.model_json_schema(), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+    return (
+        f"Analysis data:\n```json\n{data}\n```\n\n"
+        f"Answer with a JSON object that matches this JSON schema:\n```json\n{schema}\n```"
+    )
 
 
 @dataclass(frozen=True, slots=True)
