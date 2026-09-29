@@ -5,12 +5,12 @@ import os
 import re
 from dataclasses import dataclass
 from types import ModuleType
+from typing import Any
 
 from pydantic import ValidationError
 
-from unskein.ai.models import AIContext, AIReport
+from unskein.ai.models import AIFailure, AIOutcome, AIReport
 from unskein.config import AIConfig
-from unskein.i18n import Lang
 
 logger = logging.getLogger("unskein")
 
@@ -22,6 +22,7 @@ PROXY_MODEL_PREFIX = "litellm_proxy/"
 DEFAULT_TEMPERATURE = 0.2
 REASONING_TEMPERATURE = 1.0
 ENV_LOCAL_COST_MAP = "LITELLM_LOCAL_MODEL_COST_MAP"
+REDACTED = "***"
 
 
 @dataclass(frozen=True)
@@ -138,41 +139,113 @@ def parse_report(raw: str) -> AIReport | None:
 class AIClient:
     """Generate AI reports through LiteLLM.
 
+    The model profile is resolved here, once: switching model means building a
+    new client, which resolves it again.
+
     Args:
         config: Model, API key and API base to use.
     """
 
     def __init__(self, config: AIConfig):
         self.config = config
+        self.profile = build_profile(config.model)
 
-    def generate_report(self, context: AIContext, lang: Lang) -> AIReport | None:
-        """Ask the model to interpret the analysis context.
+    def generate_report(self, messages: list[dict[str, str]]) -> AIOutcome:
+        """Ask the model to interpret the analysis.
 
-        Never raises: any call or validation failure is logged as a warning and
-        yields None, so the report is still produced without the AI section.
-
-        Args:
-            context: Bounded analysis context.
-            lang: Language the model must answer in.
-
-        Returns:
-            The validated report, or None on any failure.
-
-        Raises:
-            NotImplementedError: Not implemented yet.
-        """
-        raise NotImplementedError
-
-    def _parse_and_validate(self, raw: str) -> AIReport | None:
-        """Validate model output against AIReport, falling back to embedded JSON.
+        Never raises for expected failures: a timeout, a provider error or an
+        unusable answer become an outcome with a failure, so the report is still
+        produced without the AI section. Anything else is a bug and propagates.
 
         Args:
-            raw: Raw text returned by the model.
+            messages: System and user messages built from the analysis context.
 
         Returns:
-            The validated report, or None if the output does not match the schema.
-
-        Raises:
-            NotImplementedError: Not implemented yet.
+            The validated report, or the reason there is none.
         """
-        raise NotImplementedError
+        litellm = load_litellm()
+        call_errors = tuple(litellm.LITELLM_EXCEPTION_TYPES)
+        try:
+            response = litellm.completion(**self._request(messages))
+        except litellm.Timeout:
+            logger.warning("AI call failed: %s", AIFailure.TIMEOUT)
+            return AIOutcome(failure=AIFailure.TIMEOUT)
+        except call_errors as error:
+            error_type = type(error).__name__
+            logger.warning("AI call failed: %s (%s)", AIFailure.CALL_ERROR, error_type)
+            logger.debug("Provider message: %s", self._redact(str(error)))
+            return AIOutcome(failure=AIFailure.CALL_ERROR, error_type=error_type)
+        return self._interpret(response)
+
+    def _request(self, messages: list[dict[str, str]]) -> dict[str, Any]:
+        """Build the keyword arguments of the ``litellm.completion`` call.
+
+        Args:
+            messages: System and user messages.
+
+        Returns:
+            The request, with a timeout only when the profile has one.
+        """
+        request: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": messages,
+            "api_key": self.config.api_key,
+            "api_base": self.config.api_base,
+            "temperature": self.profile.temperature,
+            "response_format": self.profile.response_format,
+            "drop_params": True,
+        }
+        if self.profile.timeout_seconds is not None:
+            request["timeout"] = self.profile.timeout_seconds
+        return request
+
+    def _interpret(self, response: Any) -> AIOutcome:
+        """Turn a completion response into an outcome.
+
+        Args:
+            response: What ``litellm.completion`` returned.
+
+        Returns:
+            The report, or ``INVALID_RESPONSE`` if the answer is missing,
+            truncated or does not match the schema.
+        """
+        _log_usage(response)
+        if not response.choices:
+            return AIOutcome(failure=AIFailure.INVALID_RESPONSE)
+        choice = response.choices[0]
+        if choice.finish_reason == "length":
+            logger.debug("Model output was truncated (finish_reason=length)")
+            return AIOutcome(failure=AIFailure.INVALID_RESPONSE)
+        report = parse_report(choice.message.content) if choice.message.content else None
+        if report is None:
+            return AIOutcome(failure=AIFailure.INVALID_RESPONSE)
+        return AIOutcome(report=report)
+
+    def _redact(self, text: str) -> str:
+        """Hide the API key in a provider message before it is logged.
+
+        Args:
+            text: Message that may repeat the key.
+
+        Returns:
+            The text with every occurrence of the key replaced.
+        """
+        if not self.config.api_key:
+            return text
+        return text.replace(self.config.api_key, REDACTED)
+
+
+def _log_usage(response: Any) -> None:
+    """Log token usage and cost at DEBUG level; purely informational.
+
+    Args:
+        response: What ``litellm.completion`` returned.
+    """
+    litellm = load_litellm()
+    try:
+        cost: float | None = litellm.completion_cost(completion_response=response)
+    except Exception as error:  # pylint: disable=broad-exception-caught  # cost is informational
+        logger.debug("AI cost unknown (%s)", type(error).__name__)
+        cost = None
+    total_tokens = getattr(getattr(response, "usage", None), "total_tokens", "unknown")
+    logger.debug("AI call used %s tokens, cost %s", total_tokens, cost)
