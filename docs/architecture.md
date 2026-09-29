@@ -546,9 +546,13 @@ analyze → build_context → build_messages → AIClient.generate_report → gr
 ### Contexto acotado (`AIContext`)
 
 Solo nombres de módulo y métricas (nunca código fuente ni rutas): las mayores
-marañas (5, con hasta 20 miembros), los ciclos más cortos (20), los 15 módulos con
-mayor `Ca + Ce` y el recuento de warnings por código. Cada lista truncada lleva su
-total al lado, para que el LLM sepa que hay más.
+marañas (5, con hasta 20 miembros), los ciclos más cortos (10, con hasta 8 miembros
+cada uno y su longitud real en `CycleSummary.length`), los 15 módulos con mayor
+`Ca + Ce` y el recuento de warnings por código. Cada lista truncada lleva su total al
+lado, para que el LLM sepa que hay más. Los ciclos se resumen porque `find_cycles`
+no acota su longitud (dentro de una maraña son casi tan largos como ella); el peor
+caso medido (maraña de 120 módulos, 100 ciclos, nombres de ~45 caracteres, 2000
+módulos) queda por debajo de `MAX_PROMPT_CHARS` (16 000).
 
 ### Prompt
 

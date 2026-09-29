@@ -1,5 +1,3 @@
-"""Tests for AI prompt context construction."""
-
 import json
 import re
 from pathlib import Path
@@ -9,6 +7,7 @@ import pathspec
 
 from unskein.ai.models import AIContext, AIReport, Problem
 from unskein.ai.prompts import (
+    MAX_CYCLE_MEMBERS_IN_PROMPT,
     MAX_CYCLES_IN_PROMPT,
     MAX_MODULES_IN_PROMPT,
     MAX_PROMPT_CHARS,
@@ -66,11 +65,38 @@ def synthetic_result(module_count: int, cycle_count: int, tangle_count: int) -> 
     )
 
 
+def tangle_result(tangle_size: int, tangle_count: int, module_count: int) -> AnalysisResult:
+    """Build an analysis like ``find_cycles`` gives inside big tangles.
+
+    Args:
+        tangle_size: Modules per tangle.
+        tangle_count: Number of tangles.
+        module_count: Total modules, at least ``tangle_size * tangle_count``.
+
+    Returns:
+        An analysis with 100 cycles, the shortest already nearly tangle-sized.
+    """
+    names = [f"company.platform.subsystem_{i:04d}.internal.handlers" for i in range(module_count)]
+    graph = nx.DiGraph()
+    graph.add_nodes_from(names)
+    graph.add_edges_from(zip(names, names[1:], strict=False))
+    cycles = [names[: tangle_size - 99 + i] for i in range(100)]
+    tangles = [names[i * tangle_size : (i + 1) * tangle_size] for i in range(tangle_count)]
+    return AnalysisResult(
+        graph=graph,
+        coupling_metrics=compute_coupling(graph),
+        cycles=cycles,
+        high_coupling_modules=[],
+        cycles_truncated=True,
+        tangles=tangles,
+    )
+
+
 def test_context_summarizes_a_small_project(circular_imports: Path) -> None:
     context = build_context(analyze_fixture(circular_imports))
     assert context.total_modules == 3
     assert context.total_cycles == 1
-    assert context.cycles == [["app.a", "app.b"]]
+    assert [(c.length, c.members) for c in context.cycles] == [(2, ["app.a", "app.b"])]
     assert [t.size for t in context.tangles] == [2]
     assert context.warning_counts == {}
 
@@ -90,6 +116,7 @@ def test_lists_are_truncated_but_totals_are_kept() -> None:
     assert context.cycles_truncated is True
     assert len(context.tangles) == MAX_TANGLES_IN_PROMPT
     assert context.total_tangles == 8
+    assert all(len(c.members) <= MAX_CYCLE_MEMBERS_IN_PROMPT for c in context.cycles)
     assert all(len(t.members) <= MAX_TANGLE_MEMBERS_IN_PROMPT for t in context.tangles)
     assert context.tangles[0].size == 30
     assert len(context.top_coupled_modules) == MAX_MODULES_IN_PROMPT
@@ -97,7 +124,7 @@ def test_lists_are_truncated_but_totals_are_kept() -> None:
 
 def test_cycles_come_shortest_first() -> None:
     context = build_context(synthetic_result(module_count=100, cycle_count=40, tangle_count=0))
-    lengths = [len(cycle) for cycle in context.cycles]
+    lengths = [cycle.length for cycle in context.cycles]
     assert lengths == sorted(lengths)
 
 
@@ -159,7 +186,7 @@ def test_system_prompt_states_the_severity_rubric_and_literal_names() -> None:
 
 def test_user_message_holds_the_data_then_the_schema(circular_imports: Path) -> None:
     data, schema = user_blocks(build_messages(small_context(circular_imports), Lang.EN))
-    assert json.loads(data)["cycles"] == [["app.a", "app.b"]]
+    assert json.loads(data)["cycles"] == [{"length": 2, "members": ["app.a", "app.b"]}]
     assert json.loads(schema) == AIReport.model_json_schema()
 
 
@@ -182,6 +209,19 @@ def test_unicode_and_brace_module_names_stay_literal_and_valid() -> None:
 
 def test_a_large_project_stays_under_the_prompt_size_limit() -> None:
     context = build_context(synthetic_result(module_count=2000, cycle_count=90, tangle_count=9))
+    messages = build_messages(context, Lang.EN)
+    assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
+
+
+def test_a_long_cycle_reports_its_real_length_with_capped_members() -> None:
+    context = build_context(tangle_result(tangle_size=120, tangle_count=1, module_count=200))
+    shortest = context.cycles[0]
+    assert shortest.length == 21
+    assert len(shortest.members) == MAX_CYCLE_MEMBERS_IN_PROMPT
+
+
+def test_the_worst_case_tangle_stays_under_the_prompt_size_limit() -> None:
+    context = build_context(tangle_result(tangle_size=120, tangle_count=6, module_count=2000))
     messages = build_messages(context, Lang.EN)
     assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
 

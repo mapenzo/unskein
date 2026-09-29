@@ -76,6 +76,19 @@ class TangleSummary:
     members: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class CycleSummary:
+    """A dependency cycle, as shown to the LLM.
+
+    Attributes:
+        length: Real number of modules in the cycle.
+        members: Some of its modules, truncated to the prompt limit.
+    """
+
+    length: int
+    members: list[str]
+
+
 @dataclass(frozen=True)
 class AIContext:
     """Bounded, aggregated view of an analysis sent to the LLM instead of the full graph.
@@ -85,7 +98,7 @@ class AIContext:
         total_dependencies: Number of internal dependency edges.
         tangles: Largest tangles, truncated.
         total_tangles: Tangles before truncation.
-        cycles: Shortest dependency cycles, truncated.
+        cycles: Shortest dependency cycles, truncated and with capped members.
         total_cycles: Cycles found before truncation.
         cycles_truncated: Whether the cycle search itself stopped at its limit.
         top_coupled_modules: Most coupled modules by ``Ca + Ce``, truncated.
@@ -96,7 +109,7 @@ class AIContext:
     total_dependencies: int
     tangles: list[TangleSummary]
     total_tangles: int
-    cycles: list[list[str]]
+    cycles: list[CycleSummary]
     total_cycles: int
     cycles_truncated: bool
     top_coupled_modules: list[ModuleCoupling]

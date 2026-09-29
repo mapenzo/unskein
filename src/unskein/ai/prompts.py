@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 import networkx as nx
 
-from unskein.ai.models import AIContext, AIReport, ModuleCoupling, TangleSummary
+from unskein.ai.models import AIContext, AIReport, CycleSummary, ModuleCoupling, TangleSummary
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang
 
@@ -15,7 +15,8 @@ logger = logging.getLogger("unskein")
 
 MAX_TANGLES_IN_PROMPT = 5
 MAX_TANGLE_MEMBERS_IN_PROMPT = 20
-MAX_CYCLES_IN_PROMPT = 20
+MAX_CYCLES_IN_PROMPT = 10
+MAX_CYCLE_MEMBERS_IN_PROMPT = 8
 MAX_MODULES_IN_PROMPT = 15
 INSTABILITY_DECIMALS = 2
 MAX_PROMPT_CHARS = 16_000
@@ -33,7 +34,7 @@ insufficient for a conclusion, say so explicitly instead of giving generic advic
 
 Data guide: ca = modules that depend on a module, ce = modules it depends on,
 instability = ce / (ca + ce). A tangle is a group of modules that all depend on each
-other, directly or not; size is its real size, members may be truncated. Lists are
+other, directly or not; size and length are real sizes, members may be truncated. Lists are
 truncated: compare them with their totals.
 
 Severity rubric:
@@ -59,7 +60,7 @@ def build_context(result: AnalysisResult) -> AIContext:
         result: The deterministic analysis to summarize.
 
     Returns:
-        Context with the largest tangles, the shortest cycles, the most coupled
+        Context with the largest tangles, the shortest cycles (members capped), the most coupled
         modules and per-code warning counts.
     """
     ranked = sorted(
@@ -75,7 +76,12 @@ def build_context(result: AnalysisResult) -> AIContext:
             for members in result.tangles[:MAX_TANGLES_IN_PROMPT]
         ],
         total_tangles=len(result.tangles),
-        cycles=sorted(result.cycles, key=lambda cycle: (len(cycle), cycle))[:MAX_CYCLES_IN_PROMPT],
+        cycles=[
+            CycleSummary(length=len(cycle), members=cycle[:MAX_CYCLE_MEMBERS_IN_PROMPT])
+            for cycle in sorted(result.cycles, key=lambda cycle: (len(cycle), cycle))[
+                :MAX_CYCLES_IN_PROMPT
+            ]
+        ],
         total_cycles=len(result.cycles),
         cycles_truncated=result.cycles_truncated,
         top_coupled_modules=[
