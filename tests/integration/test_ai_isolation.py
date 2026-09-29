@@ -21,8 +21,8 @@ import sys
 from typer.testing import CliRunner
 from unskein.cli import app
 
-CliRunner().invoke(app, ["scan", sys.argv[1], "--no-ai"])
-print("litellm" in sys.modules)
+result = CliRunner().invoke(app, ["scan", sys.argv[1], "--no-ai"])
+print(result.exit_code, "litellm" in sys.modules)
 """
 
 
@@ -41,7 +41,8 @@ def run_python(script: str, *args: str, drop_env: str = "") -> subprocess.Comple
     return subprocess.run(
         [sys.executable, "-c", script, *args],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
         env=env,
     )
@@ -60,4 +61,4 @@ def test_importing_the_client_module_does_not_import_litellm() -> None:
 
 def test_a_no_ai_scan_never_imports_litellm(circular_imports: Path) -> None:
     completed = run_python(SCAN_WITHOUT_AI, str(circular_imports))
-    assert completed.stdout.strip().splitlines()[-1] == "False"
+    assert completed.stdout.strip().splitlines()[-1] == "0 False", completed.stderr

@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from unskein.ai.client import load_litellm
+from unskein.ai.client import ENV_LOCAL_COST_MAP, load_litellm
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -79,6 +79,7 @@ def no_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     Args:
         monkeypatch: Pytest monkeypatch fixture.
     """
+    monkeypatch.setenv(ENV_LOCAL_COST_MAP, "True")
     litellm = load_litellm()
 
     def refuse(**kwargs: object) -> None:
