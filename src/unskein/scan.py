@@ -197,7 +197,15 @@ def interpret(result: AnalysisResult, context: ScanContext) -> ScanOutcome:
     outcome = client.generate_report(build_messages(build_context(result), context.lang))
     if outcome.report is None:
         return ScanOutcome(result, AIStatus.FAILED, outcome)
-    grounded = replace(outcome, report=ground_report(outcome.report, result.graph))
+    grounding = ground_report(outcome.report, result.graph)
+    if grounding.dropped_problems:
+        logger.warning(
+            "Discarded %d AI problem(s) that named no module of the project",
+            grounding.dropped_problems,
+        )
+    grounded = replace(
+        outcome, report=grounding.report, dropped_problems=grounding.dropped_problems
+    )
     return ScanOutcome(result, AIStatus.PRESENT, grounded)
 
 

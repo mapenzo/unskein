@@ -193,6 +193,11 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.EN: "The model's answer does not follow the expected format. "
         "The deterministic analysis is complete.",
     },
+    "report.ai.dropped": {
+        Lang.ES: "Se descartaron {count} problema(s) de la IA que no nombraban ningún "
+        "módulo del proyecto.",
+        Lang.EN: "Discarded {count} AI problem(s) that named no module of the project.",
+    },
     "report.ai.no_problems": {
         Lang.ES: "La IA no señaló problemas de la severidad seleccionada o superior.",
         Lang.EN: "The AI flagged no problems at or above the selected severity.",

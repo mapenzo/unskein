@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   metrics; its answer is checked against the dependency graph, so it cannot name a
   module that does not exist. If the call or the answer fails, the report is still
   produced with a notice saying why. `--min-severity` and exit code 2 now apply to it.
+  Loosely written module names (quoted, with a trailing dot, or as file paths) are
+  matched to the graph; problems that still name no real module are discarded, and the
+  console and the report say how many.
 - Initial project scaffold: `src/` layout, pipeline contracts, test fixtures, CI.
 - Python import parser: absolute, relative and submodule imports, `is_external`
   detection, re-export detection in `__init__.py`, per-file warnings instead of crashes

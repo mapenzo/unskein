@@ -44,6 +44,7 @@ class ReportContext:
         min_severity: Lowest AI problem severity to show.
         ai_failure: Why the AI produced no report, when ai_status is FAILED.
         ai_error_type: Exception class name behind a call error.
+        ai_dropped_problems: AI problems discarded for naming no known module.
     """
 
     root: Path
@@ -53,6 +54,7 @@ class ReportContext:
     min_severity: Severity = "low"
     ai_failure: AIFailure | None = None
     ai_error_type: str | None = None
+    ai_dropped_problems: int = 0
 
 
 def filter_by_severity(problems: list[Problem], min_severity: Severity) -> list[Problem]:
@@ -277,6 +279,8 @@ def _ai(context: ReportContext, lang: Lang) -> list[str]:
         else:
             notice = t(f"report.ai.{context.ai_status}", lang)
         return [*lines, notice]
+    if context.ai_dropped_problems:
+        lines += [t("report.ai.dropped", lang, count=context.ai_dropped_problems), ""]
     problems = filter_by_severity(context.ai_report.problems, context.min_severity)
     if not problems:
         return [*lines, t("report.ai.no_problems", lang)]

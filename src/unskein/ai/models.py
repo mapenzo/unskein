@@ -154,11 +154,13 @@ class AIOutcome:
         report: The validated report, or None on failure.
         failure: Why there is no report, or None on success.
         error_type: Exception class name for ``CALL_ERROR`` (never its message).
+        dropped_problems: Problems discarded on grounding for naming no known module.
     """
 
     report: AIReport | None = None
     failure: AIFailure | None = None
     error_type: str | None = None
+    dropped_problems: int = 0
 
     def __post_init__(self) -> None:
         """Enforce that exactly one of ``report`` and ``failure`` is set.
