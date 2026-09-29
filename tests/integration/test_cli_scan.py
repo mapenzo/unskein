@@ -3,6 +3,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import Result
@@ -146,7 +147,7 @@ def test_unexpected_error_exits_3_with_traceback(
         """
         raise RuntimeError("simulated bug")
 
-    monkeypatch.setattr("unskein.cli.execute_scan", boom)
+    monkeypatch.setattr("unskein.cli.analyze_project", boom)
     result = scan_cli(str(circular_imports), "--no-ai")
     assert result.exit_code == ExitCode.INTERNAL_ERROR
     assert "simulated bug" in plain(result.output)
@@ -199,3 +200,16 @@ def test_error_message_shows_brackets_in_paths_literally(tmp_path: Path) -> None
     result = scan_cli(str(missing), "--lang", "en")
     assert result.exit_code == ExitCode.USAGE_ERROR
     assert f"Path '{missing}' does not exist" in plain(result.output)
+
+
+def test_ai_waiting_indicator_stays_silent_off_a_terminal(
+    circular_imports: Path, monkeypatch: pytest.MonkeyPatch, fake_llm: Any
+) -> None:
+    fake_llm.content = AIReport(
+        summary="s", architecture_health="fair", problems=[]
+    ).model_dump_json()
+    monkeypatch.setenv("UNSKEIN_AI_MODEL", "ollama/x")
+    result = scan_cli(str(circular_imports), "--lang", "en")
+    assert result.exit_code == ExitCode.OK
+    assert "Asking the model" not in plain(result.output)
+    assert len(fake_llm.calls) == 1

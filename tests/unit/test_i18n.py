@@ -3,6 +3,7 @@ import string
 
 import pytest
 
+from unskein.ai.models import AIFailure
 from unskein.errors import ConfigError, ErrorKey, UnskeinError
 from unskein.i18n import STRINGS, Lang, detect_lang, t, translate_error, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
@@ -88,3 +89,9 @@ def test_translate_error_fills_params() -> None:
 def test_translate_warning_uses_detail() -> None:
     warning = ParseWarning(WarningCode.STAR_IMPORT, None, 3, "app.b")
     assert "app.b" in translate_warning(warning, Lang.EN)
+
+
+def test_every_ai_failure_has_a_message_in_both_languages() -> None:
+    for failure in AIFailure:
+        for lang in Lang:
+            assert t(f"report.ai.failed.{failure}", lang, error_type="X")

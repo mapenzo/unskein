@@ -5,6 +5,7 @@ The pipeline itself lives in ``unskein.scan`` so it stays usable without typer.
 
 import io
 import sys
+from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -19,7 +20,14 @@ from unskein.i18n import Lang, detect_lang, t, translate_error
 from unskein.logging_setup import setup_logging
 from unskein.perf import PerformanceStats, measure
 from unskein.report.markdown import ReportContext, render_report
-from unskein.scan import ScanContext, ScanOptions, execute_scan, prepare_scan
+from unskein.scan import (
+    ScanContext,
+    ScanOptions,
+    ScanOutcome,
+    analyze_project,
+    interpret,
+    prepare_scan,
+)
 
 EXIT_CODES_EPILOG = (
     "Exit codes: 0=OK, 1=usage error, 2=high-severity problems found, 3=internal error."
@@ -199,17 +207,20 @@ def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitC
         _print_to_stderr(translate_error(e, detect_lang(options.lang)), style="red")
         return ExitCode.USAGE_ERROR
     try:
-        outcome, stats = measure(lambda: execute_scan(context))
+        outcome, stats = measure(lambda: _run_pipeline(context))
     except UnskeinError as e:
         _print_to_stderr(translate_error(e, context.lang), style="red")
         return ExitCode.USAGE_ERROR
+    ai_outcome = outcome.ai_outcome
     report = render_report(
         ReportContext(
             root=context.root,
             result=outcome.result,
             ai_report=outcome.ai_report,
-            ai_status=context.ai_status,
+            ai_status=outcome.ai_status,
             min_severity=context.min_severity,
+            ai_failure=ai_outcome.failure if ai_outcome else None,
+            ai_error_type=ai_outcome.error_type if ai_outcome else None,
         ),
         context.lang,
     )
@@ -219,6 +230,38 @@ def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitC
     if verbose:
         _print_stats(stats, context)
     return exit_code_for(outcome.ai_report)
+
+
+def _run_pipeline(context: ScanContext) -> ScanOutcome:
+    """Analyze the project and interpret it, showing progress while the model answers.
+
+    Args:
+        context: A prepared scan.
+
+    Returns:
+        The analysis and the AI outcome.
+    """
+    result = analyze_project(context)
+    with _ai_waiting_indicator(context):
+        return interpret(result, context)
+
+
+def _ai_waiting_indicator(context: ScanContext) -> AbstractContextManager[object]:
+    """Return a stderr spinner for the model call, or a no-op when not useful.
+
+    Only shown on a terminal, so pipes, files and CI logs stay clean.
+
+    Args:
+        context: The scan, for its language and model.
+
+    Returns:
+        A context manager to wrap the AI call in.
+    """
+    console = Console(stderr=True)
+    if context.ai_disabled or context.ai_config is None or not console.is_terminal:
+        return nullcontext()
+    message = t("cli.ai_waiting", context.lang, model=context.ai_config.model)
+    return console.status(message, spinner="dots")
 
 
 def _print_stats(stats: PerformanceStats, context: ScanContext) -> None:

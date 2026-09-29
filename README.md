@@ -28,9 +28,9 @@ unskein scan .
 ```
 
 > [!NOTE]
-> unskein is in **pre-alpha**. `unskein scan <path> --no-ai` already works end to end
-> (graph, coupling, cycles, Markdown report in English or Spanish); the AI interpretation
-> is still being built. The sample below shows the full v0.1 target, AI section included.
+> unskein is in **pre-alpha**. `unskein scan <path>` already works end to end (graph,
+> coupling, cycles, AI interpretation, Markdown report in English or Spanish). The
+> sample below shows the v0.1 report, AI section included.
 
 ## What you get
 
@@ -135,6 +135,20 @@ export UNSKEIN_AI_API_BASE="http://localhost:11434"
 unskein scan .
 ```
 
+Behind a team [LiteLLM Proxy](https://docs.litellm.ai/docs/simple_proxy)? Use the
+`litellm_proxy/` prefix and your virtual key:
+
+```bash
+export UNSKEIN_AI_MODEL="litellm_proxy/gpt-5"
+export UNSKEIN_AI_API_BASE="https://litellm.example.com"
+export UNSKEIN_API_KEY="sk-..."
+```
+
+Name the alias like the real model when you can: unskein asks LiteLLM whether the
+model is a reasoning model (they only accept `temperature=1.0`), and an opaque alias
+hides that. Direct calls are limited to 60 s; through a proxy the proxy decides.
+If the AI call fails for any reason, the report is still produced, with a notice.
+
 Settings are read in this order, first match wins:
 
 1. Environment variables: `UNSKEIN_AI_MODEL`, `UNSKEIN_API_KEY`, `UNSKEIN_AI_API_BASE`
@@ -147,9 +161,11 @@ Templates: [`.env.example`](.env.example) and [`.unskein.toml.example`](.unskein
 
 **No telemetry. None.** unskein does not collect usage data, not even anonymously.
 The only network request it makes is the LLM call you configure yourself, and there
-is none with `--no-ai` or a local Ollama model. The timing and memory stats shown with
-`--verbose` are computed on your machine and stay there. API keys never appear in logs
-or reports.
+is none with `--no-ai` or a local Ollama model. With a cloud model, what leaves your
+machine is module names and coupling metrics (counts, cycles, tangles), never source
+code or file paths. unskein also stops LiteLLM from downloading its price map or
+sending telemetry. The timing and memory stats shown with `--verbose` are computed
+on your machine and stay there. API keys never appear in logs or reports.
 
 ## Roadmap
 

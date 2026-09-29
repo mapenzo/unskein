@@ -177,11 +177,21 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.EN: "No AI model configured. Set `UNSKEIN_AI_MODEL` or `[ai] model` in "
         "`.unskein.toml` to get an interpretation of these results.",
     },
-    "report.ai.unavailable": {
-        Lang.ES: "La interpretación con IA llegará en una versión futura; este reporte "
-        "contiene solo el análisis determinista.",
-        Lang.EN: "AI interpretation will arrive in a future version; this report "
-        "contains the deterministic analysis only.",
+    "report.ai.failed.timeout": {
+        Lang.ES: "El modelo no respondió a tiempo. El análisis determinista está completo.",
+        Lang.EN: "The model did not answer in time. The deterministic analysis is complete.",
+    },
+    "report.ai.failed.call_error": {
+        Lang.ES: "No se pudo contactar con el modelo ({error_type}). "
+        "El análisis determinista está completo.",
+        Lang.EN: "The model could not be reached ({error_type}). "
+        "The deterministic analysis is complete.",
+    },
+    "report.ai.failed.invalid_response": {
+        Lang.ES: "La respuesta del modelo no cumple el formato esperado. "
+        "El análisis determinista está completo.",
+        Lang.EN: "The model's answer does not follow the expected format. "
+        "The deterministic analysis is complete.",
     },
     "report.ai.no_problems": {
         Lang.ES: "La IA no señaló problemas de la severidad seleccionada o superior.",
@@ -193,6 +203,10 @@ _REPORT: dict[str, dict[Lang, str]] = {
 }
 
 _CLI: dict[str, dict[Lang, str]] = {
+    "cli.ai_waiting": {
+        Lang.ES: "Consultando al modelo {model}…",
+        Lang.EN: "Asking the model {model}…",
+    },
     "cli.stats": {
         Lang.ES: "Duración: {seconds} s, pico de memoria: {memory} MB",
         Lang.EN: "Duration: {seconds} s, peak memory: {memory} MB",

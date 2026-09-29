@@ -1,14 +1,26 @@
 """Structured LLM output models and the bounded context sent to the LLM."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pydantic.json_schema import SkipJsonSchema
 
 Severity = Literal["low", "medium", "high"]
 ArchitectureHealth = Literal["good", "fair", "concerning"]
+
+
+def _drop_class_description(schema: dict[str, Any]) -> None:
+    """Remove the class docstring that Pydantic copies into a JSON schema.
+
+    The docstrings are written for developers; the model reading the schema
+    would take them as instructions.
+
+    Args:
+        schema: Generated JSON schema of one model, modified in place.
+    """
+    schema.pop("description", None)
 
 
 class Problem(BaseModel):
@@ -23,6 +35,8 @@ class Problem(BaseModel):
         code_snippet: Proposed code; always None in v0.1 and hidden from the
             JSON schema the model sees, snippets arrive in v0.2.
     """
+
+    model_config = ConfigDict(json_schema_extra=_drop_class_description)
 
     severity: Severity
     title: str
@@ -41,34 +55,81 @@ class AIReport(BaseModel):
         problems: Problems flagged by the LLM.
     """
 
+    model_config = ConfigDict(json_schema_extra=_drop_class_description)
+
     summary: str
     architecture_health: ArchitectureHealth
     problems: list[Problem]
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
+class ModuleCoupling:
+    """Coupling of one module, as shown to the LLM.
+
+    Attributes:
+        module: Dotted module name.
+        ca: Afferent coupling, modules that depend on it.
+        ce: Efferent coupling, modules it depends on.
+        instability: ``Ce / (Ca + Ce)``, rounded.
+    """
+
+    module: str
+    ca: int
+    ce: int
+    instability: float
+
+
+@dataclass(frozen=True, slots=True)
+class TangleSummary:
+    """A tangle of mutually dependent modules, as shown to the LLM.
+
+    Attributes:
+        size: Real number of modules in the tangle.
+        members: Some of its modules, truncated to the prompt limit.
+    """
+
+    size: int
+    members: list[str]
+
+
+@dataclass(frozen=True, slots=True)
+class CycleSummary:
+    """A dependency cycle, as shown to the LLM.
+
+    Attributes:
+        length: Real number of modules in the cycle.
+        members: Some of its modules, truncated to the prompt limit.
+    """
+
+    length: int
+    members: list[str]
+
+
+@dataclass(frozen=True)
 class AIContext:
     """Bounded, aggregated view of an analysis sent to the LLM instead of the full graph.
 
     Attributes:
         total_modules: Number of internal modules analyzed.
         total_dependencies: Number of internal dependency edges.
-        cycles: Dependency cycles, truncated to the prompt limit.
-        top_coupled_modules: Metrics of the most coupled modules, truncated.
-        parse_warnings: Analysis warnings, truncated.
-        total_cycles: Total cycles before truncation.
-        total_warnings: Total warnings before truncation.
-        truncation_notes: Human-readable notes on what was truncated.
+        tangles: Largest tangles, truncated.
+        total_tangles: Tangles before truncation.
+        cycles: Shortest dependency cycles, truncated and with capped members.
+        total_cycles: Cycles found before truncation.
+        cycles_truncated: Whether the cycle search itself stopped at its limit.
+        top_coupled_modules: Most coupled modules by ``Ca + Ce``, truncated.
+        warning_counts: Analysis warnings per warning code; no paths or messages.
     """
 
     total_modules: int
     total_dependencies: int
-    cycles: list[list[str]]
-    top_coupled_modules: list[dict]
-    parse_warnings: list[str]
-    total_cycles: int = 0
-    total_warnings: int = 0
-    truncation_notes: list[str] = field(default_factory=list)
+    tangles: list[TangleSummary]
+    total_tangles: int
+    cycles: list[CycleSummary]
+    total_cycles: int
+    cycles_truncated: bool
+    top_coupled_modules: list[ModuleCoupling]
+    warning_counts: dict[str, int]
 
 
 class AIFailure(StrEnum):

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from unskein.ai.models import AIReport, Problem, Severity
+from unskein.ai.models import AIFailure, AIReport, Problem, Severity
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
@@ -23,13 +23,13 @@ class AIStatus(StrEnum):
         PRESENT: An AI report is available.
         DISABLED: The user passed ``--no-ai``.
         NOT_CONFIGURED: No AI model is configured in any layer.
-        UNAVAILABLE: AI is configured but produced no report (or is not available yet).
+        FAILED: AI is configured but produced no report; see ``ReportContext.ai_failure``.
     """
 
     PRESENT = "present"
     DISABLED = "disabled"
     NOT_CONFIGURED = "not_configured"
-    UNAVAILABLE = "unavailable"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True)
@@ -42,6 +42,8 @@ class ReportContext:
         ai_report: The AI interpretation, or None.
         ai_status: Why the AI section has, or lacks, content.
         min_severity: Lowest AI problem severity to show.
+        ai_failure: Why the AI produced no report, when ai_status is FAILED.
+        ai_error_type: Exception class name behind a call error.
     """
 
     root: Path
@@ -49,6 +51,8 @@ class ReportContext:
     ai_report: AIReport | None
     ai_status: AIStatus
     min_severity: Severity = "low"
+    ai_failure: AIFailure | None = None
+    ai_error_type: str | None = None
 
 
 def filter_by_severity(problems: list[Problem], min_severity: Severity) -> list[Problem]:
@@ -263,7 +267,16 @@ def _ai(context: ReportContext, lang: Lang) -> list[str]:
     """
     lines = [f"## {t('report.ai', lang)}", ""]
     if context.ai_report is None:
-        return [*lines, t(f"report.ai.{context.ai_status}", lang)]
+        if context.ai_status is AIStatus.FAILED:
+            failure = context.ai_failure or AIFailure.CALL_ERROR
+            notice = t(
+                f"report.ai.failed.{failure}",
+                lang,
+                error_type=context.ai_error_type or "",
+            )
+        else:
+            notice = t(f"report.ai.{context.ai_status}", lang)
+        return [*lines, notice]
     problems = filter_by_severity(context.ai_report.problems, context.min_severity)
     if not problems:
         return [*lines, t("report.ai.no_problems", lang)]
