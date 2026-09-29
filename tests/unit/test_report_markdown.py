@@ -4,7 +4,7 @@ from pathlib import Path
 import networkx as nx
 import pathspec
 
-from unskein.ai.models import AIReport, Problem
+from unskein.ai.models import AIFailure, AIReport, Problem
 from unskein.graph.metrics import AnalysisResult, CouplingMetrics, analyze
 from unskein.i18n import Lang
 from unskein.parsers.indirection import resolve_indirection
@@ -229,3 +229,22 @@ def test_tangles_in_spanish(circular_imports: Path) -> None:
     report = render(circular_imports, analyzed(circular_imports), Lang.ES)
     assert "### Marañas" in report
     assert "- **2 módulos**: `app.a`, `app.b`" in report
+
+
+def test_ai_failure_notices_explain_why_there_is_no_ai_section(simple_project: Path) -> None:
+    result = analyzed(simple_project)
+
+    def failed(failure: AIFailure, error_type: str | None = None) -> str:
+        return render(
+            simple_project,
+            result,
+            ai_status=AIStatus.FAILED,
+            ai_failure=failure,
+            ai_error_type=error_type,
+        )
+
+    assert "did not answer in time" in failed(AIFailure.TIMEOUT)
+    call_error = failed(AIFailure.CALL_ERROR, "AuthenticationError")
+    assert "AuthenticationError" in call_error
+    assert "expected format" in failed(AIFailure.INVALID_RESPONSE)
+    assert "deterministic analysis is complete" in call_error
