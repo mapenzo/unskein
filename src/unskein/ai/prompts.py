@@ -1,12 +1,17 @@
 """System prompt and prompt construction for the AI interpretation step."""
 
-from unskein.ai.models import AIContext
+from collections import Counter
+
+from unskein.ai.models import AIContext, ModuleCoupling, TangleSummary
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang
 
+MAX_TANGLES_IN_PROMPT = 5
+MAX_TANGLE_MEMBERS_IN_PROMPT = 20
 MAX_CYCLES_IN_PROMPT = 20
 MAX_MODULES_IN_PROMPT = 15
-MAX_WARNINGS_IN_PROMPT = 10
+INSTABILITY_DECIMALS = 2
+MAX_PROMPT_CHARS = 16_000
 
 LANG_INSTRUCTION: dict[Lang, str] = {
     Lang.ES: "Responde en español.",
@@ -25,19 +30,44 @@ Reply with a single JSON object matching the schema included in the user message
 def build_context(result: AnalysisResult) -> AIContext:
     """Summarize an analysis into a bounded context for the LLM.
 
-    Never sends the full graph: only aggregates and truncated highlights, to
-    keep context size and cost under control.
+    Never sends the full graph, source code or file paths: only aggregates and
+    truncated highlights, each next to its real total, to keep size and cost
+    under control.
 
     Args:
         result: The deterministic analysis to summarize.
 
     Returns:
-        Context with truncated cycles, top coupled modules and warnings.
-
-    Raises:
-        NotImplementedError: Not implemented yet.
+        Context with the largest tangles, the shortest cycles, the most coupled
+        modules and per-code warning counts.
     """
-    raise NotImplementedError
+    ranked = sorted(
+        result.coupling_metrics.values(),
+        key=lambda metrics: (-(metrics.afferent + metrics.efferent), metrics.module),
+    )
+    warning_counts = Counter(warning.code.value for warning in result.parse_warnings)
+    return AIContext(
+        total_modules=result.graph.number_of_nodes(),
+        total_dependencies=result.graph.number_of_edges(),
+        tangles=[
+            TangleSummary(size=len(members), members=members[:MAX_TANGLE_MEMBERS_IN_PROMPT])
+            for members in result.tangles[:MAX_TANGLES_IN_PROMPT]
+        ],
+        total_tangles=len(result.tangles),
+        cycles=sorted(result.cycles, key=lambda cycle: (len(cycle), cycle))[:MAX_CYCLES_IN_PROMPT],
+        total_cycles=len(result.cycles),
+        cycles_truncated=result.cycles_truncated,
+        top_coupled_modules=[
+            ModuleCoupling(
+                module=metrics.module,
+                ca=metrics.afferent,
+                ce=metrics.efferent,
+                instability=round(metrics.instability, INSTABILITY_DECIMALS),
+            )
+            for metrics in ranked[:MAX_MODULES_IN_PROMPT]
+        ],
+        warning_counts=dict(sorted(warning_counts.items())),
+    )
 
 
 def build_prompt(context: AIContext, lang: Lang) -> str:

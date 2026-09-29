@@ -1,6 +1,6 @@
 """Structured LLM output models and the bounded context sent to the LLM."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
@@ -46,29 +46,61 @@ class AIReport(BaseModel):
     problems: list[Problem]
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
+class ModuleCoupling:
+    """Coupling of one module, as shown to the LLM.
+
+    Attributes:
+        module: Dotted module name.
+        ca: Afferent coupling, modules that depend on it.
+        ce: Efferent coupling, modules it depends on.
+        instability: ``Ce / (Ca + Ce)``, rounded.
+    """
+
+    module: str
+    ca: int
+    ce: int
+    instability: float
+
+
+@dataclass(frozen=True, slots=True)
+class TangleSummary:
+    """A tangle of mutually dependent modules, as shown to the LLM.
+
+    Attributes:
+        size: Real number of modules in the tangle.
+        members: Some of its modules, truncated to the prompt limit.
+    """
+
+    size: int
+    members: list[str]
+
+
+@dataclass(frozen=True)
 class AIContext:
     """Bounded, aggregated view of an analysis sent to the LLM instead of the full graph.
 
     Attributes:
         total_modules: Number of internal modules analyzed.
         total_dependencies: Number of internal dependency edges.
-        cycles: Dependency cycles, truncated to the prompt limit.
-        top_coupled_modules: Metrics of the most coupled modules, truncated.
-        parse_warnings: Analysis warnings, truncated.
-        total_cycles: Total cycles before truncation.
-        total_warnings: Total warnings before truncation.
-        truncation_notes: Human-readable notes on what was truncated.
+        tangles: Largest tangles, truncated.
+        total_tangles: Tangles before truncation.
+        cycles: Shortest dependency cycles, truncated.
+        total_cycles: Cycles found before truncation.
+        cycles_truncated: Whether the cycle search itself stopped at its limit.
+        top_coupled_modules: Most coupled modules by ``Ca + Ce``, truncated.
+        warning_counts: Analysis warnings per warning code; no paths or messages.
     """
 
     total_modules: int
     total_dependencies: int
+    tangles: list[TangleSummary]
+    total_tangles: int
     cycles: list[list[str]]
-    top_coupled_modules: list[dict]
-    parse_warnings: list[str]
-    total_cycles: int = 0
-    total_warnings: int = 0
-    truncation_notes: list[str] = field(default_factory=list)
+    total_cycles: int
+    cycles_truncated: bool
+    top_coupled_modules: list[ModuleCoupling]
+    warning_counts: dict[str, int]
 
 
 class AIFailure(StrEnum):
