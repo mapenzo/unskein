@@ -1,8 +1,12 @@
 import os
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
+
+from unskein.ai.client import ENV_LOCAL_COST_MAP, load_litellm
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -64,3 +68,70 @@ def reexport_chain() -> Path:
 @pytest.fixture
 def reexport_cycle() -> Path:
     return FIXTURES_DIR / "reexport_cycle"
+
+
+@pytest.fixture(autouse=True)
+def no_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail any test that reaches the network through ``litellm.completion``.
+
+    Tests that need a model answer install ``fake_llm`` on top of this.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.setenv(ENV_LOCAL_COST_MAP, "True")
+    litellm = load_litellm()
+
+    def refuse(**kwargs: object) -> None:
+        raise AssertionError("test called a real LLM; use the fake_llm fixture")
+
+    monkeypatch.setattr(litellm, "completion", refuse)
+
+
+class FakeLLM:
+    """Scriptable stand-in for ``litellm.completion`` that records every call.
+
+    Attributes:
+        content: Text the fake model answers with.
+        finish_reason: Finish reason of the answer.
+        error: Exception to raise instead of answering.
+        response: A ready-made response object; overrides ``content``.
+        calls: Keyword arguments of every call.
+    """
+
+    def __init__(self) -> None:
+        self.content: str | None = "{}"
+        self.finish_reason = "stop"
+        self.error: Exception | None = None
+        self.response: SimpleNamespace | None = None
+        self.calls: list[dict[str, Any]] = []
+
+    def __call__(self, **kwargs: Any) -> Any:
+        """Record the call, then raise the scripted error or return the scripted answer."""
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        if self.response is not None:
+            return self.response
+        litellm = load_litellm()
+        message = {"role": "assistant", "content": self.content}
+        return litellm.ModelResponse(
+            model="fake",
+            choices=[{"index": 0, "finish_reason": self.finish_reason, "message": message}],
+            usage=litellm.Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+        )
+
+
+@pytest.fixture
+def fake_llm(monkeypatch: pytest.MonkeyPatch) -> FakeLLM:
+    """Install a scriptable fake in place of ``litellm.completion``.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Returns:
+        The fake, to script answers and inspect calls.
+    """
+    fake = FakeLLM()
+    monkeypatch.setattr(load_litellm(), "completion", fake)
+    return fake

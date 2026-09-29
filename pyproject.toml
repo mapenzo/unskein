@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "litellm>=1.50",
+    "litellm>=1.95.0,<2",
     "networkx>=3.3",
     "pathspec>=0.12",
     "psutil>=6.0",
@@ -58,6 +58,9 @@ exclude = ["/graft", "/.claude", "/.mcp.json"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 norecursedirs = ["tests/fixtures"]
+# Third-party noise: pydantic raises it when litellm builds its first response
+# (ChatCompletionReasoningItem schema generation); kept narrow on purpose.
+filterwarnings = ["ignore:Item 'summary' on TypedDict class:UserWarning"]
 
 [tool.coverage.run]
 source = ["unskein"]

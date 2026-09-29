@@ -2015,7 +2015,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "litellm", specifier = ">=1.50" },
+    { name = "litellm", specifier = ">=1.95.0,<2" },
     { name = "networkx", specifier = ">=3.3" },
     { name = "pathspec", specifier = ">=0.12" },
     { name = "psutil", specifier = ">=6.0" },
