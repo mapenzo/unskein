@@ -58,3 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rules plus an AST-based test that also covers private names.
 - Parser data classes moved from `unskein.parsers.base` to `unskein.parsers.models`
   (still importable from `unskein.parsers`), removing an import cycle.
+- LiteLLM is now required at `>=1.95.0,<2`. The AI client resolves how to call the
+  model once (reasoning models get `temperature=1.0`, JSON-schema output when the model
+  supports it, a 60 s limit for direct calls) and never lets LiteLLM download its price
+  map or send telemetry.
