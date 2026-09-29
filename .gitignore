@@ -34,4 +34,5 @@ graft/
 .mcp.json
 .ignore
 
-docs/superpowers/*
+docs/superpowers/
+docs/litellm/
