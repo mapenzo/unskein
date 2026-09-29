@@ -119,7 +119,7 @@ automatically; for other layouts, set `source_roots` in `.unskein.toml`.
 
 | Code | Meaning |
 |---|---|
-| `0` | Analysis finished, nothing at or above `--min-severity` |
+| `0` | Analysis finished with no high-severity problems (`--min-severity` only filters what is shown) |
 | `1` | Usage error: bad path, no `.py` files, invalid config |
 | `2` | Analysis finished and found high-severity problems |
 | `3` | Internal error (a bug; the traceback is shown) |

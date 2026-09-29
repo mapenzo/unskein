@@ -323,7 +323,7 @@ no se mergea.
 
 | Código | Significado |
 |---|---|
-| `0` | Análisis completado, sin problemas de severidad ≥ `--min-severity` |
+| `0` | Análisis completado, sin problemas de severidad `high` (`--min-severity` solo filtra lo que se muestra) |
 | `1` | Error de uso (ruta inválida, sin archivos `.py`, config inválida) |
 | `2` | Análisis completado, con problemas de severidad `high` encontrados |
 | `3` | Error interno inesperado (bug real — traceback completo visible) |
