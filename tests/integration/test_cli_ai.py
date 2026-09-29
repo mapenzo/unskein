@@ -30,19 +30,20 @@ def flat(result: Result) -> str:
     return " ".join(ANSI_ESCAPE.sub("", result.output).split())
 
 
-def scan_with_model(project: Path, *args: str) -> Result:
+def scan_with_model(project: Path, *args: str, lang: str = "en") -> Result:
     """Run ``unskein scan`` with a model configured through the environment.
 
     Args:
         project: Project to scan.
         *args: Extra CLI arguments.
+        lang: Report language.
 
     Returns:
         The CliRunner result.
     """
     return runner.invoke(
         app,
-        ["scan", str(project), "--lang", "en", *args],
+        ["scan", str(project), "--lang", lang, *args],
         env={"UNSKEIN_AI_MODEL": "ollama/qwen2.5-coder:7b"},
     )
 
@@ -96,6 +97,8 @@ def test_min_severity_filters_the_shown_problems(circular_imports: Path, fake_ll
     low = high_problem(["app.a"]).model_copy(update={"severity": "low", "title": "Minor thing"})
     fake_llm.content = report_json(low)
     result = scan_with_model(circular_imports, "--min-severity", "high")
+    assert len(fake_llm.calls) == 1
+    assert "The imports form a knot." in flat(result)
     assert "Minor thing" not in flat(result)
     assert result.exit_code == ExitCode.OK
 
@@ -114,6 +117,8 @@ def test_hallucinated_modules_never_reach_the_report(circular_imports: Path, fak
     fake_llm.content = report_json(high_problem(["ghost.module"]))
     result = scan_with_model(circular_imports)
     assert result.exit_code == ExitCode.OK
+    assert len(fake_llm.calls) == 1
+    assert "The imports form a knot." in flat(result)
     assert "ghost.module" not in flat(result)
     assert "Cycle between a and b" not in flat(result)
 
@@ -142,9 +147,6 @@ def test_no_ai_makes_no_model_call_even_with_a_model_configured(
 
 def test_spanish_reports_get_spanish_ai_notices(circular_imports: Path, fake_llm: Any) -> None:
     fake_llm.content = "no json"
-    result = runner.invoke(
-        app,
-        ["scan", str(circular_imports), "--lang", "es"],
-        env={"UNSKEIN_AI_MODEL": "ollama/x"},
-    )
+    result = scan_with_model(circular_imports, lang="es")
+    assert result.exit_code == ExitCode.OK
     assert "no cumple el formato esperado" in flat(result)

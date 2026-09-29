@@ -6,7 +6,7 @@ Independent of the CLI so it can be tested directly and reused as a library.
 import logging
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from unskein import config as config_module
@@ -197,7 +197,7 @@ def interpret(result: AnalysisResult, context: ScanContext) -> ScanOutcome:
     outcome = client.generate_report(build_messages(build_context(result), context.lang))
     if outcome.report is None:
         return ScanOutcome(result, AIStatus.FAILED, outcome)
-    grounded = AIOutcome(report=ground_report(outcome.report, result.graph))
+    grounded = replace(outcome, report=ground_report(outcome.report, result.graph))
     return ScanOutcome(result, AIStatus.PRESENT, grounded)
 
 

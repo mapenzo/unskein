@@ -247,3 +247,12 @@ def test_ai_failure_notices_explain_why_there_is_no_ai_section(simple_project: P
     assert "AuthenticationError" in call_error
     assert "expected format" in failed(AIFailure.INVALID_RESPONSE)
     assert "deterministic analysis is complete" in call_error
+
+
+def test_a_failed_ai_without_a_failure_reason_falls_back_to_the_call_error_notice(
+    simple_project: Path,
+) -> None:
+    report = render(
+        simple_project, analyzed(simple_project), ai_status=AIStatus.FAILED, ai_failure=None
+    )
+    assert "deterministic analysis is complete" in report

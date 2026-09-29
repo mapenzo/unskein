@@ -268,8 +268,9 @@ def _ai(context: ReportContext, lang: Lang) -> list[str]:
     lines = [f"## {t('report.ai', lang)}", ""]
     if context.ai_report is None:
         if context.ai_status is AIStatus.FAILED:
+            failure = context.ai_failure or AIFailure.CALL_ERROR
             notice = t(
-                f"report.ai.failed.{context.ai_failure}",
+                f"report.ai.failed.{failure}",
                 lang,
                 error_type=context.ai_error_type or "",
             )
