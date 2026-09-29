@@ -33,3 +33,5 @@ graft/
 .claude/
 .mcp.json
 .ignore
+
+docs/superpowers/*
