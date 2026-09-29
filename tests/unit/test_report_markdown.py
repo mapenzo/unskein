@@ -256,3 +256,41 @@ def test_a_failed_ai_without_a_failure_reason_falls_back_to_the_call_error_notic
         simple_project, analyzed(simple_project), ai_status=AIStatus.FAILED, ai_failure=None
     )
     assert "deterministic analysis is complete" in report
+
+
+def test_dropped_ai_problems_are_reported(simple_project: Path) -> None:
+    ai_report = AIReport(summary="s", architecture_health="fair", problems=[_problem("high")])
+    report = render(
+        simple_project,
+        analyzed(simple_project),
+        lang=Lang.ES,
+        ai_report=ai_report,
+        ai_status=AIStatus.PRESENT,
+        ai_dropped_problems=3,
+    )
+    assert "3" in report and "descart" in report
+
+
+def test_dropped_notice_shows_even_when_no_problem_remains(simple_project: Path) -> None:
+    ai_report = AIReport(summary="s", architecture_health="fair", problems=[])
+    report = render(
+        simple_project,
+        analyzed(simple_project),
+        lang=Lang.EN,
+        ai_report=ai_report,
+        ai_status=AIStatus.PRESENT,
+        ai_dropped_problems=2,
+    )
+    assert "2" in report and "discarded" in report.lower()
+
+
+def test_no_dropped_notice_when_nothing_was_dropped(simple_project: Path) -> None:
+    ai_report = AIReport(summary="s", architecture_health="fair", problems=[_problem("high")])
+    report = render(
+        simple_project,
+        analyzed(simple_project),
+        lang=Lang.EN,
+        ai_report=ai_report,
+        ai_status=AIStatus.PRESENT,
+    )
+    assert "discarded" not in report.lower()

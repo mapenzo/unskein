@@ -221,6 +221,7 @@ def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitC
             min_severity=context.min_severity,
             ai_failure=ai_outcome.failure if ai_outcome else None,
             ai_error_type=ai_outcome.error_type if ai_outcome else None,
+            ai_dropped_problems=ai_outcome.dropped_problems if ai_outcome else 0,
         ),
         context.lang,
     )

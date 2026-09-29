@@ -4,6 +4,7 @@ from pathlib import Path
 
 import networkx as nx
 import pathspec
+import pytest
 
 from unskein.ai.models import AIContext, AIReport, Problem
 from unskein.ai.prompts import (
@@ -272,19 +273,19 @@ def report_with(*problems: Problem) -> AIReport:
 
 def test_unknown_modules_are_removed_from_a_problem() -> None:
     graph = nx.DiGraph([("a", "b")])
-    grounded = ground_report(report_with(problem(["a", "ghost", "b"])), graph)
+    grounded = ground_report(report_with(problem(["a", "ghost", "b"])), graph).report
     assert grounded.problems[0].affected_modules == ["a", "b"]
 
 
 def test_a_problem_naming_no_known_module_is_dropped() -> None:
     graph = nx.DiGraph([("a", "b")])
-    grounded = ground_report(report_with(problem(["ghost"]), problem(["a"])), graph)
+    grounded = ground_report(report_with(problem(["ghost"]), problem(["a"])), graph).report
     assert [p.affected_modules for p in grounded.problems] == [["a"]]
 
 
 def test_code_snippets_are_cleared_until_v02() -> None:
     graph = nx.DiGraph([("a", "b")])
-    grounded = ground_report(report_with(problem(["a"], snippet="print('x')")), graph)
+    grounded = ground_report(report_with(problem(["a"], snippet="print('x')")), graph).report
     assert grounded.problems[0].code_snippet is None
 
 
@@ -294,3 +295,71 @@ def test_grounding_does_not_mutate_the_input() -> None:
     ground_report(original, graph)
     assert original.problems[0].affected_modules == ["a", "ghost"]
     assert original.problems[0].code_snippet == "x"
+
+
+def test_dropped_problems_are_counted() -> None:
+    graph = nx.DiGraph([("a", "b")])
+    grounding = ground_report(
+        report_with(problem(["ghost"]), problem(["a"]), problem(["x"])), graph
+    )
+    assert grounding.dropped_problems == 2
+
+
+def test_nothing_dropped_counts_zero() -> None:
+    graph = nx.DiGraph([("a", "b")])
+    assert ground_report(report_with(problem(["a"])), graph).dropped_problems == 0
+
+
+@pytest.mark.parametrize(
+    "written",
+    [
+        "`app.core`",
+        " app.core ",
+        "app.core.",
+        "'app.core'",
+        '"app.core"',
+        "app/core.py",
+        "app/core/__init__.py",
+        "src/app/core.py",
+        "app\\core.py",
+        "`app.core`.",
+        "./app/core.py",
+        "app.core.py",
+    ],
+)
+def test_loosely_written_module_names_are_matched_to_the_graph(written: str) -> None:
+    graph = nx.DiGraph([("app.core", "app.util")])
+    grounding = ground_report(report_with(problem([written])), graph)
+    assert grounding.report.problems[0].affected_modules == ["app.core"]
+    assert grounding.dropped_problems == 0
+
+
+def test_a_src_root_is_stripped_down_to_a_top_level_module() -> None:
+    graph = nx.DiGraph([("main", "util")])
+    grounding = ground_report(report_with(problem(["src/main.py"])), graph)
+    assert grounding.report.problems[0].affected_modules == ["main"]
+
+
+def test_other_leading_segments_are_never_guessed_away() -> None:
+    graph = nx.DiGraph([("core", "util")])
+    grounding = ground_report(report_with(problem(["app/core.py"])), graph)
+    assert grounding.dropped_problems == 1
+    assert grounding.report.problems == []
+
+
+def test_a_real_src_package_is_matched_before_stripping_the_root() -> None:
+    graph = nx.DiGraph([("src.app.core", "src.app.util")])
+    grounding = ground_report(report_with(problem(["src/app/core.py"])), graph)
+    assert grounding.report.problems[0].affected_modules == ["src.app.core"]
+
+
+@pytest.mark.parametrize("written", ["", ".", "`", "src", "src/__init__.py", "__init__.py"])
+def test_empty_or_bare_names_match_nothing(written: str) -> None:
+    graph = nx.DiGraph([("app.core", "app.util")])
+    assert ground_report(report_with(problem([written])), graph).dropped_problems == 1
+
+
+def test_normalized_duplicates_are_listed_once() -> None:
+    graph = nx.DiGraph([("a", "b")])
+    grounding = ground_report(report_with(problem(["a", "`a`", "a."])), graph)
+    assert grounding.report.problems[0].affected_modules == ["a"]

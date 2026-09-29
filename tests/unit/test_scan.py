@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -128,6 +129,35 @@ def test_hallucinated_modules_are_dropped_from_the_report(
     grounded = execute_scan(context).ai_report
     assert grounded is not None
     assert [(p.title, p.affected_modules) for p in grounded.problems] == [("real", ["app.a"])]
+
+
+def test_dropped_problems_are_counted_and_logged(
+    circular_imports: Path,
+    tmp_path: Path,
+    fake_llm: Any,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(logging.getLogger("unskein"), "propagate", True)
+    caplog.set_level(logging.WARNING, logger="unskein")
+    ghost = Problem(
+        severity="high",
+        title="secret title",
+        description="d",
+        affected_modules=["ghost.mod"],
+        recommendation="r",
+    )
+    report = AIReport(summary="s", architecture_health="concerning", problems=[ghost])
+    fake_llm.content = report.model_dump_json()
+    context = prepare(
+        ScanOptions(path=circular_imports), {"UNSKEIN_AI_MODEL": "ollama/x"}, tmp=tmp_path
+    )
+    outcome = execute_scan(context)
+    assert outcome.ai_outcome is not None
+    assert outcome.ai_outcome.dropped_problems == 1
+    messages = [record.getMessage() for record in caplog.records]
+    assert "Discarded 1 AI problem(s) that named no module of the project" in messages
+    assert "secret title" not in caplog.text
 
 
 def test_execute_analyzes_the_project(circular_imports: Path, tmp_path: Path) -> None:

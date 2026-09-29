@@ -2,8 +2,9 @@
 
 import json
 import logging
+import re
 from collections import Counter
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 
 import networkx as nx
 
@@ -20,6 +21,11 @@ MAX_CYCLE_MEMBERS_IN_PROMPT = 8
 MAX_MODULES_IN_PROMPT = 15
 INSTABILITY_DECIMALS = 2
 MAX_PROMPT_CHARS = 16_000
+
+NAME_DECORATION = "`'\". \t\n"
+PYTHON_SUFFIX = ".py"
+PACKAGE_INIT = "__init__"
+SOURCE_ROOT = "src"
 
 LANG_INSTRUCTION: dict[Lang, str] = {
     Lang.ES: "Write the summary, the problem descriptions and the recommendations in Spanish.",
@@ -125,26 +131,78 @@ def build_messages(context: AIContext, lang: Lang) -> list[dict[str, str]]:
     ]
 
 
-def ground_report(report: AIReport, graph: nx.DiGraph) -> AIReport:
+@dataclass(frozen=True, slots=True)
+class GroundingResult:
+    """An AI report anchored to the graph, and how much of it was discarded.
+
+    Attributes:
+        report: The report keeping only modules that exist in the graph.
+        dropped_problems: Problems removed because they named no known module.
+    """
+
+    report: AIReport
+    dropped_problems: int
+
+
+def normalize_module_name(written: str, graph: nx.DiGraph) -> str | None:
+    """Match a module name as the LLM wrote it to a module of the graph.
+
+    Tolerates spaces, quoting and dots around the name (```app.core`.``,
+    ``./app/core.py``), file paths (``app/core.py``, ``app/__init__.py``) and a
+    ``.py`` suffix on a dotted name. A leading ``src`` segment is dropped only
+    when the name does not match with it, because it is usually the source root;
+    no other segment is guessed away.
+
+    Args:
+        written: The module name as written by the LLM.
+        graph: Internal module dependency graph, the source of truth.
+
+    Returns:
+        The module as named in the graph, or None when it matches none.
+    """
+    name = written.strip(NAME_DECORATION)
+    if name in graph:
+        return name
+    parts = [part for part in re.split(r"[/\\]", name) if part]
+    if parts and parts[-1].endswith(PYTHON_SUFFIX):
+        parts[-1] = parts[-1].removesuffix(PYTHON_SUFFIX)
+    if parts and parts[-1] == PACKAGE_INIT:
+        parts.pop()
+    candidates = [".".join(parts)]
+    if len(parts) > 1 and parts[0] == SOURCE_ROOT:
+        candidates.append(".".join(parts[1:]))
+    return next((candidate for candidate in candidates if candidate in graph), None)
+
+
+def ground_report(report: AIReport, graph: nx.DiGraph) -> GroundingResult:
     """Anchor an AI report to the graph, so the LLM can never invent a module.
 
-    Removes from each problem the modules that are not in the graph and drops
-    problems left with none. Also clears ``code_snippet``, which arrives in v0.2.
+    Matches each module name to the graph (see ``normalize_module_name``),
+    removes the ones that match none and drops problems left without any.
+    Also clears ``code_snippet``, which arrives in v0.2.
 
     Args:
         report: Validated report from the LLM.
         graph: Internal module dependency graph, the source of truth.
 
     Returns:
-        A new report; the input is not modified.
+        The grounded report and the number of problems dropped; the input is
+        not modified.
     """
     problems = []
     for problem in report.problems:
-        known = [module for module in problem.affected_modules if module in graph]
+        known: list[str] = []
+        for written in problem.affected_modules:
+            module = normalize_module_name(written, graph)
+            if module is not None and module not in known:
+                known.append(module)
         if not known:
             logger.debug("Dropped AI problem %r: it names no known module", problem.title)
             continue
         problems.append(
             problem.model_copy(update={"affected_modules": known, "code_snippet": None})
         )
-    return report.model_copy(update={"problems": problems})
+    return GroundingResult(
+        report=report.model_copy(update={"problems": problems}),
+        dropped_problems=len(report.problems) - len(problems),
+    )
