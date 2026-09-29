@@ -190,6 +190,18 @@ def test_user_message_holds_the_data_then_the_schema(circular_imports: Path) -> 
     assert json.loads(schema) == AIReport.model_json_schema()
 
 
+def test_class_docstrings_stay_out_of_the_json_schema() -> None:
+    schema = AIReport.model_json_schema()
+    assert "description" not in schema
+    assert all("description" not in definition for definition in schema["$defs"].values())
+
+
+def test_the_prompt_schema_block_has_no_class_description(circular_imports: Path) -> None:
+    _, schema = user_blocks(build_messages(small_context(circular_imports), Lang.EN))
+    assert "v0.1" not in schema
+    assert "Validated LLM" not in schema
+
+
 def test_the_same_project_gives_the_same_prompt(circular_imports: Path) -> None:
     context = small_context(circular_imports)
     assert build_messages(context, Lang.EN) == build_messages(context, Lang.EN)

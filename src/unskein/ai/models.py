@@ -2,13 +2,25 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pydantic.json_schema import SkipJsonSchema
 
 Severity = Literal["low", "medium", "high"]
 ArchitectureHealth = Literal["good", "fair", "concerning"]
+
+
+def _drop_class_description(schema: dict[str, Any]) -> None:
+    """Remove the class docstring that Pydantic copies into a JSON schema.
+
+    The docstrings are written for developers; the model reading the schema
+    would take them as instructions.
+
+    Args:
+        schema: Generated JSON schema of one model, modified in place.
+    """
+    schema.pop("description", None)
 
 
 class Problem(BaseModel):
@@ -23,6 +35,8 @@ class Problem(BaseModel):
         code_snippet: Proposed code; always None in v0.1 and hidden from the
             JSON schema the model sees, snippets arrive in v0.2.
     """
+
+    model_config = ConfigDict(json_schema_extra=_drop_class_description)
 
     severity: Severity
     title: str
@@ -40,6 +54,8 @@ class AIReport(BaseModel):
         architecture_health: Coarse health rating of the project.
         problems: Problems flagged by the LLM.
     """
+
+    model_config = ConfigDict(json_schema_extra=_drop_class_description)
 
     summary: str
     architecture_health: ArchitectureHealth
