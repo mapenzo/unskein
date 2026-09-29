@@ -558,7 +558,10 @@ módulos) queda por debajo de `MAX_PROMPT_CHARS` (16 000).
 
 `build_messages(context, lang)` devuelve `[system, user]`. El system lleva una
 rúbrica de severidad anclada en los datos (`high`: maraña o ciclo; `medium`: módulo
-en el top de `Ca + Ce` con inestabilidad extrema; `low`: el resto), la regla de
+en el top de `Ca + Ce` volátil del que otros dependen — inestabilidad ≥
+`UNSTABLE_THRESHOLD` (0.7) y `Ca > 0` — o con `Ce` muy por encima del resto; `low`: el
+resto; nunca se señala un módulo solo por ser estable, porque inestabilidad baja con
+muchos dependientes es sano), la regla de
 copiar los nombres de módulo literalmente y la instrucción de idioma. El user lleva
 los datos y el JSON schema de `AIReport` (dentro del prompt además de en la API:
 los modelos económicos ignoran `response_format`). La serialización es

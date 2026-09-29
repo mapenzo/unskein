@@ -15,6 +15,7 @@ from unskein.ai.prompts import (
     MAX_TANGLE_MEMBERS_IN_PROMPT,
     MAX_TANGLES_IN_PROMPT,
     SYSTEM_PROMPT,
+    UNSTABLE_THRESHOLD,
     build_context,
     build_messages,
     ground_report,
@@ -177,6 +178,16 @@ def test_language_instruction_targets_the_free_text_fields(circular_imports: Pat
     context = small_context(circular_imports)
     assert "Spanish" in build_messages(context, Lang.ES)[0]["content"]
     assert "English" in build_messages(context, Lang.EN)[0]["content"]
+
+
+def test_rubric_never_flags_a_stable_module_as_a_problem() -> None:
+    assert "near 0" not in SYSTEM_PROMPT
+    assert "Never flag a module only for low instability" in SYSTEM_PROMPT
+
+
+def test_rubric_flags_volatile_modules_others_depend_on() -> None:
+    assert f"instability >= {UNSTABLE_THRESHOLD}" in SYSTEM_PROMPT
+    assert "ca > 0" in SYSTEM_PROMPT
 
 
 def test_system_prompt_states_the_severity_rubric_and_literal_names() -> None:
