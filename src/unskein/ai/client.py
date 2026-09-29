@@ -81,24 +81,39 @@ def build_profile(model: str) -> ModelProfile:
     )
 
 
-def extract_json_block(raw: str) -> str | None:
-    """Extract a JSON object from free-form model output.
+def find_json_candidates(raw: str) -> list[str]:
+    """List every JSON object that could be the answer in free-form model output.
 
-    Looks for a fenced json code block first, then the outermost ``{...}``.
+    Fenced json blocks come first, in order of appearance, followed by the
+    outermost ``{...}`` span when it differs from all of them. Small models often
+    echo the requested schema in a fence before answering in another one.
 
     Args:
         raw: Raw text returned by the model.
 
     Returns:
-        The JSON text, or None if none was found.
+        The candidate JSON texts, possibly empty.
     """
-    fenced = JSON_FENCE.search(raw)
-    if fenced:
-        return fenced.group(1)
+    candidates = [match.group(1) for match in JSON_FENCE.finditer(raw)]
     start, end = raw.find("{"), raw.rfind("}")
-    if start == -1 or end < start:
-        return None
-    return raw[start : end + 1]
+    if start != -1 and end >= start:
+        outermost = raw[start : end + 1]
+        if outermost not in candidates:
+            candidates.append(outermost)
+    return candidates
+
+
+def extract_json_block(raw: str) -> str | None:
+    """Extract the first JSON object candidate from free-form model output.
+
+    Args:
+        raw: Raw text returned by the model.
+
+    Returns:
+        The first candidate (see ``find_json_candidates``), or None if none.
+    """
+    candidates = find_json_candidates(raw)
+    return candidates[0] if candidates else None
 
 
 def strip_reasoning_blocks(raw: str) -> str:
@@ -118,6 +133,9 @@ def strip_reasoning_blocks(raw: str) -> str:
 def parse_report(raw: str) -> AIReport | None:
     """Validate model output against ``AIReport``, falling back to embedded JSON.
 
+    Tries the whole text, then every embedded candidate, and keeps the first
+    that validates.
+
     Args:
         raw: Raw text returned by the model.
 
@@ -125,9 +143,7 @@ def parse_report(raw: str) -> AIReport | None:
         The validated report, or None if the output does not match the schema.
     """
     cleaned = strip_reasoning_blocks(raw)
-    for candidate in (cleaned, extract_json_block(cleaned)):
-        if candidate is None:
-            continue
+    for candidate in (cleaned, *find_json_candidates(cleaned)):
         try:
             return AIReport.model_validate_json(candidate)
         except ValidationError:

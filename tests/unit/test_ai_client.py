@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from unskein.ai.models import AIFailure, AIReport
 from unskein.config import AIConfig
 
 GOOD_REPORT = AIReport(summary="ok", architecture_health="fair", problems=[]).model_dump_json()
+ECHOED_SCHEMA = json.dumps(AIReport.model_json_schema())
 
 
 def test_extract_prefers_a_fenced_json_block() -> None:
@@ -47,6 +49,20 @@ def test_parse_accepts_plain_json() -> None:
 
 def test_parse_accepts_fenced_json_with_prose() -> None:
     assert parse_report(f"Result:\n```json\n{GOOD_REPORT}\n```") is not None
+
+
+def test_parse_skips_an_echoed_schema_fence_before_the_answer() -> None:
+    raw = f"```json\n{ECHOED_SCHEMA}\n```\n```json\n{GOOD_REPORT}\n```"
+    assert parse_report(raw) == AIReport.model_validate_json(GOOD_REPORT)
+
+
+def test_parse_skips_an_echoed_schema_fence_with_prose_between() -> None:
+    raw = f"Schema:\n```json\n{ECHOED_SCHEMA}\n```\nMy answer:\n```json\n{GOOD_REPORT}\n```"
+    assert parse_report(raw) == AIReport.model_validate_json(GOOD_REPORT)
+
+
+def test_parse_returns_none_when_no_fenced_block_validates() -> None:
+    assert parse_report(f"```json\n{ECHOED_SCHEMA}\n```\n```json\n{{}}\n```") is None
 
 
 def test_parse_ignores_reasoning_before_the_answer() -> None:
