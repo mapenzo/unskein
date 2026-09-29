@@ -536,116 +536,77 @@ determinista y la interpretación por IA/reporte.
 ## 5. Pipeline de IA (`ai/client.py`, `ai/prompts.py`)
 
 Principio rector: **el LLM interpreta agregados y casos destacados, nunca el
-grafo completo** (problema de tamaño de contexto y costo).
+grafo completo**, y **el grafo es la verdad**: lo que el LLM diga se contrasta con
+él antes de mostrarse.
 
-### Serialización acotada
-
-```python
-@dataclass
-class AIContext:
-    total_modules: int
-    total_dependencies: int
-    cycles: list[list[str]]          # truncado (default: primeros 20)
-    top_coupled_modules: list[dict]  # solo los N peores (default: 15)
-    parse_warnings: list[str]        # truncado (default: 10)
+```
+analyze → build_context → build_messages → AIClient.generate_report → ground_report
 ```
 
-Si se trunca, el reporte final debe decirlo explícitamente ("mostrando N de M
-totales") — nunca ocultar silenciosamente que hay más.
+### Contexto acotado (`AIContext`)
 
-### Salida estructurada (Pydantic)
+Solo nombres de módulo y métricas (nunca código fuente ni rutas): las mayores
+marañas (5, con hasta 20 miembros), los ciclos más cortos (20), los 15 módulos con
+mayor `Ca + Ce` y el recuento de warnings por código. Cada lista truncada lleva su
+total al lado, para que el LLM sepa que hay más.
 
-```python
-class Problem(BaseModel):
-    severity: str   # "low" | "medium" | "high"
-    title: str
-    description: str
-    affected_modules: list[str]
-    recommendation: str
-    code_snippet: str | None = None   # siempre None en v0.1 — snippets son v0.2
+### Prompt
 
-class AIReport(BaseModel):
-    summary: str
-    architecture_health: str   # "good" | "fair" | "concerning"
-    problems: list[Problem]
-```
+`build_messages(context, lang)` devuelve `[system, user]`. El system lleva una
+rúbrica de severidad anclada en los datos (`high`: maraña o ciclo; `medium`: módulo
+en el top de `Ca + Ce` con inestabilidad extrema; `low`: el resto), la regla de
+copiar los nombres de módulo literalmente y la instrucción de idioma. El user lleva
+los datos y el JSON schema de `AIReport` (dentro del prompt además de en la API:
+los modelos económicos ignoran `response_format`). La serialización es
+determinista.
 
-### Cliente — vía LiteLLM, agnóstico de proveedor
+### Cliente
 
-```python
-@dataclass
-class AIConfig:
-    model: str
-    api_key: str | None = None
-    api_base: str | None = None
-```
+`AIClient(config)` resuelve un `ModelProfile` **una sola vez**, al construirse, y
+solo si la IA está activa (`--no-ai` nunca importa `litellm`):
 
-`fallback_models`, `max_retries` y `timeout_seconds` se eliminaron
-deliberadamente de `AIConfig` — LiteLLM gestiona fallback entre modelos,
-reintentos y timeout de forma transparente (vía su propio Router o un
-`config.yaml` de proxy). `unskein` solo pasa `model`, `api_key`, `api_base`.
+- `temperature`: 1.0 si `litellm.supports_reasoning(model)` (los modelos de
+  razonamiento solo aceptan 1.0), 0.2 en los demás.
+- `response_format`: la clase `AIReport` si el modelo soporta JSON schema; si no,
+  `{"type": "json_object"}`.
+- `timeout`: 60 s en llamadas directas; ninguno con `litellm_proxy/…` (manda el
+  proxy).
 
-```python
-class AIClient:
-    def __init__(self, config: AIConfig):
-        self.config = config
+`generate_report(messages)` hace **una** llamada a `litellm.completion` (reintentos
+y fallback son de LiteLLM/proxy) y devuelve un `AIOutcome`: `Timeout` →
+`TIMEOUT`; el resto de `litellm.LITELLM_EXCEPTION_TYPES` → `CALL_ERROR` (solo el
+nombre de la clase); respuesta vacía, truncada o que no cumple el schema →
+`INVALID_RESPONSE`. Cualquier otra excepción es un bug y sale con exit 3.
 
-    def generate_report(self, context: AIContext) -> AIReport | None:
-        prompt = build_prompt(context)
-        try:
-            response = litellm.completion(
-                model=self.config.model,
-                api_key=self.config.api_key,
-                api_base=self.config.api_base,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"},
-            )
-        except litellm.exceptions.APIError as e:
-            logger.warning(f"Fallo en análisis de IA: {e}")
-            return None
-        return self._parse_and_validate(response)
+La validación quita los bloques `<think>…</think>`, prueba el JSON tal cual y
+después el extraído (bloque cercado o del primer `{` al último `}`).
 
-    def _parse_and_validate(self, response) -> AIReport | None:
-        raw = response.choices[0].message.content
-        try:
-            return AIReport.model_validate_json(raw)
-        except ValidationError:
-            extracted = extract_json_block(raw)  # busca ```json ... ``` o { ... }
-            if extracted:
-                try:
-                    return AIReport.model_validate_json(extracted)
-                except ValidationError as e:
-                    logger.warning(f"Respuesta del modelo no cumple el schema: {e}")
-            return None
-```
+El import de LiteLLM es perezoso y endurecido: `LITELLM_LOCAL_MODEL_COST_MAP=True`
+(sin descarga remota del mapa de precios), `telemetry = False` y
+`suppress_debug_info = True`. Nunca se activa `set_verbose`.
 
-**Nota importante sobre modelos económicos (Ollama/HuggingFace):** el soporte
-de `response_format`/JSON mode varía mucho según el modelo. Reforzar incluyendo
-el JSON schema completo *dentro del prompt* además del parámetro de API, y
-mantener el fallback de extracción de JSON embebido — con estos modelos va a
-activarse con más frecuencia que con modelos grandes de proveedores cloud.
+### Anclaje al grafo (`ground_report`)
 
-### System prompt
+Se eliminan de cada problema los módulos que no son nodos del grafo y se descartan
+los problemas que se quedan sin ninguno; `code_snippet` se fuerza a `None` (v0.2).
 
-Debe instruir explícitamente a no inventar información no presente en los
-datos, y a declarar cuando los datos son insuficientes para una conclusión —
-sin esto, el LLM tiende a rellenar con "buenas prácticas" genéricas sin
-relación con el proyecto real analizado.
+### Seguridad
 
-### Gestión de costo
-
-LiteLLM expone `success_callback` para trackear costo por llamada
-(`litellm.completion_cost`). Usarlo para logging local de costo acumulado, en
-vez de implementar tracking propio.
+La API key nunca aparece en logs, `repr`, reporte ni errores. `WARNING` solo lleva
+el tipo de fallo y la clase de la excepción; el mensaje del proveedor solo va a
+`DEBUG`, con la key sustituida por `***`.
 
 ### Degradación
 
-Si falla la config (`resolve_ai_config` devuelve `None`), la llamada, o la
-validación del schema, el reporte se genera igual sin la sección de IA, con
-aviso claro. **Nunca** debe caerse el comando completo por un fallo del LLM.
+Modelo no configurado, `--no-ai` o fallo de la llamada/validación: el reporte se
+genera igual. `AIStatus` (`PRESENT`, `DISABLED`, `NOT_CONFIGURED`, `FAILED`)
+explica por qué la sección de IA está vacía; con `FAILED`, el `AIFailure` elige el
+aviso. **Nunca** cae el comando por un fallo del LLM.
+
+### Coste
+
+`DEBUG` local con los tokens y el coste de `litellm.completion_cost`; no aparece
+en el reporte.
 
 ---
 
@@ -694,22 +655,12 @@ quien instala el CLI habla español.
 
 ### Impacto en el pipeline de IA
 
-`build_prompt` recibe el idioma y lo incluye como instrucción explícita en el
-`SYSTEM_PROMPT` — el LLM debe generar `AIReport.summary` y
-`Problem.description` en el idioma seleccionado, no solo el CLI/reporte:
-
-```python
-def build_prompt(context: AIContext, lang: Lang) -> str:
-    lang_instruction = {
-        Lang.ES: "Responde en español.",
-        Lang.EN: "Respond in English.",
-    }[lang]
-    return f"{lang_instruction}\n\n" + _build_prompt_body(context)
-```
-
-El `SYSTEM_PROMPT` base (instrucción de no inventar información, declarar
-insuficiencia de datos) se mantiene igual en ambos idiomas — solo cambia el
-idioma de salida esperado, no el criterio de análisis.
+`build_messages(context, lang)` incluye el idioma como instrucción explícita
+(`LANG_INSTRUCTION`) en el mensaje `system` — el LLM debe generar
+`AIReport.summary` y `Problem.description` en el idioma seleccionado, no solo
+el CLI/reporte. El resto del `SYSTEM_PROMPT` (rúbrica de severidad, no inventar
+información, declarar insuficiencia de datos) es el mismo en ambos idiomas —
+solo cambia el idioma de salida esperado, no el criterio de análisis.
 
 ## 6. Reporte (`report/markdown.py`)
 
@@ -730,13 +681,15 @@ Estructura del reporte:
 ```
 
 API: `render_report(context: ReportContext, lang) -> str`, con
-`ReportContext(root, result, ai_report, ai_status, min_severity)`. `root`
+`ReportContext(root, result, ai_report, ai_status, min_severity, ai_failure,
+ai_error_type)`. `root`
 nombra el reporte y hace **relativas** las rutas de los warnings.
 
 Reglas:
 - El "no hay IA" nunca es un hueco vacío ni un error crudo: `AIStatus`
   (`PRESENT`, `DISABLED` por `--no-ai`, `NOT_CONFIGURED` sin modelo — con
-  cómo configurarlo —, `UNAVAILABLE`) elige el aviso de la sección.
+  cómo configurarlo —, `FAILED` si la llamada falló; el `AIFailure` elige el
+  aviso) elige el aviso de la sección.
 - **Warnings agrupados por `WarningCode`**: `### <título> (<n>)` con
   `MAX_WARNING_EXAMPLES` (5) ejemplos `ruta:línea — mensaje` y "…y N más".
   Con networkx: 264 star imports → 1 grupo, 5 líneas.
@@ -781,15 +734,18 @@ posterior a la config salga en el idioma configurado:
 
 ```
 prepare_scan(options) -> ScanContext        # única fase que lee .unskein.toml
-  load_toml_config → detect_lang → resolve_analysis_config → AIStatus
+  load_toml_config → detect_lang → resolve_analysis_config → ai_config
   (ConfigError → el CLI lo traduce con flag > env > locale, sin el toml)
-execute_scan(context) -> ScanOutcome
+execute_scan(context) -> ScanOutcome        # = analyze_project + interpret
   1. valida que <path> es un directorio          (UnskeinError PATH_NOT_FOUND)
   2. adapter = PythonAdapter(config)             # único lenguaje en v0.1
   3. discover (excludes + tests) → sin .py       (UnskeinError NO_FILES_FOUND)
   4. adapter.parse (secuencial hasta el PR de paralelismo)
      → resolve_indirection → analyze
-  5. IA: no se llama aún; AIStatus lo refleja en el reporte
+  5. interpret: con modelo configurado y sin --no-ai, build_context →
+     build_messages → AIClient.generate_report → ground_report; el AIStatus
+     final (PRESENT/DISABLED/NOT_CONFIGURED/FAILED) va al reporte
+     (spinner en stderr, solo TTY, mientras responde el modelo)
 ```
 
 El CLI (`cli.py`) solo parsea flags, renderiza (`rich.markdown` en terminal,

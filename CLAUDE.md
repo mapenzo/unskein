@@ -355,13 +355,11 @@ scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI dedicado.
 
 El diseño de todas las capas de v0.1 está cerrado a nivel de arquitectura
 (ver `docs/architecture.md` para el detalle técnico completo de cada módulo).
-Implementado y funcionando end-to-end (`unskein scan <path> --no-ai`):
-discovery, parser de Python, resolución de re-exports, grafo + métricas,
-carga de config, reporte Markdown ES/EN y CLI con códigos de salida.
-Pendiente: IA (`ai/`, hoy stubs → el reporte muestra `AIStatus`), parseo
-paralelo (`pipeline._parse_parallel`).
-Las piezas pendientes existen como stubs (`NotImplementedError`) con su
-contrato ya tipado.
+Implementado y funcionando end-to-end (`unskein scan <path>`): discovery, parser
+de Python, resolución de re-exports, grafo + métricas, carga de config, reporte
+Markdown ES/EN, IA vía LiteLLM (con degradación a aviso) y CLI con códigos de
+salida. Pendiente: parseo paralelo (`pipeline._parse_parallel`), hoy un stub
+(`NotImplementedError`) con su contrato ya tipado.
 
 ## Convenciones al trabajar en este proyecto
 

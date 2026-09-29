@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- AI interpretation: with a model configured, the report gains a summary, an
+  architecture health rating and problems with severity, produced through LiteLLM (any
+  provider, local Ollama or a LiteLLM Proxy). The AI only sees module names and
+  metrics; its answer is checked against the dependency graph, so it cannot name a
+  module that does not exist. If the call or the answer fails, the report is still
+  produced with a notice saying why. `--min-severity` and exit code 2 now apply to it.
 - Initial project scaffold: `src/` layout, pipeline contracts, test fixtures, CI.
 - Python import parser: absolute, relative and submodule imports, `is_external`
   detection, re-export detection in `__init__.py`, per-file warnings instead of crashes
@@ -48,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The "AI is not available yet" notice is gone: the report now says either that the AI is disabled or not configured, or why the call failed.
 - Precedence for non-secret options is now flag > env var > `.unskein.toml` (so
   `--lang` beats `UNSKEIN_LANG`); secrets keep env var > `.unskein.toml` > `--api-key`.
 - Analysis warnings are now structured (`ParseWarning` with a `WarningCode`, file, line
