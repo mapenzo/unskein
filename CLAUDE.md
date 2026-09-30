@@ -117,6 +117,11 @@ src/unskein/
 ├── cli.py                 # typer: flags, salida, códigos de salida (capa fina)
 ├── scan.py                # orquestación: prepare_scan + execute_scan
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
+├── init_config.py         # `unskein init`: plantilla .unskein.toml comentada
+├── templates/unskein.toml # plantilla (viaja en el wheel)
+├── guide.py               # `unskein guide`: guía de uso ES/EN de la versión instalada
+├── guides/guide.{es,en}.md # la guía (viaja en el wheel; un test exige cada opción)
+├── resources.py           # lectura de archivos del paquete (importlib.resources)
 ├── i18n.py                # diccionario ES/EN
 ├── pipeline.py            # parse_all + should_parallelize
 ├── parsers/
@@ -181,7 +186,9 @@ tipo erróneo o TOML inválido → `ConfigError` (código 1), estructurado
 
 Nunca loguear la API key, ni siquiera en modo `--verbose`. `.env.example` sin
 valores reales debe existir desde el scaffold inicial, con `.gitignore` ya
-configurado para `.env` y `.unskein.toml`.
+configurado para `.env` y `.unskein.toml`. La plantilla de `.unskein.toml` la
+genera `unskein init` (todas las claves comentadas con su default; un test
+falla si un default cambia sin actualizarla).
 
 ## Criterios de rendimiento y estilo de código
 

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-30
+
+### Added
+
+- `unskein init` writes a commented `.unskein.toml` with every setting at its default,
+  so a fresh install does not start from an empty file. `--user` writes
+  `~/.config/unskein/config.toml` instead, and `--force` overwrites an existing file,
+  which is otherwise kept (exit code 1). The template ships inside the package; the
+  generated file changes nothing until a line is uncommented.
+- `unskein guide` shows the usage guide of the installed version, in Spanish or English
+  (`--lang`, `UNSKEIN_LANG` or the system locale): what the report means, every option,
+  excludes, configuration, AI and privacy, exit codes and troubleshooting. Rendered in a
+  terminal, raw Markdown when piped (`unskein guide > guide.md`). Tests fail if a
+  command or option is missing from either guide.
+
+### Removed
+
+- `.unskein.toml.example` in the repository root, replaced by `unskein init`. It was not
+  in the installed package, and its uncommented `parallel_threshold = 50` overrode the
+  calibrated default of 500.
+
 ## [0.1.0] - 2026-09-30
 
 ### Added
@@ -107,5 +128,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   supports it, a 60 s limit for direct calls) and never lets LiteLLM download its price
   map or send telemetry.
 
-[Unreleased]: https://github.com/mapenzo/unskein/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/mapenzo/unskein/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/mapenzo/unskein/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mapenzo/unskein/releases/tag/v0.1.0

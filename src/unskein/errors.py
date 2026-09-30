@@ -28,6 +28,7 @@ class ErrorKey(StrEnum):
         INVALID_TOML: A config file is not valid TOML.
         UNKNOWN_KEY: A config file has a table or key unskein does not know.
         INVALID_VALUE: A config value has the wrong type or is not allowed.
+        CONFIG_EXISTS: ``unskein init`` would overwrite an existing config file.
     """
 
     PATH_NOT_FOUND = "path_not_found"
@@ -35,6 +36,7 @@ class ErrorKey(StrEnum):
     INVALID_TOML = "invalid_toml"
     UNKNOWN_KEY = "unknown_key"
     INVALID_VALUE = "invalid_value"
+    CONFIG_EXISTS = "config_exists"
 
 
 class UnskeinError(Exception):
