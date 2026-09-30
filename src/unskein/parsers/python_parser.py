@@ -3,7 +3,7 @@
 import ast
 import os
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pathspec
@@ -12,9 +12,11 @@ from unskein.config import AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
 from unskein.parsers.models import (
+    FileParseResult,
     ImportEdge,
     ModuleInfo,
-    ParseResult,
+    ParsePlan,
+    ParseTask,
     ParseWarning,
     ReExport,
     WarningCode,
@@ -45,21 +47,6 @@ def iter_statements(tree: ast.Module) -> Iterator[ast.AST]:
         for field_name in reversed(STATEMENT_LIST_FIELDS):
             if children := getattr(node, field_name, None):
                 stack.extend(reversed(children))
-
-
-@dataclass(slots=True)
-class FileParseResult:
-    """What parsing a single file produced.
-
-    Attributes:
-        module: The parsed module, or None when the file was skipped.
-        re_exports: Re-exports found in the file (only package facades have any).
-        warnings: Problems found while parsing the file.
-    """
-
-    module: ModuleInfo | None
-    re_exports: list[ReExport] = field(default_factory=list)
-    warnings: list[ParseWarning] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,24 +364,29 @@ class PythonAdapter(LanguageAdapter):
         """
         return module_name(file_path, resolve_source_roots(root, self.config.source_roots))
 
-    def parse(self, files: list[Path], root: Path) -> ParseResult:
-        """Parse all files, naming every module first so imports can be resolved.
+    def plan_parse(self, files: list[Path], root: Path) -> ParsePlan:
+        """Name every file first, so imports can be classified against the whole project.
 
         Args:
             files: Python source files to parse.
             root: Project directory the files belong to.
 
         Returns:
-            The parsed modules, detected re-exports and per-file warnings.
+            One task per file, in the given order, sharing the project index.
         """
         source_roots = resolve_source_roots(root, self.config.source_roots)
-        names = {path: module_name(path, source_roots) for path in files}
-        index = ProjectIndex.from_names(set(names.values()))
-        result = ParseResult(modules=[], language=self.language_name)
-        for path, name in names.items():
-            file_result = parse_file(path, name, index, self.config)
-            if file_result.module is not None:
-                result.modules.append(file_result.module)
-            result.re_exports.extend(file_result.re_exports)
-            result.warnings.extend(file_result.warnings)
-        return result
+        tasks = [(path, module_name(path, source_roots)) for path in files]
+        return ParsePlan(tasks, ProjectIndex.from_names({name for _, name in tasks}))
+
+    def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:
+        """Parse one Python file against the project index.
+
+        Args:
+            task: File and module name, from `plan_parse`.
+            shared: The project index built by `plan_parse`.
+
+        Returns:
+            The parsed module, or None plus a warning when the file was skipped.
+        """
+        path, name = task
+        return parse_file(path, name, shared, self.config)

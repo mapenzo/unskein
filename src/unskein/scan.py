@@ -26,6 +26,7 @@ from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
 from unskein.parsers.discovery import load_exclude_spec
 from unskein.parsers.python_parser import PythonAdapter
+from unskein.pipeline import parse_all
 from unskein.report.markdown import AIStatus
 
 logger = logging.getLogger("unskein")
@@ -144,8 +145,8 @@ def prepare_scan(
 def analyze_project(context: ScanContext) -> AnalysisResult:
     """Run discovery, parsing, re-export resolution and analysis.
 
-    Parsing is sequential for now: ``pipeline.parse_all`` would route projects
-    above ``parallel_threshold`` to the not-yet-implemented parallel parser.
+    Projects with at least ``parallel_threshold`` files are parsed in a process
+    pool; smaller ones sequentially.
 
     Args:
         context: A prepared scan.
@@ -166,7 +167,7 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
     if not files:
         raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
     logger.debug("Discovered %d Python files under %s", len(files), root)
-    parsed = adapter.parse(files, root)
+    parsed = parse_all(files, adapter, root, config)
     result = analyze(adapter.resolve_indirection(parsed))
     logger.debug(
         "Analyzed %d modules, %d dependencies",

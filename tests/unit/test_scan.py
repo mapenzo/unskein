@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from unskein import pipeline
 from unskein.ai.models import AIFailure, AIReport, Problem
 from unskein.errors import ConfigError, ErrorKey, UnskeinError
 from unskein.i18n import Lang
@@ -199,3 +200,30 @@ def test_cli_excludes_and_toml_excludes_both_apply(make_project: MakeProject) ->
     )
     outcome = execute_scan(prepare(ScanOptions(path=root, exclude=("legacy/",))))
     assert set(outcome.result.graph.nodes) == {"keep"}
+
+
+def test_parallel_threshold_from_toml_routes_parsing_through_the_pool(
+    make_project: MakeProject, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_project(
+        {
+            "pkg/__init__.py": "",
+            "pkg/a.py": "import pkg\n",
+            "pkg/b.py": "from pkg import a\n",
+            ".unskein.toml": "[analysis]\nparallel_threshold = 2\nmax_workers = 2\n",
+        }
+    )
+    pools: list[dict[str, Any]] = []
+    real_pool = pipeline.ProcessPoolExecutor
+
+    def recording_pool(**kwargs: Any) -> Any:
+        pools.append(kwargs)
+        return real_pool(**kwargs)
+
+    monkeypatch.setattr(pipeline, "ProcessPoolExecutor", recording_pool)
+
+    outcome = execute_scan(prepare(ScanOptions(path=root, no_ai=True), tmp=root))
+
+    assert len(pools) == 1
+    assert pools[0]["max_workers"] == 2
+    assert outcome.result.graph.number_of_edges() == 2

@@ -67,7 +67,7 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
   `max_file_size_bytes` (default 5 MB — se salta con warning, ni se lee) y
   `per_file_timeout_seconds` (default 30s, vía `future.result(timeout=...)`
   del `ProcessPoolExecutor` — se salta con warning ese archivo, no tumba el
-  análisis). Ver `docs/architecture.md`, sección 3.5.
+  análisis; solo deja de esperar: el worker no se cancela). Ver `docs/architecture.md`, sección 3.5.
 
 ## Stack técnico
 
@@ -280,8 +280,8 @@ no se mergea.
   ```python
   @dataclass
   class AnalysisConfig:
-      parallel_threshold: int = 50
-      max_workers: int | None = None   # None = os.cpu_count()
+      parallel_threshold: int = 500    # calibrado, ver docs/architecture.md §3.5
+      max_workers: int | None = None   # None = min(os.cpu_count(), 8)
       queue_maxsize: int = 200
   ```
 - **La decisión de paralelizar vive en una función aislada**,
@@ -358,8 +358,8 @@ El diseño de todas las capas de v0.1 está cerrado a nivel de arquitectura
 Implementado y funcionando end-to-end (`unskein scan <path>`): discovery, parser
 de Python, resolución de re-exports, grafo + métricas, carga de config, reporte
 Markdown ES/EN, IA vía LiteLLM (con degradación a aviso) y CLI con códigos de
-salida. Pendiente: parseo paralelo (`pipeline._parse_parallel`), hoy un stub
-(`NotImplementedError`) con su contrato ya tipado.
+salida, y el parseo paralelo (`pipeline._parse_parallel`, desde `parallel_threshold`
+archivos).
 
 ## Convenciones al trabajar en este proyecto
 
