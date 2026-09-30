@@ -6,12 +6,13 @@ from enum import StrEnum
 from pathlib import Path
 
 from unskein.ai.models import AIFailure, AIReport, Problem, Severity
-from unskein.graph.metrics import AnalysisResult
+from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
 
 SEVERITY_ORDER: dict[Severity, int] = {"low": 0, "medium": 1, "high": 2}
 MAX_MODULES_IN_TABLE = 15
+TOP_COUPLED_SHARE = 100 - HIGH_COUPLING_PERCENTILE
 MAX_WARNING_EXAMPLES = 5
 MAX_TANGLE_MEMBERS_SHOWN = 10
 
@@ -246,6 +247,8 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
     if not modules:
         return [*lines, t("report.no_coupled", lang)]
     lines += [
+        t("report.coupled_intro", lang, top=TOP_COUPLED_SHARE),
+        "",
         f"| {t('report.module', lang)} | Ca | Ce | {t('report.instability', lang)} |",
         "|---|---:|---:|---:|",
     ]
@@ -253,7 +256,14 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
         m = result.coupling_metrics[name]
         lines.append(f"| `{name}` | {m.afferent} | {m.efferent} | {m.instability:.2f} |")
     if len(modules) > MAX_MODULES_IN_TABLE:
-        lines += ["", t("report.showing", lang, shown=MAX_MODULES_IN_TABLE, total=len(modules))]
+        showing = t(
+            "report.showing",
+            lang,
+            shown=MAX_MODULES_IN_TABLE,
+            total=len(modules),
+            top=TOP_COUPLED_SHARE,
+        )
+        lines += ["", showing]
     return lines
 
 

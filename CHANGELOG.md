@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The most coupled modules table now says what it lists (the top 10% of modules by
+  Ca + Ce) and what Ca, Ce and instability mean. The note under a cut table reads
+  "Showing the 15 most coupled of the 31 modules in the top 10% by Ca + Ce" instead of
+  "Showing 15 of 31", which looked like an unfinished scan.
+
 ## [0.1.1] - 2026-09-30
 
 ### Added
