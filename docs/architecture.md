@@ -201,13 +201,14 @@ eso el discovery usa `os.walk` en su lugar, con control explícito:
 def discover_files(
     root: Path, exclude_spec: pathspec.PathSpec, follow_symlinks: bool = False,
 ) -> Iterator[Path]:
-    visited_real_dirs: set[Path] = set()
+    visited_directories: set[Hashable] = set()
     for dirpath, dirnames, filenames in os.walk(root, followlinks=follow_symlinks):
-        real = Path(dirpath).resolve()
-        if real in visited_real_dirs:
-            dirnames.clear()  # ya visitado por otra ruta simbólica — corta el descenso
-            continue
-        visited_real_dirs.add(real)
+        if follow_symlinks:
+            identity = _directory_identity(dirpath)  # (st_dev, st_ino)
+            if identity in visited_directories:
+                dirnames.clear()  # ya visitado por otra ruta simbólica — corta el descenso
+                continue
+            visited_directories.add(identity)
         for fname in filenames:
             if fname.endswith(".py"):
                 rel_path = Path(dirpath, fname).relative_to(root)
@@ -238,8 +239,13 @@ uno a uno.
 **Default: `follow_symlinks=False`** — opción segura, sin fuga de alcance ni
 riesgo de ciclo. `--follow-symlinks` la activa explícitamente para quien
 tenga symlinks legítimos dentro de su propio proyecto (monorepos con paquetes
-compartidos). `visited_real_dirs` es defensa en profundidad incluso con
-symlinks activados — corta cualquier ciclo aunque `followlinks=True`.
+compartidos). La detección de ciclos por directorio real visitado es defensa en
+profundidad y **solo corre con `--follow-symlinks`**: sin seguir symlinks los
+bucles son imposibles y se ahorra una llamada por directorio (con `resolve()`, ~120
+de los ~265 ms de Django). Se identifica el directorio por `(st_dev, st_ino)` de
+`os.stat` (que sigue el enlace, como `resolve`, pero más barato); si el sistema de
+archivos no da inodos (`st_ino == 0`), cae a la ruta resuelta para que todos los
+directorios no parezcan el mismo.
 
 ### Detección de encoding por archivo
 
