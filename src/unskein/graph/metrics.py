@@ -1,12 +1,12 @@
 """Coupling metrics, cycle detection and the consolidated analysis result."""
 
-import math
 from dataclasses import dataclass, field
 from itertools import islice
 
 import networkx as nx
 
 from unskein.graph.builder import build_graph
+from unskein.graph.percentile import nearest_rank_percentile
 from unskein.parsers.models import ParseResult, ParseWarning
 
 MAX_CYCLES = 100
@@ -153,9 +153,7 @@ def find_high_coupling(
     if not metrics:
         return []
     score = {name: m.afferent + m.efferent for name, m in metrics.items()}
-    ordered = sorted(score.values())
-    rank = max(1, math.ceil(percentile / 100 * len(ordered)))
-    threshold = ordered[rank - 1]
+    threshold = nearest_rank_percentile(list(score.values()), percentile)
     selected = [name for name, s in score.items() if s > 0 and s >= threshold]
     return sorted(selected, key=lambda name: (-score[name], name))
 
