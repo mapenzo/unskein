@@ -8,7 +8,14 @@ from dataclasses import asdict, dataclass, replace
 
 import networkx as nx
 
-from unskein.ai.models import AIContext, AIReport, CycleSummary, ModuleCoupling, TangleSummary
+from unskein.ai.models import (
+    AIContext,
+    AIReport,
+    CycleSummary,
+    FindingSummary,
+    ModuleCoupling,
+    TangleSummary,
+)
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang
 
@@ -22,6 +29,7 @@ MAX_TANGLE_MEMBERS_IN_PROMPT = 20
 MAX_CYCLES_IN_PROMPT = 10
 MAX_CYCLE_MEMBERS_IN_PROMPT = 8
 MAX_MODULES_IN_PROMPT = 15
+MAX_FINDINGS_PER_KIND_IN_PROMPT = 5
 INSTABILITY_DECIMALS = 2
 MAX_PROMPT_CHARS = 16_000
 
@@ -45,6 +53,11 @@ Data guide: ca = modules that depend on a module, ce = modules it depends on,
 instability = ce / (ca + ce). A tangle is a group of modules that all depend on each
 other, directly or not; size and length are real sizes, members may be truncated. Lists are
 truncated: compare them with their totals.
+
+Findings are architecture problems that fixed rules already computed from the graph, each with
+the numbers that triggered it and its real total per kind. Treat them as facts: interpret them,
+prioritize them and explain their impact, but do not recompute or contradict them, and do not
+just list them again.
 
 Severity rubric:
 - high: a tangle or a dependency cycle.
@@ -80,6 +93,16 @@ def build_context(result: AnalysisResult) -> AIContext:
         key=lambda metrics: (-(metrics.afferent + metrics.efferent), metrics.module),
     )
     warning_counts = Counter(warning.code.value for warning in result.parse_warnings)
+    findings = result.findings if result.findings_enabled else []
+    finding_counts = Counter(finding.kind.value for finding in findings)
+    summaries: list[FindingSummary] = []
+    shown: Counter[str] = Counter()
+    for finding in findings:
+        if shown[finding.kind.value] < MAX_FINDINGS_PER_KIND_IN_PROMPT:
+            shown[finding.kind.value] += 1
+            summaries.append(
+                FindingSummary(finding.kind.value, list(finding.modules), dict(finding.evidence))
+            )
     return AIContext(
         total_modules=result.graph.number_of_nodes(),
         total_dependencies=result.graph.number_of_edges(),
@@ -106,6 +129,8 @@ def build_context(result: AnalysisResult) -> AIContext:
             for metrics in ranked[:MAX_MODULES_IN_PROMPT]
         ],
         warning_counts=dict(sorted(warning_counts.items())),
+        findings=summaries,
+        finding_counts=dict(sorted(finding_counts.items())),
     )
 
 
@@ -130,6 +155,7 @@ def shrink_context(context: AIContext) -> AIContext:
             replace(cycle, members=_halved(cycle.members)) for cycle in _halved(context.cycles)
         ],
         top_coupled_modules=_halved(context.top_coupled_modules),
+        findings=_halved(context.findings),
     )
 
 

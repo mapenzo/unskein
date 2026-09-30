@@ -1,5 +1,6 @@
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import networkx as nx
@@ -17,6 +18,7 @@ from unskein.ai.models import (
 from unskein.ai.prompts import (
     MAX_CYCLE_MEMBERS_IN_PROMPT,
     MAX_CYCLES_IN_PROMPT,
+    MAX_FINDINGS_PER_KIND_IN_PROMPT,
     MAX_MODULES_IN_PROMPT,
     MAX_PROMPT_CHARS,
     MAX_TANGLE_MEMBERS_IN_PROMPT,
@@ -28,6 +30,7 @@ from unskein.ai.prompts import (
     ground_report,
     shrink_context,
 )
+from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
 from unskein.i18n import Lang
 from unskein.parsers.indirection import resolve_indirection
@@ -438,3 +441,80 @@ def test_normalized_duplicates_are_listed_once() -> None:
     graph = nx.DiGraph([("a", "b")])
     grounding = ground_report(report_with(problem(["a", "`a`", "a."])), graph)
     assert grounding.report.problems[0].affected_modules == ["a"]
+
+
+def with_findings(result: AnalysisResult, *findings: Finding) -> AnalysisResult:
+    """Return a copy of an analysis that carries the given findings.
+
+    Args:
+        result: Analysis to copy.
+        *findings: Findings to attach.
+
+    Returns:
+        The analysis with those findings.
+    """
+    return replace(result, findings=list(findings))
+
+
+def test_context_carries_findings_capped_per_kind_with_real_totals() -> None:
+    orphans = [
+        Finding(FindingKind.ORPHAN, (f"m{i:02d}",), {})
+        for i in range(MAX_FINDINGS_PER_KIND_IN_PROMPT + 4)
+    ]
+    bottleneck = Finding(
+        FindingKind.BOTTLENECK, ("core.settings",), {"afferent": 25, "efferent": 9}
+    )
+    result = with_findings(synthetic_result(3, 0, 0), bottleneck, *orphans)
+
+    context = build_context(result)
+
+    assert context.finding_counts == {"bottleneck": 1, "orphan": len(orphans)}
+    assert [f.kind for f in context.findings].count("orphan") == MAX_FINDINGS_PER_KIND_IN_PROMPT
+    assert context.findings[0].modules == ["core.settings"]
+    assert context.findings[0].evidence == {"afferent": 25, "efferent": 9}
+
+
+def test_context_without_findings_has_empty_findings() -> None:
+    context = build_context(synthetic_result(3, 0, 0))
+
+    assert (context.findings, context.finding_counts) == ([], {})
+
+
+def test_disabled_findings_add_nothing_to_the_context() -> None:
+    result = replace(
+        with_findings(synthetic_result(3, 0, 0), Finding(FindingKind.ORPHAN, ("a",), {})),
+        findings_enabled=False,
+    )
+
+    assert build_context(result).findings == []
+
+
+def test_shrinking_halves_the_findings_but_keeps_their_totals() -> None:
+    orphans = [
+        Finding(FindingKind.ORPHAN, (f"m{i:02d}",), {})
+        for i in range(MAX_FINDINGS_PER_KIND_IN_PROMPT)
+    ]
+    context = build_context(with_findings(synthetic_result(3, 0, 0), *orphans))
+
+    shrunk = shrink_context(context)
+
+    assert 1 <= len(shrunk.findings) < len(context.findings)
+    assert shrunk.finding_counts == context.finding_counts
+
+
+def test_prompt_with_many_findings_still_fits_the_limit() -> None:
+    findings = [
+        Finding(kind, (f"pkg.very.long.module.name.number{i:03d}",), {"afferent": i, "efferent": i})
+        for kind in FindingKind
+        for i in range(200)
+    ]
+    context = build_context(with_findings(synthetic_result(500, 0, 0), *findings))
+
+    messages = build_messages(context, Lang.EN)
+
+    assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
+
+
+def test_system_prompt_declares_findings_as_computed_facts() -> None:
+    assert "Findings are architecture problems that fixed rules already computed" in SYSTEM_PROMPT
+    assert "do not recompute or contradict them" in SYSTEM_PROMPT

@@ -1,6 +1,6 @@
 """Structured LLM output models and the bounded context sent to the LLM."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -105,6 +105,21 @@ class CycleSummary:
     members: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class FindingSummary:
+    """A deterministic finding, as shown to the LLM.
+
+    Attributes:
+        kind: Rule that produced it, e.g. ``"bottleneck"``.
+        modules: The module, or ``[importer, imported]`` for an unstable dependency.
+        evidence: Metrics that triggered the rule.
+    """
+
+    kind: str
+    modules: list[str]
+    evidence: dict[str, float]
+
+
 @dataclass(frozen=True)
 class AIContext:
     """Bounded, aggregated view of an analysis sent to the LLM instead of the full graph.
@@ -119,6 +134,8 @@ class AIContext:
         cycles_truncated: Whether the cycle search itself stopped at its limit.
         top_coupled_modules: Most coupled modules by ``Ca + Ce``, truncated.
         warning_counts: Analysis warnings per warning code; no paths or messages.
+        findings: Deterministic findings, capped per kind.
+        finding_counts: Real number of findings per kind, before the cap.
     """
 
     total_modules: int
@@ -130,6 +147,8 @@ class AIContext:
     cycles_truncated: bool
     top_coupled_modules: list[ModuleCoupling]
     warning_counts: dict[str, int]
+    findings: list[FindingSummary] = field(default_factory=list)
+    finding_counts: dict[str, int] = field(default_factory=dict)
 
 
 class AIFailure(StrEnum):
