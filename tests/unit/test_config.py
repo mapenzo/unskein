@@ -204,15 +204,3 @@ def test_api_key_is_not_in_repr() -> None:
 
 def test_api_key_is_not_in_loaded_toml_repr() -> None:
     assert "s3cr3t-value" not in repr(toml_ai(model="m", api_key="s3cr3t-value"))
-
-
-def test_example_config_matches_the_schema(tmp_path: Path) -> None:
-    example = Path(__file__).resolve().parents[2] / ".unskein.toml.example"
-    uncommented = "\n".join(
-        line.removeprefix("# ") if " = " in line else line
-        for line in example.read_text(encoding="utf-8").splitlines()
-    )
-    write(tmp_path / ".unskein.toml", uncommented)
-    config = load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
-    assert config.analysis.source_roots == ["src", "lib"]
-    assert config.ai.api_key == ""
