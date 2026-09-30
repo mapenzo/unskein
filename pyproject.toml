@@ -9,7 +9,7 @@ authors = [{ name = "Miguel Ángel Poveda Lorenzo", email = "mapovedalorenzo@gma
 requires-python = ">=3.12"
 keywords = ["static-analysis", "dependencies", "coupling", "architecture", "cli", "llm"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
