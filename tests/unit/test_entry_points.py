@@ -57,7 +57,24 @@ def test_invalid_toml_warns_and_is_ignored(
     write_pyproject(tmp_path, "[project\n")
     # The CLI tests turn propagation off on this logger; caplog needs it on.
     logger = logging.getLogger("unskein")
-    logger.handlers.clear()
+    monkeypatch.setattr(logger, "handlers", [])
+    monkeypatch.setattr(logger, "propagate", True)
+
+    with caplog.at_level(logging.WARNING, logger="unskein"):
+        result = read_script_modules(tmp_path)
+
+    assert result == ()
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+    assert "pyproject.toml" in caplog.records[0].getMessage()
+
+
+def test_invalid_utf8_warns_and_is_ignored(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "pyproject.toml").write_bytes(b'[project]\nname = "\xff"\n')
+    # The CLI tests turn propagation off on this logger; caplog needs it on.
+    logger = logging.getLogger("unskein")
+    monkeypatch.setattr(logger, "handlers", [])
     monkeypatch.setattr(logger, "propagate", True)
 
     with caplog.at_level(logging.WARNING, logger="unskein"):

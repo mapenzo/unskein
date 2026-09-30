@@ -29,7 +29,7 @@ def read_script_modules(root: Path) -> tuple[str, ...]:
     try:
         with path.open("rb") as file:
             project = tomllib.load(file).get("project")
-    except (tomllib.TOMLDecodeError, OSError) as error:
+    except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as error:
         logger.warning("Ignoring %s for entry points: %s", path, error)
         return ()
     if not isinstance(project, dict):
