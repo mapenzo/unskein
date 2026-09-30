@@ -55,8 +55,9 @@ por defecto.
     salen.
   - **Orquestador con muchas dependencias**: muchos más imports que el resto; es
     normal en puntos de entrada y casos de uso.
-  - **Módulos huérfanos**: no importan ningún módulo del proyecto y nadie los importa:
+  - **Módulo huérfano**: no importa ningún módulo del proyecto y nadie lo importa:
     código muerto o un punto de entrada que se ejecuta desde fuera del código.
+
   Los umbrales son relativos al proyecto (percentiles, con un mínimo absoluto) y se
   pueden ajustar en `[findings]`. Los hallazgos nunca cambian el código de salida.
 - **Problemas señalados (IA)**: solo con un modelo configurado. Cada problema
@@ -151,7 +152,9 @@ dos detiene el análisis con código 1 y nombra el archivo y la clave.
 Si tus paquetes no están en la raíz ni en `src/`, define `source_roots` en
 `[analysis]`.
 
-La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde fuera del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los módulos `__main__` se detectan solos).
+La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde fuera
+del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los
+módulos `__main__` se detectan solos).
 
 ## Interpretación con IA
 

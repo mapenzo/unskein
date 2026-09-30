@@ -178,7 +178,8 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     Returns:
         The consolidated deterministic analysis.
     """
-    findings_config = findings_config or FindingsConfig()
+    if findings_config is None:
+        findings_config = FindingsConfig()
     graph = build_graph(result)
     coupling = compute_coupling(graph)
     cycles, cycles_truncated = find_cycles(graph)

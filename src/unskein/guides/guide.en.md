@@ -50,8 +50,9 @@ config file is needed: every setting has a default.
   - **Bottleneck**: high Ca and high Ce at once, so changes flow in and out.
   - **Orchestrator with many dependencies**: far more imports than the rest; normal for
     entry points and use cases.
-  - **Orphan**: imports no project module and is imported by none: dead code or an entry
-    point run from outside the code.
+  - **Orphan module**: imports no project module and is imported by none: dead code or an
+    entry point run from outside the code.
+
   Thresholds are relative to the project (percentiles, with an absolute minimum) and can
   be tuned in `[findings]`. Findings never change the exit code.
 - **Problems flagged (AI)**: only with a model configured. Each problem has a
@@ -143,7 +144,9 @@ stops the scan with exit code 1 and names the file and the key.
 If your packages live somewhere other than the root or `src/`, set
 `source_roots` in `[analysis]`.
 
-The `[findings]` table tunes the findings; modules that are run from outside the code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__` modules are detected on their own).
+The `[findings]` table tunes the findings; modules that are run from outside the
+code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`
+modules are detected on their own).
 
 ## AI interpretation
 

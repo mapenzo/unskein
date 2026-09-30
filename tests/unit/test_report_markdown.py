@@ -382,7 +382,7 @@ def test_findings_per_kind_are_capped_with_a_note(tmp_path: Path) -> None:
 
     report = render(tmp_path, result_with(*orphans))
 
-    assert f"### Orphan ({len(orphans)})" in report
+    assert f"### Orphan module ({len(orphans)})" in report
     assert f"`m{MAX_FINDINGS_PER_KIND:02d}`" not in report
     assert "…and 3 more" in report
 

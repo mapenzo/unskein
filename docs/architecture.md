@@ -629,7 +629,7 @@ aplicados) y construye el grafo real.
   | Proyecto | Módulos | Cuellos | Orquestadores | Dep. inestables | Huérfanos |
   |---|---:|---:|---:|---:|---:|
   | swo-aura-rag_api | 281 | 1 (`app_settings`) | 7 | 1 | 1 |
-  | unskein (`src`) | 28 | 0 | 2 (`cli`, `scan`) | 0 | 0 |
+  | unskein (`src`) | 31 | 0 | 2 (`cli`, `scan`) | 0 | 0 |
 
   Coste medido: 0,05 s con 20.000 nodos y 200.000 aristas.
 - **Marañas** (`find_tangles`, #8): componentes fuertemente conexas de más

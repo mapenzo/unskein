@@ -287,13 +287,13 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Si sigue creciendo, agrupar pasos relacionados en componentes propios.",
         Lang.EN: "If it keeps growing, group related steps into components of their own.",
     },
-    "finding.orphan.title": {Lang.ES: "Módulos huérfanos", Lang.EN: "Orphan"},
+    "finding.orphan.title": {Lang.ES: "Módulo huérfano", Lang.EN: "Orphan module"},
     "finding.orphan.explanation": {
-        Lang.ES: "Módulos que no importan ningún módulo del proyecto y nadie los importa.",
-        Lang.EN: "Modules that import no project module and that nobody imports.",
+        Lang.ES: "Módulo que no importa ningún módulo del proyecto y nadie lo importa.",
+        Lang.EN: "Module that imports no project module and that nobody imports.",
     },
     "finding.orphan.recommendation": {
-        Lang.ES: "Comprobar si son código muerto o un punto de entrada invocado fuera del "
+        Lang.ES: "Comprobar si es código muerto o un punto de entrada invocado fuera del "
         "código (script, tarea programada); borrarlo o documentarlo, y si es un punto de "
         "entrada, declararlo en `entry_points`.",
         Lang.EN: "Check whether it is dead code or an entry point run from outside the code "

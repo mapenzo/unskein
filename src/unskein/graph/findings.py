@@ -99,6 +99,7 @@ def _unstable_dependencies(
         if source not in metrics or target not in metrics:
             continue
         importer, imported = metrics[source], metrics[target]
+        # Rounding absorbs float noise (0.8333 - 0.3333) and matches the 2-decimal report.
         gap = round(imported.instability - importer.instability, INSTABILITY_DECIMALS)
         if importer.afferent >= config.stability_min_afferent and gap >= config.stability_gap:
             evidence = {

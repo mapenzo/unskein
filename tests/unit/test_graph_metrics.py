@@ -211,6 +211,22 @@ def parse_result_of(
     return ParseResult(language="python", modules=infos)
 
 
+def test_analyze_reports_unstable_dependency_through_imports() -> None:
+    names = ["user1", "user2", "core", "flaky", *[f"dep{n}" for n in range(5)]]
+    imports = (
+        ("user1", "core"),
+        ("user2", "core"),
+        ("core", "flaky"),
+        *[("flaky", f"dep{n}") for n in range(5)],
+    )
+
+    result = analyze(parse_result_of(*[(n, f"{n}.py") for n in names], imports=imports))
+
+    assert [(f.kind, f.modules) for f in result.findings] == [
+        (FindingKind.UNSTABLE_DEPENDENCY, ("core", "flaky"))
+    ]
+
+
 def test_analyze_reports_orphans_but_not_package_facades() -> None:
     result = analyze(parse_result_of(("pkg", "pkg/__init__.py"), ("pkg.lonely", "pkg/lonely.py")))
 
