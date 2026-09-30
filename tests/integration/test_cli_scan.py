@@ -219,3 +219,10 @@ def test_no_findings_flag_is_accepted(circular_imports: Path) -> None:
     result = scan_cli(str(circular_imports), "--no-ai", "--lang", "en", "--no-findings")
 
     assert result.exit_code == 0
+    assert "Findings" not in plain(result.output)
+
+
+def test_findings_section_is_shown_by_default(circular_imports: Path) -> None:
+    result = scan_cli(str(circular_imports), "--no-ai", "--lang", "en")
+
+    assert "Findings" in plain(result.output)
