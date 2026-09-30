@@ -12,13 +12,21 @@ ReExportIndex = dict[tuple[str, str], str]
 def build_reexport_index(re_exports: list[ReExport]) -> ReExportIndex:
     """Index re-exports by (exporting module, symbol) for constant-time lookup.
 
+    When a facade exposes the same symbol more than once (typically a
+    ``try/except ImportError`` fallback), the first one in the code wins.
+
     Args:
-        re_exports: Re-exports detected by the parser.
+        re_exports: Re-exports detected by the parser, in code order.
 
     Returns:
         A mapping from (exporting module, symbol) to the module the symbol comes from.
     """
-    return {(re.exporting_module, re.symbol_name): re.original_module for re in re_exports}
+    index: ReExportIndex = {}
+    for re_export in re_exports:
+        index.setdefault(
+            (re_export.exporting_module, re_export.symbol_name), re_export.original_module
+        )
+    return index
 
 
 def resolve_target(
