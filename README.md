@@ -9,7 +9,7 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-3444A8">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-18877A">
-  <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-D69A1C">
+  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-D69A1C">
   <img alt="Zero telemetry" src="https://img.shields.io/badge/telemetry-none-6A3F99">
 </p>
 
@@ -28,7 +28,7 @@ unskein scan .
 ```
 
 > [!NOTE]
-> unskein is in **pre-alpha**. `unskein scan <path>` already works end to end (graph,
+> unskein is in **alpha** (v0.1.0). `unskein scan <path>` already works end to end (graph,
 > coupling, cycles, AI interpretation, Markdown report in English or Spanish). The
 > sample below shows the v0.1 report, AI section included.
 
@@ -93,7 +93,7 @@ unskein never runs your code. It reads it with Python's own `ast` parser.
 ## Quickstart
 
 ```bash
-pip install unskein          # not on PyPI yet; use `uv sync` from a clone
+pip install unskein
 unskein scan path/to/project
 ```
 

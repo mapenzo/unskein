@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-30
+
 ### Added
 
 - AI interpretation: with a model configured, the report gains a summary, an
@@ -104,3 +106,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model once (reasoning models get `temperature=1.0`, JSON-schema output when the model
   supports it, a 60 s limit for direct calls) and never lets LiteLLM download its price
   map or send telemetry.
+
+[Unreleased]: https://github.com/mapenzo/unskein/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/mapenzo/unskein/releases/tag/v0.1.0
