@@ -81,6 +81,14 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Archivos no analizables",
         Lang.EN: "Unparseable files",
     },
+    "warning.parse_timeout": {
+        Lang.ES: "Archivo omitido, el análisis superó el límite de tiempo ({detail} s)",
+        Lang.EN: "File skipped, parsing exceeded the time limit ({detail} s)",
+    },
+    "warning_title.parse_timeout": {
+        Lang.ES: "Archivos que superaron el límite de tiempo",
+        Lang.EN: "Files that exceeded the time limit",
+    },
     "warning.reexport_cycle": {
         Lang.ES: "Ciclo de re-exports, resolución detenida ({detail})",
         Lang.EN: "Re-export cycle, resolution stopped ({detail})",

@@ -1,8 +1,10 @@
 """Hold the language-neutral data produced by parsing: modules, imports and re-exports."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
+from typing import Any, Self
 
 
 class WarningCode(StrEnum):
@@ -14,6 +16,7 @@ class WarningCode(StrEnum):
         UNRESOLVED_IMPORT: An internal import names a module that does not exist.
         FILE_TOO_LARGE: A file exceeds ``max_file_size_bytes`` and was not read.
         PARSE_ERROR: A file could not be read or parsed and was skipped.
+        PARSE_TIMEOUT: Parsing a file exceeded ``per_file_timeout_seconds``; it was skipped.
         REEXPORT_CYCLE: Re-exports of a symbol form a cycle.
         REEXPORT_DEPTH_EXCEEDED: A re-export chain is longer than the resolution limit.
     """
@@ -23,6 +26,7 @@ class WarningCode(StrEnum):
     UNRESOLVED_IMPORT = "unresolved_import"
     FILE_TOO_LARGE = "file_too_large"
     PARSE_ERROR = "parse_error"
+    PARSE_TIMEOUT = "parse_timeout"
     REEXPORT_CYCLE = "reexport_cycle"
     REEXPORT_DEPTH_EXCEEDED = "reexport_depth_exceeded"
 
@@ -99,6 +103,42 @@ class ReExport:
     symbol_name: str
 
 
+@dataclass(slots=True)
+class FileParseResult:
+    """What parsing a single file produced.
+
+    Attributes:
+        module: The parsed module, or None when the file was skipped.
+        re_exports: Re-exports found in the file (only package facades have any).
+        warnings: Problems found while parsing the file.
+    """
+
+    module: ModuleInfo | None
+    re_exports: list[ReExport] = field(default_factory=list)
+    warnings: list[ParseWarning] = field(default_factory=list)
+
+
+ParseTask = tuple[Path, str]
+
+
+@dataclass(frozen=True, slots=True)
+class ParsePlan:
+    """How to parse a set of files: the units of work and what they all share.
+
+    Splitting the two lets a process pool send ``shared`` once per worker
+    instead of once per file.
+
+    Attributes:
+        tasks: Files to parse with their module names, in the order results
+            must be combined.
+        shared: Read-only data every task needs (for Python, the project index);
+            must be picklable.
+    """
+
+    tasks: list[ParseTask]
+    shared: Any
+
+
 @dataclass
 class ParseResult:
     """Everything a language adapter extracted from a project.
@@ -115,3 +155,22 @@ class ParseResult:
     language: str
     re_exports: list[ReExport] = field(default_factory=list)
     warnings: list[ParseWarning] = field(default_factory=list)
+
+    @classmethod
+    def from_file_results(cls, language: str, file_results: Iterable[FileParseResult]) -> Self:
+        """Combine per-file results, in the order given, into one project result.
+
+        Args:
+            language: Name of the language the modules are written in.
+            file_results: One result per parsed file.
+
+        Returns:
+            The combined result; skipped files contribute only their warnings.
+        """
+        result = cls(modules=[], language=language)
+        for file_result in file_results:
+            if file_result.module is not None:
+                result.modules.append(file_result.module)
+            result.re_exports.extend(file_result.re_exports)
+            result.warnings.extend(file_result.warnings)
+        return result

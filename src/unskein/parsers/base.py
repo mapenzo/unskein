@@ -3,11 +3,12 @@
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pathspec
 
 from unskein.parsers.indirection import resolve_indirection
-from unskein.parsers.models import ParseResult
+from unskein.parsers.models import FileParseResult, ParsePlan, ParseResult, ParseTask
 
 
 class LanguageAdapter(ABC):
@@ -44,8 +45,33 @@ class LanguageAdapter(ABC):
         """
 
     @abstractmethod
+    def plan_parse(self, files: list[Path], root: Path) -> ParsePlan:
+        """Name every file and gather what all of them need to be parsed.
+
+        Args:
+            files: Source files to parse, as returned by `discover_files`.
+            root: Project directory the files belong to.
+
+        Returns:
+            The tasks, in the order results are combined, plus the shared data.
+        """
+
+    @abstractmethod
+    def parse_task(self, task: ParseTask, shared: Any) -> FileParseResult:
+        """Parse one file; problems become warnings instead of exceptions.
+
+        Must be pure and picklable, so it can run in a worker process.
+
+        Args:
+            task: File and module name, from `plan_parse`.
+            shared: The plan's shared data.
+
+        Returns:
+            The parsed module, or None plus a warning when the file was skipped.
+        """
+
     def parse(self, files: list[Path], root: Path) -> ParseResult:
-        """Extract modules, imports and re-exports from the given files.
+        """Extract modules, imports and re-exports from the given files, sequentially.
 
         Args:
             files: Source files to parse, as returned by `discover_files`.
@@ -54,6 +80,10 @@ class LanguageAdapter(ABC):
         Returns:
             The parsed modules plus any per-file warnings.
         """
+        plan = self.plan_parse(files, root)
+        return ParseResult.from_file_results(
+            self.language_name, (self.parse_task(task, plan.shared) for task in plan.tasks)
+        )
 
     @abstractmethod
     def normalize_module_name(self, file_path: Path, root: Path) -> str:
