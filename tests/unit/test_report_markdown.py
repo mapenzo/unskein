@@ -143,7 +143,22 @@ def test_coupled_table_is_truncated_with_a_note(tmp_path: Path) -> None:
     report = render(tmp_path, result)
     assert "| `m00` | 2 | 1 | 0.33 |" in report
     assert f"`m{MAX_MODULES_IN_TABLE:02d}`" not in report
-    assert f"Showing {MAX_MODULES_IN_TABLE} of {len(names)}." in report
+    assert (
+        f"Showing the {MAX_MODULES_IN_TABLE} most coupled of the {len(names)} modules "
+        "in the top 10% by Ca + Ce." in report
+    )
+
+
+def test_coupled_table_explains_which_modules_it_lists(tmp_path: Path) -> None:
+    result = AnalysisResult(
+        graph=nx.DiGraph(),
+        coupling_metrics={"a": CouplingMetrics("a", 2, 1)},
+        cycles=[],
+        high_coupling_modules=["a"],
+    )
+    report = render(tmp_path, result, lang=Lang.ES)
+    assert "El 10 % de los módulos con mayor Ca + Ce" in report
+    assert "Se muestran" not in report
 
 
 def test_ai_status_messages(simple_project: Path) -> None:

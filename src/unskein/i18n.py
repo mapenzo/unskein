@@ -174,9 +174,19 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.ES: "Ningún módulo destaca por su acoplamiento.",
         Lang.EN: "No module stands out for its coupling.",
     },
+    "report.coupled_intro": {
+        Lang.ES: "El {top} % de los módulos con mayor Ca + Ce. Ca: cuántos módulos lo "
+        "importan. Ce: cuántos importa él. Inestabilidad: Ce / (Ca + Ce), de 0 (otros se "
+        "apoyan en él) a 1 (él se apoya en otros).",
+        Lang.EN: "The top {top}% of modules by Ca + Ce. Ca: how many modules import it. "
+        "Ce: how many it imports. Instability: Ce / (Ca + Ce), from 0 (others rely on it) "
+        "to 1 (it relies on others).",
+    },
     "report.showing": {
-        Lang.ES: "Mostrando {shown} de {total}.",
-        Lang.EN: "Showing {shown} of {total}.",
+        Lang.ES: "Se muestran los {shown} más acoplados de los {total} módulos del {top} % "
+        "superior por Ca + Ce.",
+        Lang.EN: "Showing the {shown} most coupled of the {total} modules in the top {top}% "
+        "by Ca + Ce.",
     },
     "report.ai": {Lang.ES: "Problemas señalados (IA)", Lang.EN: "Problems flagged (AI)"},
     "report.ai.disabled": {
