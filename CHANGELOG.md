@@ -56,6 +56,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The list of dependency cycles (and which ones survived the 100-cycle limit) changed
+  between runs because networkx follows the string hash seed. Cycles are now enumerated
+  over integer labels, so the report is identical on every run.
 - The README example `--exclude "migrations/**"` only skipped a `migrations/` folder at
   the project root, not the ones inside each app. It now reads `--exclude "migrations/"`,
   which matches at any depth (a pattern with a slash in the middle is anchored to the

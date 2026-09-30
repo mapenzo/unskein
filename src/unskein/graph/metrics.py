@@ -94,6 +94,9 @@ def find_cycles(graph: nx.DiGraph, limit: int = MAX_CYCLES) -> tuple[list[list[s
 
     The number of simple cycles can grow exponentially, so at most
     ``limit + 1`` are ever enumerated: the extra one only tells whether more exist.
+    networkx walks internal sets whose order follows the string hash seed, so the
+    graph is enumerated over integer labels, whose set order is fixed, to keep
+    both the cycles and the truncation point identical between runs.
 
     Args:
         graph: Internal module dependency graph.
@@ -103,9 +106,12 @@ def find_cycles(graph: nx.DiGraph, limit: int = MAX_CYCLES) -> tuple[list[list[s
         The cycles found, each rotated to start at its smallest module, and
         whether the search was truncated at ``limit``.
     """
-    found = list(islice(nx.simple_cycles(graph), limit + 1))
+    names = sorted(graph.nodes)
+    indexed = nx.relabel_nodes(graph, {name: index for index, name in enumerate(names)})
+    found = list(islice(nx.simple_cycles(indexed), limit + 1))
     truncated = len(found) > limit
-    return [_canonical_cycle(cycle) for cycle in found[:limit]], truncated
+    named = [[names[index] for index in cycle] for cycle in found[:limit]]
+    return [_canonical_cycle(cycle) for cycle in named], truncated
 
 
 def find_tangles(graph: nx.DiGraph) -> list[list[str]]:

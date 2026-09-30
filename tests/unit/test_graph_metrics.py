@@ -1,4 +1,10 @@
+import os
+import subprocess
+import sys
+import textwrap
+
 import networkx as nx
+import pytest
 
 from unskein.config import AnalysisConfig
 from unskein.graph.metrics import (
@@ -144,3 +150,38 @@ def test_tangles_are_ordered_by_size_then_name() -> None:
         ("q", "p"),
     )
     assert find_tangles(graph) == [["a", "b", "c"], ["p", "q"], ["x", "y"]]
+
+
+CYCLES_SCRIPT = textwrap.dedent("""
+    import random
+    import networkx as nx
+    from unskein.graph.metrics import find_cycles
+
+    random.seed(1)
+    names = [f"m{i:03d}" for i in range(40)]
+    graph = nx.DiGraph()
+    graph.add_nodes_from(names)
+    for source in names:
+        for target in random.sample(names, 4):
+            if source != target:
+                graph.add_edge(source, target)
+    print(find_cycles(graph, limit=LIMIT))
+""")
+
+
+@pytest.mark.parametrize("limit", [MAX_CYCLES, 100_000])
+def test_cycles_do_not_depend_on_the_hash_seed(limit: int) -> None:
+    script = CYCLES_SCRIPT.replace("LIMIT", str(limit))
+
+    outputs = {
+        subprocess.run(
+            [sys.executable, "-c", script],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        for seed in ("0", "1", "2", "3")
+    }
+
+    assert len(outputs) == 1
