@@ -67,7 +67,7 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
   `max_file_size_bytes` (default 5 MB — se salta con warning, ni se lee) y
   `per_file_timeout_seconds` (default 30s, vía `future.result(timeout=...)`
   del `ProcessPoolExecutor` — se salta con warning ese archivo, no tumba el
-  análisis). Ver `docs/architecture.md`, sección 3.5.
+  análisis; solo deja de esperar: el worker no se cancela). Ver `docs/architecture.md`, sección 3.5.
 
 ## Stack técnico
 
@@ -90,7 +90,9 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
   con fallback configurable a un proveedor cloud vía LiteLLM.
 - `hatchling` como build backend (estándar actual para layout `src/`).
 - `psutil` para medición de rendimiento (CPU/RAM) multiplataforma — soporte
-  Windows y Linux desde v0.1 (no usar `resource`, que es solo Unix).
+  Windows y Linux desde v0.1. `resource` (solo Unix) únicamente como rama
+  Unix del pico de memoria, que `psutil` no expone fuera de Windows; nunca
+  como única vía (#9).
 - `pytest` + `pytest-cov` — testing desde el primer commit, no pospuesto.
 
 ## Internacionalización (i18n)
@@ -99,9 +101,9 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
   y las respuestas generadas por el LLM).
 - Diccionario simple de traducciones (`unskein/i18n.py`), no `gettext`/catálogos
   `.mo` — con solo 2 idiomas es innecesario y complica testing.
-- Detección de idioma con la misma jerarquía de config que el resto: env var
-  (`UNSKEIN_LANG`) → `.unskein.toml` (`[general] lang = "es"`) → flag
-  `--lang`. Si nada está configurado: `locale.getlocale()`, y si no es `es*`,
+- Detección de idioma con la precedencia de las opciones no secretas: flag
+  `--lang` > env var (`UNSKEIN_LANG`) > `.unskein.toml` (`[general] lang =
+  "es"`). Si nada está configurado: `locale.getlocale()`, y si no es `es*`,
   **default a inglés** (más seguro para adopción OSS amplia — no asumir que
   quien instala el CLI habla español).
 - El `SYSTEM_PROMPT` de IA se parametriza por idioma — el LLM debe responder
@@ -112,9 +114,16 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
 
 ```
 src/unskein/
-├── cli.py                 # entry point, comando `scan`
+├── cli.py                 # typer: flags, salida, códigos de salida (capa fina)
+├── scan.py                # orquestación: prepare_scan + execute_scan
+├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
+├── i18n.py                # diccionario ES/EN
+├── pipeline.py            # parse_all + should_parallelize
 ├── parsers/
+│   ├── models.py           # ImportEdge, ModuleInfo, ReExport, ParseResult
 │   ├── base.py             # interfaz LanguageAdapter (el "adapter")
+│   ├── discovery.py        # os.walk, excludes, encoding
+│   ├── indirection.py      # resolución de re-exports
 │   └── python_parser.py    # implementación para Python con ast
 ├── graph/
 │   ├── builder.py           # construcción del grafo con NetworkX
@@ -148,12 +157,27 @@ para paquetes Python distribuibles).
 - **Snippets de código en las recomendaciones de IA son v0.2**, no v0.1. En v0.1
   la IA solo da resumen + problemas señalados, sin proponer código de solución.
 
-## Jerarquía de configuración (API keys y modelo de IA)
+## Jerarquía de configuración
 
-Orden de precedencia (mayor a menor):
+**Secretos y modelo de IA** — precedencia (mayor a menor):
 1. Variable de entorno (`UNSKEIN_AI_MODEL`, `UNSKEIN_API_KEY`, `UNSKEIN_AI_API_BASE`)
 2. Archivo de config (`.unskein.toml` en el proyecto, o `~/.config/unskein/config.toml`)
 3. Flag `--api-key` (documentado explícitamente como inseguro, solo para pruebas)
+
+**Resto de opciones (no secretas)** — `--lang`, `--include-tests`,
+`--follow-symlinks`, `--encoding`…: **flag > env var > `.unskein.toml` >
+default**. Lo escrito en la terminal siempre gana. Solo hay env vars donde
+están documentadas (`UNSKEIN_LANG`); no se inventa una por opción. Los
+booleanos son de tres estados (`--include-tests/--no-include-tests`, `None`
+si no se escribe) para poder ganarle al toml en ambos sentidos. Los
+`exclude` no compiten: se **suman** (toml + flags), como todo exclude.
+
+**`.unskein.toml`**: se leen `~/.config/unskein/config.toml` y el del
+proyecto, cada uno **validado por separado** con Pydantic (`extra="forbid"`,
+`strict=True`) para que el error nombre el archivo; luego se combinan tabla a
+tabla, ganando el del proyecto clave por clave. Clave desconocida (errata),
+tipo erróneo o TOML inválido → `ConfigError` (código 1), estructurado
+(`key` + `params`, nunca el valor ofensivo) para traducirlo en el CLI.
 
 Nunca loguear la API key, ni siquiera en modo `--verbose`. `.env.example` sin
 valores reales debe existir desde el scaffold inicial, con `.gitignore` ya
@@ -182,6 +206,67 @@ configurado para `.env` y `.unskein.toml`.
   - `itertools` para composición de transformaciones sin el overhead de
     lambdas anidadas.
 
+## Clean Code (obligatorio)
+
+Norma obligatoria para todo código nuevo o modificado. Un PR que no la cumpla
+no se mergea.
+
+**Docstrings — en todo módulo, clase, función y método, privados incluidos.**
+- Estilo **Google**, en **inglés** (como el resto del código).
+- Resumen de una línea en **modo imperativo** ("Return…", "Build…"),
+  terminado en punto. Línea en blanco antes de las secciones.
+- Secciones solo cuando aportan: `Args:` para cada parámetro (su significado,
+  no su tipo — el tipo ya está en el type hint), `Returns:` si no devuelve
+  `None` (`Yields:` en generadores), `Raises:` para las excepciones que el
+  llamador debe esperar.
+- Clases: los argumentos de `__init__` van en `Args:` del docstring de la
+  clase (nunca docstring en `__init__`). Dataclasses/modelos Pydantic:
+  sección `Attributes:` con cada campo.
+- Módulos y `__init__.py` de paquete: una línea con su responsabilidad.
+- Excepción: comandos de `typer` (`scan`, `main`) — su docstring se muestra
+  en `--help`, así que solo resumen, orientado al usuario, sin `Args:`
+  (las opciones ya tienen `help=`).
+- Tests **no** llevan docstring: el nombre del test describe el
+  comportamiento (`test_reexport_cycle_yields_one_warning_per_cycle`).
+  Helpers y fixtures de tests sí, cuando no sean triviales.
+- **Enforcement en CI, doble:** reglas `D` de ruff (`pydocstyle`,
+  `convention = "google"`) validan presencia y formato de los docstrings
+  públicos; como pydocstyle **no** revisa nombres privados (`_x`),
+  `tests/integration/test_docstrings.py` recorre `src/` y `scripts/` con
+  `ast` y falla si falta el docstring de cualquier módulo, clase o función,
+  privados incluidos (`__init__` exento). El formato Google de los privados
+  se sigue verificando en revisión.
+
+**Reglas de código:**
+- **Nombres que revelan intención.** Sin abreviaturas crípticas; booleanos
+  como predicado (`is_external`, `follow_symlinks`); funciones con verbo.
+- **Funciones pequeñas, una responsabilidad, sin efectos secundarios
+  ocultos.** Entre capas, funciones puras que devuelven valores nuevos en
+  vez de mutar la entrada (p. ej. `resolve_indirection`).
+- **Máximo 3 parámetros posicionales**; más allá, agruparlos en un
+  dataclass de configuración (patrón de `AnalysisConfig`). Excepción
+  documentada: los comandos `typer` (`scan`), donde cada parámetro *es* una
+  flag del CLI y no se pueden agrupar; se marcan con `# pylint: disable=...`
+  en línea y la lógica se delega enseguida a un dataclass (`ScanOptions`).
+  Los dataclasses de datos/config pueden tener hasta 12 campos.
+- **Sin números mágicos**: constantes con nombre (`MAX_CYCLES`,
+  `MAX_RESOLUTION_DEPTH`, `DEFAULT_TEST_PATTERNS`).
+- **Errores explícitos, nunca silenciados**: los esperados como warning en el
+  resultado o `UnskeinError`; nada de `except: pass`.
+- **Comentarios solo para el porqué** (restricción oculta, workaround,
+  decisión no obvia). El *qué* lo cuentan los nombres y el docstring.
+- **Sin código muerto ni comentado**; sin duplicación (DRY) salvo que
+  abstraer empeore la lectura.
+- **Regla del boy scout**: el código que se toca queda mejor de lo que
+  estaba (dentro del alcance del PR).
+- **Tests F.I.R.S.T.** (rápidos, independientes, repetibles, auto-validados,
+  escritos antes que el código — TDD). Aislados del entorno real: una
+  fixture `autouse` apunta la config de usuario a un archivo inexistente y
+  elimina las `UNSKEIN_*`.
+- **Pylint** (`[tool.pylint]` en `pyproject.toml`) está alineado con estas
+  reglas para el IDE; ruff sigue siendo el gate de CI. Desactivar un aviso
+  solo con motivo escrito (en la config o en línea), nunca "para que calle".
+
 ## Modelo de concurrencia
 
 - **Paralelización del parseo de archivos**, no asumida siempre: se activa solo
@@ -190,13 +275,13 @@ configurado para `.env` y `.unskein.toml`.
 - **`ProcessPoolExecutor`**, no builds free-threaded — funciona en cualquier
   Python 3.12+ sin depender de la madurez de wheels `cp314t`.
 - **`AnalysisConfig` parametriza el umbral y los workers** desde ya (no
-  hardcodeado), siguiendo la misma jerarquía de configuración que la API key
-  (env var → `.unskein.toml` → flag):
+  hardcodeado), configurable desde `.unskein.toml` (`[analysis]`) con la
+  precedencia de las opciones no secretas (ver *Jerarquía de configuración*):
   ```python
   @dataclass
   class AnalysisConfig:
-      parallel_threshold: int = 50
-      max_workers: int | None = None   # None = os.cpu_count()
+      parallel_threshold: int = 500    # calibrado, ver docs/architecture.md §3.5
+      max_workers: int | None = None   # None = min(os.cpu_count(), 8)
       queue_maxsize: int = 200
   ```
 - **La decisión de paralelizar vive en una función aislada**,
@@ -238,7 +323,7 @@ configurado para `.env` y `.unskein.toml`.
 
 | Código | Significado |
 |---|---|
-| `0` | Análisis completado, sin problemas de severidad ≥ `--min-severity` |
+| `0` | Análisis completado, sin problemas de severidad `high` (`--min-severity` solo filtra lo que se muestra) |
 | `1` | Error de uso (ruta inválida, sin archivos `.py`, config inválida) |
 | `2` | Análisis completado, con problemas de severidad `high` encontrados |
 | `3` | Error interno inesperado (bug real — traceback completo visible) |
@@ -251,10 +336,10 @@ scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI dedicado.
 - **Cero telemetría de uso.** Nada sale del equipo del usuario — ni siquiera
   anónimo. Declarado explícitamente en el README (sección de privacidad),
   la comunidad OSS lo pregunta rápido.
-- **Medición de rendimiento es local y solo informativa**, vía `psutil`
-  (multiplataforma: Windows + Linux/macOS, no `resource` que es solo Unix).
-  Se muestra solo con `--verbose` (duración + pico de memoria del propio
-  análisis), nunca se envía a ningún servidor.
+- **Medición de rendimiento es local y solo informativa** (Windows +
+  Linux/macOS). Se muestra solo con `--verbose` (duración + **pico real** de
+  memoria del proceso: `psutil` `peak_wset` en Windows, `resource.ru_maxrss`
+  en Unix), nunca se envía a ningún servidor.
 
 ## Roadmap de versiones
 
@@ -270,8 +355,11 @@ scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI dedicado.
 
 El diseño de todas las capas de v0.1 está cerrado a nivel de arquitectura
 (ver `docs/architecture.md` para el detalle técnico completo de cada módulo).
-**Aún no existe código implementado** — este archivo y `docs/architecture.md`
-son el punto de partida para empezar el scaffold real.
+Implementado y funcionando end-to-end (`unskein scan <path>`): discovery, parser
+de Python, resolución de re-exports, grafo + métricas, carga de config, reporte
+Markdown ES/EN, IA vía LiteLLM (con degradación a aviso) y CLI con códigos de
+salida, y el parseo paralelo (`pipeline._parse_parallel`, desde `parallel_threshold`
+archivos).
 
 ## Convenciones al trabajar en este proyecto
 

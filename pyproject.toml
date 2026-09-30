@@ -9,7 +9,7 @@ authors = [{ name = "Miguel Ángel Poveda Lorenzo", email = "mapovedalorenzo@gma
 requires-python = ">=3.12"
 keywords = ["static-analysis", "dependencies", "coupling", "architecture", "cli", "llm"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 dependencies = [
-    "litellm>=1.50",
+    "litellm>=1.95.0,<2",
     "networkx>=3.3",
     "pathspec>=0.12",
     "psutil>=6.0",
@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [project.scripts]
-unskein = "unskein.cli:app"
+unskein = "unskein.cli:run"
 
 [project.urls]
 Homepage = "https://github.com/mapenzo/unskein"
@@ -58,10 +58,39 @@ exclude = ["/graft", "/.claude", "/.mcp.json"]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 norecursedirs = ["tests/fixtures"]
+# Third-party noise: pydantic raises it when litellm builds its first response
+# (ChatCompletionReasoningItem schema generation); kept narrow on purpose.
+filterwarnings = ["ignore:Item 'summary' on TypedDict class:UserWarning"]
 
 [tool.coverage.run]
 source = ["unskein"]
 branch = true
+
+[tool.pylint.main]
+# Fixture projects are deliberately odd code (cycles, unused re-exports).
+ignore-paths = ["tests/fixtures"]
+
+[tool.pylint.format]
+max-line-length = 100
+
+[tool.pylint.design]
+# Config and options dataclasses are plain data bags (AnalysisConfig has 11 fields).
+max-attributes = 12
+
+[tool.pylint."messages control"]
+disable = [
+    # Docstrings are enforced by ruff's D rules and tests/integration/test_docstrings.py,
+    # which also exempt tests on purpose (descriptive names instead, see CLAUDE.md).
+    "missing-module-docstring",
+    "missing-class-docstring",
+    "missing-function-docstring",
+    # Dataclasses and Pydantic models legitimately have no public methods.
+    "too-few-public-methods",
+    # Tests prefer explicit comparisons (== [], == 0, == "") for readable failures.
+    "use-implicit-booleaness-not-comparison",
+    "use-implicit-booleaness-not-comparison-to-string",
+    "use-implicit-booleaness-not-comparison-to-zero",
+]
 
 [tool.ruff]
 line-length = 100
@@ -72,4 +101,13 @@ extend-exclude = ["tests/fixtures"]
 exclude = ["*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
+select = ["E", "F", "I", "B", "UP", "SIM", "D"]
+# __init__ arguments are documented in the class docstring (Google style).
+ignore = ["D107"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: descriptive names instead of docstrings (see CLAUDE.md, Clean Code).
+"tests/**" = ["D"]

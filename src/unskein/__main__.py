@@ -1,3 +1,5 @@
-from unskein.cli import app
+"""Run the unskein CLI with ``python -m unskein``, with the same exit codes as ``unskein``."""
 
-app()
+from unskein.cli import run
+
+run()

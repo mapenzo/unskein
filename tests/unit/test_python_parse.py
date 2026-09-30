@@ -4,11 +4,23 @@ from pathlib import Path
 import pathspec
 
 from unskein.config import AnalysisConfig
-from unskein.parsers.base import ParseResult
+from unskein.parsers.models import ParseResult, WarningCode
 from unskein.parsers.python_parser import PythonAdapter
 
 MakeProject = Callable[[dict[str, str]], Path]
 Edge = tuple[str, str, str | None, bool]
+
+
+def codes(result: ParseResult) -> list[WarningCode]:
+    """Return the warning codes of a parse result, in order.
+
+    Args:
+        result: Parse result to inspect.
+
+    Returns:
+        The code of each warning.
+    """
+    return [w.code for w in result.warnings]
 
 
 def parse(root: Path, config: AnalysisConfig | None = None) -> ParseResult:
@@ -91,8 +103,9 @@ def test_relative_import_beyond_top_level_is_warned_and_skipped(make_project: Ma
     root = make_project({"app/__init__.py": "", "app/a.py": "from ... import nope\n"})
     result = parse(root)
     assert internal(result) == set()
-    assert len(result.warnings) == 1
-    assert "app/a.py" in result.warnings[0].replace("\\", "/")
+    [warning] = result.warnings
+    assert warning.code is WarningCode.RELATIVE_BEYOND_TOP
+    assert (warning.path, warning.line) == (root / "app/a.py", 1)
 
 
 def test_star_import_keeps_module_edge_and_warns(make_project: MakeProject) -> None:
@@ -101,8 +114,8 @@ def test_star_import_keeps_module_edge_and_warns(make_project: MakeProject) -> N
     )
     result = parse(root)
     assert internal(result) == {("app.a", "app.b", None, False)}
-    assert len(result.warnings) == 1
-    assert "*" in result.warnings[0]
+    assert codes(result) == [WarningCode.STAR_IMPORT]
+    assert result.warnings[0].detail == "app.b"
 
 
 def test_missing_internal_module_falls_back_to_ancestor_with_warning(
@@ -111,8 +124,9 @@ def test_missing_internal_module_falls_back_to_ancestor_with_warning(
     root = make_project({"app/__init__.py": "", "app/a.py": "import app.missing.deep\n"})
     result = parse(root)
     assert internal(result) == {("app.a", "app", None, False)}
-    assert len(result.warnings) == 1
-    assert "app.missing.deep" in result.warnings[0]
+    [warning] = result.warnings
+    assert warning.code is WarningCode.UNRESOLVED_IMPORT
+    assert warning.detail == "app.missing.deep -> app"
 
 
 def test_missing_import_in_namespace_package_is_skipped_with_clear_warning(
@@ -121,9 +135,9 @@ def test_missing_import_in_namespace_package_is_skipped_with_clear_warning(
     root = make_project({"app/a.py": "import app.missing\n"})
     result = parse(root)
     assert internal(result) == set()
-    assert len(result.warnings) == 1
-    assert "None" not in result.warnings[0]
-    assert "app.missing" in result.warnings[0]
+    [warning] = result.warnings
+    assert warning.code is WarningCode.UNRESOLVED_IMPORT
+    assert warning.detail == "app.missing"
 
 
 def test_followed_symlink_outside_root_is_named_by_its_link_path(
@@ -197,20 +211,21 @@ def test_syntax_error_is_warned_and_other_files_still_parse(make_project: MakePr
     result = parse(root)
     assert module_names(result) == {"app", "app.ok"}
     assert internal(result) == {("app.ok", "app.bad", None, False)}
-    assert len(result.warnings) == 1
-    assert "bad.py" in result.warnings[0]
+    [warning] = result.warnings
+    assert warning.code is WarningCode.PARSE_ERROR
+    assert (warning.path, warning.line) == (root / "app/bad.py", 1)
 
 
 def test_deeply_nested_expression_is_warned_not_raised(make_project: MakeProject) -> None:
     root = make_project({"gen.py": "x = " + "+".join(["a"] * 100_000) + "\n"})
     result = parse(root)
     assert module_names(result) == set()
-    assert len(result.warnings) == 1
+    assert codes(result) == [WarningCode.PARSE_ERROR]
 
 
 def test_null_bytes_are_warned(make_project: MakeProject) -> None:
     root = make_project({"a.py": "x = 1\x00\n"})
-    assert len(parse(root).warnings) == 1
+    assert codes(parse(root)) == [WarningCode.PARSE_ERROR]
 
 
 def test_oversized_file_is_skipped_without_reading(make_project: MakeProject) -> None:
@@ -218,14 +233,15 @@ def test_oversized_file_is_skipped_without_reading(make_project: MakeProject) ->
     (root / "big.py").write_bytes(b"\xff\xfe invalid utf-8 " * 10)
     result = parse(root, AnalysisConfig(max_file_size_bytes=16))
     assert module_names(result) == set()
-    assert len(result.warnings) == 1
-    assert "max_file_size_bytes" in result.warnings[0]
+    [warning] = result.warnings
+    assert warning.code is WarningCode.FILE_TOO_LARGE
+    assert warning.detail.endswith("> 16")
 
 
 def test_undecodable_file_is_warned(make_project: MakeProject) -> None:
     root = make_project({"a.py": ""})
     (root / "a.py").write_bytes(b"x = '\xe9'\n")
-    assert len(parse(root).warnings) == 1
+    assert codes(parse(root)) == [WarningCode.PARSE_ERROR]
 
 
 def test_pep263_cookie_is_honoured(make_project: MakeProject) -> None:
@@ -240,8 +256,9 @@ def test_file_vanishing_after_discovery_is_warned(make_project: MakeProject) -> 
     root = make_project({"a.py": ""})
     result = PythonAdapter().parse([root / "a.py", root / "gone.py"], root)
     assert module_names(result) == {"a"}
-    assert len(result.warnings) == 1
-    assert "gone.py" in result.warnings[0]
+    [warning] = result.warnings
+    assert warning.code is WarningCode.PARSE_ERROR
+    assert warning.path == root / "gone.py"
 
 
 def test_circular_imports_produce_both_edges(circular_imports: Path) -> None:

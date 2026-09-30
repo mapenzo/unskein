@@ -1,3 +1,5 @@
+"""unskein: AI-assisted static analysis of module dependencies, coupling and cycles."""
+
 from importlib.metadata import PackageNotFoundError, version
 
 try:

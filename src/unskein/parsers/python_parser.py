@@ -1,36 +1,98 @@
+"""Parse Python source files with `ast` into modules, imports and re-exports."""
+
 import ast
 import os
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pathspec
 
 from unskein.config import AnalysisConfig
-from unskein.parsers.base import ImportEdge, LanguageAdapter, ModuleInfo, ParseResult, ReExport
+from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
+from unskein.parsers.models import (
+    FileParseResult,
+    ImportEdge,
+    ModuleInfo,
+    ParsePlan,
+    ParseTask,
+    ParseWarning,
+    ReExport,
+    WarningCode,
+)
+
+# Import statements only occur in statement lists; ``handlers`` holds ExceptHandler
+# nodes and ``cases`` holds match_case nodes, each with its own ``body``. The order
+# is the one in which a compound statement's blocks appear in the source.
+STATEMENT_LIST_FIELDS = ("body", "handlers", "cases", "orelse", "finalbody")
 
 
-@dataclass(slots=True)
-class FileParseResult:
-    module: ModuleInfo | None
-    re_exports: list[ReExport] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+def iter_statements(tree: ast.Module) -> Iterator[ast.AST]:
+    """Yield every statement of a module, nested ones included, in code order.
+
+    Skips expressions on purpose: ``ast.walk`` visits millions of expression
+    nodes that can never contain an import.
+
+    Args:
+        tree: Parsed module.
+
+    Yields:
+        Each statement, exception handler and match case, depth-first.
+    """
+    stack = list(reversed(tree.body))
+    while stack:
+        node = stack.pop()
+        yield node
+        for field_name in reversed(STATEMENT_LIST_FIELDS):
+            if children := getattr(node, field_name, None):
+                stack.extend(reversed(children))
 
 
 @dataclass(frozen=True, slots=True)
 class ProjectIndex:
+    """Names of every module in the project, used to classify and resolve imports.
+
+    Attributes:
+        modules: Dotted names of all project modules.
+        top_level: First segments of those names (the project's top-level packages).
+    """
+
     modules: frozenset[str]
     top_level: frozenset[str]
 
     @classmethod
     def from_names(cls, names: set[str]) -> "ProjectIndex":
+        """Build the index from the project's module names.
+
+        Args:
+            names: Dotted names of all project modules.
+
+        Returns:
+            The index over those names.
+        """
         return cls(frozenset(names), frozenset(n.split(".")[0] for n in names))
 
     def is_external(self, name: str) -> bool:
+        """Return whether a module name lies outside the project.
+
+        Args:
+            name: Dotted module name taken from an import.
+
+        Returns:
+            True when its first segment is not one of the project's top-level packages.
+        """
         return name.split(".")[0] not in self.top_level
 
     def closest_module(self, name: str) -> str | None:
+        """Return the longest prefix of a name that is a project module.
+
+        Args:
+            name: Dotted name taken from an import.
+
+        Returns:
+            The closest existing module, or None when no prefix exists in the project.
+        """
         parts = name.split(".")
         for end in range(len(parts), 0, -1):
             candidate = ".".join(parts[:end])
@@ -40,12 +102,31 @@ class ProjectIndex:
 
 
 def _absolute(path: Path) -> Path:
+    """Return an absolute path without resolving symlinks.
+
+    Args:
+        path: Path to make absolute.
+
+    Returns:
+        The absolute, normalized path.
+    """
     # abspath, not resolve(): a followed symlink must keep its in-project link path.
     return Path(os.path.abspath(path))
 
 
 def resolve_source_roots(root: Path, configured: list[str] | None) -> list[Path]:
-    """Most specific first; root itself is always the last fallback."""
+    """Return the source roots module names are computed from, most specific first.
+
+    Without configuration, a `src/` directory that is not itself a package is
+    detected as a source root. The project root is always the last fallback.
+
+    Args:
+        root: Project directory.
+        configured: Source roots relative to root, or None to auto-detect.
+
+    Returns:
+        Absolute source roots, deepest first.
+    """
     if configured is None:
         src = root / "src"
         configured = ["src"] if src.is_dir() and not (src / "__init__.py").exists() else []
@@ -57,6 +138,21 @@ def resolve_source_roots(root: Path, configured: list[str] | None) -> list[Path]
 
 
 def module_name(file_path: Path, source_roots: list[Path]) -> str:
+    """Return the dotted module name of a file relative to its source root.
+
+    `__init__.py` collapses to its package name; a package at the source root
+    itself takes the root directory's name.
+
+    Args:
+        file_path: Python source file.
+        source_roots: Roots from `resolve_source_roots`, deepest first.
+
+    Returns:
+        The dotted module name, e.g. "app.services.user".
+
+    Raises:
+        ValueError: If the file is outside every source root.
+    """
     absolute = _absolute(file_path)
     for source_root in source_roots:
         if absolute.is_relative_to(source_root):
@@ -68,6 +164,14 @@ def module_name(file_path: Path, source_roots: list[Path]) -> str:
 
 
 class _ImportCollector:
+    """Collect the imports, re-exports and warnings of one parsed module.
+
+    Args:
+        file_path: Source file being parsed (used in warnings).
+        source: Dotted name of the module being parsed.
+        index: Index of all project modules.
+    """
+
     def __init__(self, file_path: Path, source: str, index: ProjectIndex):
         self.file_path = file_path
         self.source = source
@@ -75,31 +179,60 @@ class _ImportCollector:
         self.is_package = file_path.name == "__init__.py"
         self.edges: list[ImportEdge] = []
         self.re_exports: list[ReExport] = []
-        self.warnings: list[str] = []
+        self.warnings: list[ParseWarning] = []
 
-    def warn(self, line: int, message: str) -> None:
-        self.warnings.append(f"{self.file_path}:{line}: {message}")
+    def warn(self, code: WarningCode, line: int, detail: str) -> None:
+        """Record a warning located at a line of the current file.
+
+        Args:
+            code: Kind of problem.
+            line: Line number the warning refers to.
+            detail: Language-neutral data describing the occurrence.
+        """
+        self.warnings.append(ParseWarning(code, self.file_path, line, detail))
 
     def add(self, name: str, symbol: str | None, line: int) -> str | None:
-        """Record the edge; return the internal target module, or None if external/unresolved."""
+        """Record an import edge towards a module.
+
+        Internal names that do not exist fall back to the closest existing
+        ancestor (with a warning); self-imports produce no edge.
+
+        Args:
+            name: Dotted name of the imported module.
+            symbol: Imported symbol, or None for a whole-module import.
+            line: Line of the import statement.
+
+        Returns:
+            The internal target module, or None if external or unresolved.
+        """
         if self.index.is_external(name):
             self.edges.append(ImportEdge(self.source, name, True, symbol, line))
             return None
         target = self.index.closest_module(name)
         if target is None:
-            self.warn(line, f"internal import '{name}' not found, skipped")
+            self.warn(WarningCode.UNRESOLVED_IMPORT, line, name)
             return None
         if target != name:
-            self.warn(line, f"internal import '{name}' not found, using '{target}'")
+            self.warn(WarningCode.UNRESOLVED_IMPORT, line, f"{name} -> {target}")
         if target != self.source:
             self.edges.append(ImportEdge(self.source, target, False, symbol, line))
         return target
 
     def relative_base(self, node: ast.ImportFrom) -> str | None:
+        """Return the absolute module a relative `from` import refers to.
+
+        Args:
+            node: Relative `from ... import` statement.
+
+        Returns:
+            The absolute dotted base, or None (with a warning) when the import
+            goes beyond the top-level package.
+        """
         package = self.source.split(".") if self.is_package else self.source.split(".")[:-1]
         up = node.level - 1
         if up >= len(package):
-            self.warn(node.lineno, "relative import goes beyond the top-level package")
+            relative = "." * node.level + (node.module or "")
+            self.warn(WarningCode.RELATIVE_BEYOND_TOP, node.lineno, relative)
             return None
         parts = package[: len(package) - up]
         if node.module:
@@ -107,7 +240,12 @@ class _ImportCollector:
         return ".".join(parts)
 
     def visit(self, tree: ast.Module) -> None:
-        for node in ast.walk(tree):
+        """Collect every import in a module, including nested ones, in code order.
+
+        Args:
+            tree: Parsed module.
+        """
+        for node in iter_statements(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     self.add(alias.name, None, node.lineno)
@@ -117,9 +255,19 @@ class _ImportCollector:
                     self.visit_from(base, node)
 
     def visit_from(self, base: str, node: ast.ImportFrom) -> None:
+        """Record the names of a `from base import ...` statement.
+
+        A name that is a submodule of base becomes a module import; any other
+        name is a symbol of base. Symbol imports in a package `__init__.py` are
+        recorded as re-exports under their exported (alias) name.
+
+        Args:
+            base: Absolute dotted module the names are imported from.
+            node: The `from ... import` statement.
+        """
         for alias in node.names:
             if alias.name == "*":
-                self.warn(node.lineno, f"'from {base} import *': exported names are unknown")
+                self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
                 self.add(base, None, node.lineno)
                 continue
             submodule = f"{base}.{alias.name}"
@@ -135,22 +283,33 @@ class _ImportCollector:
 def parse_file(
     file_path: Path, name: str, index: ProjectIndex, config: AnalysisConfig
 ) -> FileParseResult:
+    """Parse one Python file; problems become warnings instead of exceptions.
+
+    Pure and picklable, so it can run as the unit of work of a process pool.
+    Oversized files are skipped without being read.
+
+    Args:
+        file_path: Python source file.
+        name: Dotted module name of the file.
+        index: Index of all project modules.
+        config: Analysis settings (size limit, fallback encoding).
+
+    Returns:
+        The parsed module, or None plus a warning when the file was skipped.
+    """
     try:
         size = file_path.stat().st_size
         if size > config.max_file_size_bytes:
-            return FileParseResult(
-                None,
-                warnings=[
-                    f"{file_path}: {size} bytes exceeds max_file_size_bytes "
-                    f"({config.max_file_size_bytes}), skipped"
-                ],
-            )
+            detail = f"{size} > {config.max_file_size_bytes}"
+            warning = ParseWarning(WarningCode.FILE_TOO_LARGE, file_path, None, detail)
+            return FileParseResult(None, warnings=[warning])
         encoding = detect_encoding(file_path, config.default_encoding)
         tree = ast.parse(file_path.read_text(encoding=encoding), filename=str(file_path))
     except (OSError, SyntaxError, UnicodeDecodeError, RecursionError) as e:
-        return FileParseResult(
-            None, warnings=[f"{file_path}: could not parse ({type(e).__name__}: {e})"]
-        )
+        line = e.lineno if isinstance(e, SyntaxError) else None
+        detail = f"{type(e).__name__}: {e}"
+        warning = ParseWarning(WarningCode.PARSE_ERROR, file_path, line, detail)
+        return FileParseResult(None, warnings=[warning])
     collector = _ImportCollector(file_path, name, index)
     collector.visit(tree)
     return FileParseResult(
@@ -159,34 +318,75 @@ def parse_file(
 
 
 class PythonAdapter(LanguageAdapter):
+    """Language adapter for Python, built on the standard library `ast` module.
+
+    Args:
+        config: Analysis settings; defaults are used when omitted.
+    """
+
     def __init__(self, config: AnalysisConfig | None = None):
         self.config = config or AnalysisConfig()
 
     @property
     def language_name(self) -> str:
+        """Name of the language this adapter handles: "python"."""
         return "python"
 
     @property
     def file_extensions(self) -> list[str]:
+        """File extensions of Python source files."""
         return [".py"]
 
     def discover_files(
         self, root: Path, exclude_spec: pathspec.PathSpec, follow_symlinks: bool = False
     ) -> Iterator[Path]:
+        """Yield the Python files under root that are not excluded.
+
+        Args:
+            root: Project directory to walk.
+            exclude_spec: Combined exclude patterns; matching paths are skipped.
+            follow_symlinks: Whether to descend into symlinked directories.
+
+        Returns:
+            An iterator over the Python files to analyze.
+        """
         return walk_files(root, tuple(self.file_extensions), exclude_spec, follow_symlinks)
 
     def normalize_module_name(self, file_path: Path, root: Path) -> str:
+        """Return the dotted module name of a file, relative to its source root.
+
+        Args:
+            file_path: Python source file.
+            root: Project directory the file belongs to.
+
+        Returns:
+            The dotted module name, e.g. "pkg.core" for "src/pkg/core.py".
+        """
         return module_name(file_path, resolve_source_roots(root, self.config.source_roots))
 
-    def parse(self, files: list[Path], root: Path) -> ParseResult:
+    def plan_parse(self, files: list[Path], root: Path) -> ParsePlan:
+        """Name every file first, so imports can be classified against the whole project.
+
+        Args:
+            files: Python source files to parse.
+            root: Project directory the files belong to.
+
+        Returns:
+            One task per file, in the given order, sharing the project index.
+        """
         source_roots = resolve_source_roots(root, self.config.source_roots)
-        names = {path: module_name(path, source_roots) for path in files}
-        index = ProjectIndex.from_names(set(names.values()))
-        result = ParseResult(modules=[], language=self.language_name)
-        for path, name in names.items():
-            file_result = parse_file(path, name, index, self.config)
-            if file_result.module is not None:
-                result.modules.append(file_result.module)
-            result.re_exports.extend(file_result.re_exports)
-            result.warnings.extend(file_result.warnings)
-        return result
+        tasks = [(path, module_name(path, source_roots)) for path in files]
+        return ParsePlan(tasks, ProjectIndex.from_names({name for _, name in tasks}))
+
+    def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:
+        """Parse one Python file against the project index.
+
+        Args:
+            task: File and module name, from `plan_parse`.
+            shared: The project index built by `plan_parse`.
+
+        Returns:
+            The parsed module, or None plus a warning when the file was skipped.
+        """
+        path, name = task
+        return parse_file(path, name, shared, self.config)

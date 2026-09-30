@@ -1,3 +1,5 @@
+"""Optional LLM interpretation of the deterministic analysis."""
+
 from unskein.ai.client import AIClient
 from unskein.ai.models import AIContext, AIReport, Problem
 

@@ -13,13 +13,18 @@ discovery → parse → resolve_indirection → analyze (grafo + métricas) → 
 
 ---
 
-## 1. El adapter (`parsers/base.py`)
+## 1. El adapter (`parsers/base.py`, `parsers/models.py`)
 
 Contrato común para que cualquier lenguaje (Python en v0.1, TS/Java después)
-se integre al pipeline sin reescribirlo.
+se integre al pipeline sin reescribirlo. Los datos (`ImportEdge`,
+`ModuleInfo`, `ReExport`, `ParseResult`) viven en `parsers/models.py`, sin
+dependencias; `parsers/base.py` solo contiene `LanguageAdapter`. Así
+`indirection.py` depende de `models` y `base` de ambos, sin ciclo (antes
+`base` ↔ `indirection` se importaban mutuamente — unskein lo detectaba en
+su propio código).
 
 ```python
-from abc import ABC, abstractmethod
+# parsers/models.py
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -48,8 +53,20 @@ class ParseResult:
     modules: list[ModuleInfo]
     language: str
     re_exports: list[ReExport] = field(default_factory=list)
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[ParseWarning] = field(default_factory=list)
 
+class WarningCode(StrEnum):
+    STAR_IMPORT, RELATIVE_BEYOND_TOP, UNRESOLVED_IMPORT, FILE_TOO_LARGE,
+    PARSE_ERROR, PARSE_TIMEOUT, REEXPORT_CYCLE, REEXPORT_DEPTH_EXCEEDED
+
+@dataclass(frozen=True, slots=True)
+class ParseWarning:
+    code: WarningCode
+    path: Path | None   # None en problemas de proyecto (ciclos de re-export)
+    line: int | None
+    detail: str         # dato técnico neutro de idioma, nunca una frase traducida
+
+# parsers/base.py
 class LanguageAdapter(ABC):
     @property
     @abstractmethod
@@ -63,7 +80,16 @@ class LanguageAdapter(ABC):
     def discover_files(self, root: Path, exclude: list[str]) -> list[Path]: ...
 
     @abstractmethod
-    def parse(self, files: list[Path], root: Path) -> ParseResult: ...
+    def plan_parse(self, files: list[Path], root: Path) -> ParsePlan: ...
+    # ParsePlan(tasks=[(path, nombre)], shared=...): las tareas en el orden en que
+    # se combinan los resultados, y lo que todas comparten (el índice de módulos).
+
+    @abstractmethod
+    def parse_task(self, task: ParseTask, shared: Any) -> FileParseResult: ...
+    # Pura y serializable: es la unidad de trabajo de un worker.
+
+    def parse(self, files: list[Path], root: Path) -> ParseResult:
+        """Secuencial, construido sobre plan_parse + parse_task (un solo camino)."""
 
     @abstractmethod
     def normalize_module_name(self, file_path: Path, root: Path) -> str: ...
@@ -79,6 +105,12 @@ Decisiones clave:
   (no contra una lista de stdlib/paquetes conocidos — más robusto).
 - `ParseResult.warnings` en vez de excepciones duras: un archivo con sintaxis
   inválida no debe tumbar el análisis completo del proyecto.
+- Los warnings son **estructurados** (`ParseWarning`: `code` + `path` +
+  `line` + `detail`), no strings: el reporte los traduce a ES/EN a partir del
+  `code` y los agrupa por tipo (un proyecto con 264 star imports muestra una
+  línea, no 264). `detail` solo lleva datos neutros de idioma (nombres de
+  módulo, tamaños, texto de la excepción). `frozen` → hashables, así la
+  deduplicación de `resolve_indirection` sigue funcionando.
 - `resolve_indirection` tiene implementación default en la clase base porque
   la lógica de "seguir la cadena de re-exports" es un problema de grafos, igual
   en cualquier lenguaje. Lo que cambia por lenguaje es cómo se *detecta* un
@@ -99,28 +131,44 @@ MAX_RESOLUTION_DEPTH = 10
 ReExportIndex = dict[tuple[str, str], str]  # (módulo_exportador, símbolo) -> módulo_original
 
 def build_reexport_index(re_exports: list[ReExport]) -> ReExportIndex:
-    return {(re.exporting_module, re.symbol_name): re.original_module for re in re_exports}
+    index: ReExportIndex = {}
+    for re_export in re_exports:  # orden de código: el primero gana
+        index.setdefault((re_export.exporting_module, re_export.symbol_name), re_export.original_module)
+    return index
 
 def resolve_target(
-    module: str, symbol: str | None, index: ReExportIndex, visited: set[str] | None = None,
+    module: str, symbol: str | None, index: ReExportIndex, path: list[str] | None = None,
 ) -> tuple[str, list[str]]:
-    if visited is None:
-        visited = set()
-    warnings = []
+    if path is None:
+        path = []
 
     if symbol is None or (module, symbol) not in index:
-        return module, warnings
-    if module in visited:
-        warnings.append(f"Ciclo de re-exports detectado en '{module}', deteniendo resolución")
-        return module, warnings
-    if len(visited) >= MAX_RESOLUTION_DEPTH:
-        warnings.append(f"Profundidad máxima de re-exports excedida en '{module}'")
-        return module, warnings
+        return module, []
+    if module in path:
+        members = ", ".join(sorted(path[path.index(module):]))
+        detail = f"{symbol}: {members}"
+        return module, [ParseWarning(WarningCode.REEXPORT_CYCLE, None, None, detail)]
+    if len(path) >= MAX_RESOLUTION_DEPTH:
+        detail = f"{symbol}: {module}"
+        return module, [ParseWarning(WarningCode.REEXPORT_DEPTH_EXCEEDED, None, None, detail)]
 
-    visited.add(module)
-    next_module = index[(module, symbol)]
-    return resolve_target(next_module, symbol, index, visited)
+    path.append(module)
+    return resolve_target(index[(module, symbol)], symbol, index, path)
 ```
+
+`resolve_indirection(result) -> ParseResult` aplica `resolve_target` a cada
+arista **interna con símbolo** y devuelve un `ParseResult` nuevo (función
+pura, no muta la entrada):
+- Externos e imports de módulo completo (`symbol_name is None`) quedan igual.
+- Las aristas de la propia fachada también se resuelven (`app/__init__` →
+  módulo que define el símbolo): la fachada depende realmente de él.
+- Si la resolución termina en el propio módulo origen, la arista se descarta
+  (igual que los auto-imports en el parser).
+- Warnings deduplicados y añadidos tras los del parser. El warning de ciclo
+  es **canónico**: nombra el símbolo y los miembros del ciclo ordenados (se
+  guarda el camino como `list`, no `set`, para saber dónde empieza el ciclo),
+  así cualquier punto de entrada al mismo ciclo produce el mismo texto → un
+  único warning por ciclo.
 
 Decisiones:
 - Ciclos de re-export no rompen el análisis, degradan con warning (misma
@@ -165,13 +213,14 @@ eso el discovery usa `os.walk` en su lugar, con control explícito:
 def discover_files(
     root: Path, exclude_spec: pathspec.PathSpec, follow_symlinks: bool = False,
 ) -> Iterator[Path]:
-    visited_real_dirs: set[Path] = set()
+    visited_directories: set[Hashable] = set()
     for dirpath, dirnames, filenames in os.walk(root, followlinks=follow_symlinks):
-        real = Path(dirpath).resolve()
-        if real in visited_real_dirs:
-            dirnames.clear()  # ya visitado por otra ruta simbólica — corta el descenso
-            continue
-        visited_real_dirs.add(real)
+        if follow_symlinks:
+            identity = _directory_identity(dirpath)  # (st_dev, st_ino)
+            if identity in visited_directories:
+                dirnames.clear()  # ya visitado por otra ruta simbólica — corta el descenso
+                continue
+            visited_directories.add(identity)
         for fname in filenames:
             if fname.endswith(".py"):
                 rel_path = Path(dirpath, fname).relative_to(root)
@@ -186,11 +235,29 @@ Dos riesgos distintos que esto evita:
   venv compartido) haría que se analice código que el usuario no consideraba
   parte de "su proyecto".
 
+### Poda de directorios excluidos
+
+`walk_files` no entra en los directorios que el spec de excludes ya descarta
+(`.venv/`, `build/`, `tests/`…): antes de iterar los archivos de cada directorio
+quita de `dirnames` los subdirectorios cuya ruta relativa + `/` casa con el spec. Así
+el coste del descubrimiento depende del contenido **analizado**, no del ignorado (un
+`.venv/` con miles de archivos pasaba de ~300 ms a una fracción).
+
+Semántica de git para las negaciones: un directorio excluido nunca se re-incluye,
+así que con `build/` y `!build/keep.py`, `build/keep.py` **no** se analiza. Los
+patrones que solo afectan a archivos no podan nada; los archivos se siguen filtrando
+uno a uno.
+
 **Default: `follow_symlinks=False`** — opción segura, sin fuga de alcance ni
 riesgo de ciclo. `--follow-symlinks` la activa explícitamente para quien
 tenga symlinks legítimos dentro de su propio proyecto (monorepos con paquetes
-compartidos). `visited_real_dirs` es defensa en profundidad incluso con
-symlinks activados — corta cualquier ciclo aunque `followlinks=True`.
+compartidos). La detección de ciclos por directorio real visitado es defensa en
+profundidad y **solo corre con `--follow-symlinks`**: sin seguir symlinks los
+bucles son imposibles y se ahorra una llamada por directorio (con `resolve()`, ~120
+de los ~265 ms de Django). Se identifica el directorio por `(st_dev, st_ino)` de
+`os.stat` (que sigue el enlace, como `resolve`, pero más barato); si el sistema de
+archivos no da inodos (`st_ino == 0`), cae a la ruta resuelta para que todos los
+directorios no parezcan el mismo.
 
 ### Detección de encoding por archivo
 
@@ -234,7 +301,8 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
 - **`parse`**: calcula primero los nombres de todos los archivos
   (`ProjectIndex`), luego llama `parse_file(path, name, index, config)` por
   archivo — función de módulo pura y picklable, unidad de trabajo del futuro
-  `ProcessPoolExecutor`. `ast.walk` captura:
+  `ProcessPoolExecutor`. `iter_statements` (recorrido en profundidad, en orden de
+  código, solo por listas de sentencias) captura:
 
   | Caso | `target` | `symbol_name` |
   |---|---|---|
@@ -251,14 +319,25 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   interno de un *símbolo* (no de un submódulo) genera
   `ReExport(paquete, módulo_origen, asname or name)`. Con alias, la cadena se
   sigue con el nombre exportado: si un eslabón posterior re-exporta con otro
-  nombre, la resolución se detiene en el módulo intermedio.
+  nombre, la resolución se detiene en el módulo intermedio. Si un facade expone
+  el mismo símbolo más de una vez (típico: `try: from ._fast import X` /
+  `except ImportError: from ._slow import X`), **gana el primero en el código**.
+  Los imports se recorren en profundidad y en orden de código, así que los avisos
+  de un archivo también salen en ese orden.
 - **Errores por archivo** → warning, el archivo se omite y el análisis sigue:
-  tamaño > `max_file_size_bytes` (ni se lee), `OSError`, `SyntaxError`
-  (incluye bytes nulos desde 3.12), `UnicodeDecodeError`, `RecursionError`.
+  tamaño > `max_file_size_bytes` (ni se lee; `FILE_TOO_LARGE`, detail
+  `"<tamaño> > <límite>"`), `OSError`, `SyntaxError` (incluye bytes nulos
+  desde 3.12; `line` = línea del error), `UnicodeDecodeError`,
+  `RecursionError` (todos `PARSE_ERROR`, detail `"<Excepción>: <mensaje>"`).
+- **`detail` por código**: `STAR_IMPORT` → módulo base; `UNRESOLVED_IMPORT`
+  → `"nombre -> ancestro"` o solo `"nombre"` si se omitió;
+  `RELATIVE_BEYOND_TOP` → el relativo tal cual (`"...m"`);
+  `REEXPORT_CYCLE` → `"Símbolo: m1, m2"` (miembros ordenados);
+  `REEXPORT_DEPTH_EXCEEDED` → `"Símbolo: módulo"`.
 
 Limitaciones conocidas, documentadas explícitamente (no bugs a "arreglar" sin
 discutirlo primero):
-- `ast.walk` no distingue nivel de anidamiento — un import dentro de una
+- El recorrido (`iter_statements`) no distingue nivel de anidamiento — un import dentro de una
   función se trata igual que uno a nivel de módulo. Aceptable para v0.1;
   un `NodeVisitor` completo permitiría marcar imports condicionales
   (`TYPE_CHECKING`, `try/except ImportError`) en v0.2.
@@ -268,9 +347,6 @@ discutirlo primero):
   silenciosamente.
 - **Imports dinámicos vía `importlib.import_module()` con strings son
   invisibles** — limitación conocida y común en análisis estático puro.
-- **Warnings en inglés** — `ParseResult.warnings` son strings sin traducir.
-  El i18n completo requiere warnings estructurados (`code` + `detail`)
-  traducidos en la capa de reporte; se hace junto con `report/markdown.py`.
 
 ---
 
@@ -284,12 +360,36 @@ diseño de colas por etapa cubre todo el pipeline `parse → resolve → metrics
 ```python
 @dataclass
 class AnalysisConfig:
-    parallel_threshold: int = 50           # archivos; por debajo, secuencial
-    max_workers: int | None = None         # None = os.cpu_count()
+    parallel_threshold: int = 500          # archivos; por debajo, secuencial
+    max_workers: int | None = None         # None = min(os.cpu_count(), 8)
     queue_maxsize: int = 200               # archivos "en vuelo" como máximo
     max_file_size_bytes: int = 5 * 1024 * 1024   # 5 MB; se salta con warning
     per_file_timeout_seconds: int = 30     # por archivo, al recoger resultados
 ```
+
+**Calibración del umbral (P4.4).** Medido en una máquina de 16 núcleos
+(WSL2, Python 3.14) con networkx 3.4.2, Django 5.1.4 y sympy 1.13.3, tomando
+los primeros *N* archivos de cada uno; speedup = secuencial / paralelo, mejor
+de 3, con el resultado siempre idéntico al secuencial. `spawn` es el método de
+Windows y, desde Python 3.14, también el coste aproximado de `forkserver`, el
+default de Linux:
+
+| Archivos | fork, 4 workers | spawn, 4 workers |
+|---:|---|---|
+| 50 | 0,5–0,9× | 0,04–0,12× |
+| 100 | 0,6–1,7× | 0,06–0,36× |
+| 200 | 0,9–2,1× | 0,22–0,41× |
+| 300–400 | 1,8–2,2× | 0,6–1,6× |
+| 365–891 (proyecto entero) | 1,9–2,9× | 1,0–2,6× |
+
+Arrancar el pool con `spawn` cuesta unos 130 ms con 2 workers y unos 300 ms
+con 16 (≈10 ms por worker), y el speedup deja de crecer pasados 4–8 workers
+(Django, 875 archivos, `spawn`: 1,49× con 4 workers, 1,22× con 16). De ahí los
+defaults: **umbral 500** (con el 50 anterior el paralelo era entre 2 y 40 veces
+más lento en todo lo medido) y **tope de 8 workers** cuando `max_workers` no
+está fijado. El número de archivos es un proxy tosco del coste real (Django y networkx
+cuestan unos 0,5 ms por archivo y sympy 1,7 ms); `should_parallelize` es el punto
+donde una decisión basada en bytes o en tiempos medidos podría sustituirlo.
 
 Por debajo de `parallel_threshold`, el overhead de arrancar
 `ProcessPoolExecutor` (serialización, spawn de procesos) supera la ganancia —
@@ -338,15 +438,32 @@ resto termina y queda ocioso. Una cola compartida se autobalancea
 dinámicamente: cualquier worker libre toma el siguiente archivo, sin importar
 cuán desigual sea el costo de cada uno.
 
+El paralelo no usa una `queue.Queue` explícita, sino una **ventana deslizante
+de lotes** con el mismo efecto: `_parse_in_pool` envía lotes de archivos al pool
+y no deja más de `queue_maxsize` archivos en vuelo (backpressure: no se
+materializa todo el trabajo de una vez). Cada worker toma el siguiente lote
+libre, así que el autobalanceo es el mismo que el de una cola compartida. Los
+resultados se recogen **en el orden de los archivos**, de modo que la salida es
+idéntica a la secuencial (determinismo).
+
 ```python
-def _parse_parallel(
-    files: Iterator[Path], adapter: LanguageAdapter, root: Path, config: AnalysisConfig,
-) -> ParseResult:
-    work_queue: queue.Queue[Path | None] = queue.Queue(maxsize=config.queue_maxsize)
-    # el productor bloquea al llenar la cola — esto ES el backpressure,
-    # evita materializar miles de Path en memoria de una sola vez
-    ...
+plan = adapter.plan_parse(files, root)         # tareas + datos compartidos
+with ProcessPoolExecutor(
+    max_workers=worker_count(config),
+    initializer=_init_worker,                  # variables de módulo del worker
+    initargs=(adapter, plan.shared),           # el índice viaja UNA vez por worker
+) as pool:
+    results = _parse_in_pool(pool, batches, config)
 ```
+
+- **El índice de módulos se serializa una vez por worker**, no por archivo.
+  Enviarlo con cada tarea costaba 23 MiB en total en sympy y crecía de forma
+  cuadrática con el proyecto.
+- **Lotes** (`batch_size`): entre 1 y 32 archivos, unos 4 lotes por worker, sin
+  superar `queue_maxsize`. Con un archivo por mensaje, el IPC añade ≈0,85 ms
+  por archivo.
+- **Un pool que muere** (`BrokenProcessPool`) no tumba el análisis: se avisa por
+  el log y se vuelve a parsear en secuencial.
 
 ### Colas por etapa del pipeline (estilo SEDA)
 
@@ -421,19 +538,30 @@ if file_path.stat().st_size > config.max_file_size_bytes:
     continue
 ```
 
-**C — cuelgue de un worker individual sin timeout.** Con la cola compartida
+**C — cuelgue de un worker individual sin timeout.** Con lotes compartidos
 (no sharding), un archivo pesado ralentiza solo a su propio worker — el resto
-sigue tomando trabajo sin bloquearse. Pero si algo se cuelga de verdad (bug
-real del parser en un caso extremo), ese worker nunca libera su slot.
-Mitigación: `per_file_timeout_seconds` al recoger resultados del
-`ProcessPoolExecutor`:
+sigue tomando trabajo sin bloquearse. Mitigación: `per_file_timeout_seconds` al
+recoger resultados, aplicado a cada lote como `timeout × archivos del lote`:
 
 ```python
 try:
-    result = future.result(timeout=config.per_file_timeout_seconds)
-except concurrent.futures.TimeoutError:
-    warnings.append(f"Timeout parseando {file_path}, se omite")
+    return future.result(timeout=per_file_timeout_seconds * len(batch))
+except TimeoutError:
+    ...  # se reintenta el lote archivo por archivo para señalar al culpable
 ```
+
+Al vencer el plazo de un lote, sus archivos se reenvían de uno en uno y solo
+el que vuelve a vencer se omite, con un warning `PARSE_TIMEOUT` (detail = el
+límite en segundos); el resto se analiza con normalidad.
+
+**Limitación aceptada y documentada (decisión del mantenedor).** El timeout
+solo deja de *esperar* el resultado: no puede cancelar un proceso que ya está
+parseando. El worker sigue con ese archivo y, al cerrar el pool, se espera a que
+termine, así que un archivo patológico de verdad puede retrasar el cierre del
+análisis. Reciclar el proceso afectado (terminar y recrear el pool) resolvería
+eso, pero es bastante más complejo y queda diferido. El plazo se cuenta desde
+que se empieza a esperar el lote, no desde que empieza a ejecutarse, así que
+solo puede ser más generoso que el nominal.
 
 Ningún caso de los tres debe tumbar el análisis completo del resto del
 proyecto — mismo principio que ya rige para `SyntaxError`/`UnicodeDecodeError`
@@ -447,9 +575,14 @@ aplicados) y construye el grafo real.
 - **Construcción del grafo**: `networkx.DiGraph`. Solo contiene módulos
   internos del proyecto como nodos — las dependencias externas ya cumplieron
   su función en `is_external` y no aportan valor en el grafo de acoplamiento.
+  Son nodos también los módulos aislados (cuentan en el total con Ca=Ce=0) y
+  los destinos internos cuyo archivo no se pudo parsear. Una arista por par
+  importador/importado, con `weight` = número de sentencias de import. Nodos
+  insertados en orden alfabético → recorridos y reportes deterministas.
 - **Métricas de acoplamiento** (por módulo):
   - `Ca` (acoplamiento aferente) = `in_degree` — cuántos módulos dependen de este.
   - `Ce` (acoplamiento eferente) = `out_degree` — de cuántos módulos depende este.
+  - Ambos cuentan módulos distintos, no el `weight`.
   - `Instability = Ce / (Ca + Ce)`, rango `[0, 1]`.
   - Interpretación: I cercana a 1 = módulo de orquestación/aplicación
     (depende de muchos, nadie depende de él). I cercana a 0 = módulo
@@ -457,130 +590,134 @@ aplicados) y construye el grafo real.
     sí solo — lo problemático es Ca y Ce altos simultáneamente, o un módulo
     core que cambia con frecuencia.
 - **Detección de ciclos**: `nx.simple_cycles(graph)`. En grafos muy densos el
-  número de ciclos puede crecer exponencialmente — cortar tras encontrar los
-  primeros ~100 ciclos para evitar cuelgues en codebases patológicos.
+  número de ciclos puede crecer exponencialmente — se consumen como máximo
+  `MAX_CYCLES + 1` (100 + 1) con `itertools.islice`; el extra solo indica si
+  hay más (`cycles_truncated`). Cada ciclo se rota para empezar por su módulo
+  menor: el mismo ciclo siempre se escribe igual. networkx recorre conjuntos
+  internos cuyo orden depende de la semilla del hash de los `str`
+  (`PYTHONHASHSEED`), así que el grafo se enumera con etiquetas enteras (índice
+  del nombre ordenado): la lista y el punto de truncado son idénticos entre
+  ejecuciones (coste medido: 0,7 s con 20.000 nodos y 200.000 aristas).
+- **Marañas** (`find_tangles`, #8): componentes fuertemente conexas de más
+  de un módulo (`nx.strongly_connected_components`, lineal y exacto, nunca
+  se trunca). Todo ciclo vive dentro de una maraña, así que dan el tamaño
+  real del problema aunque la lista de ciclos se corte en 100: en networkx,
+  "100+ ciclos" es en realidad **una maraña de 279 de 288 módulos**.
+  Miembros ordenados; marañas de mayor a menor tamaño.
 - **"God modules" / alto acoplamiento**: percentil superior (default 90%) de
   `Ca + Ce` combinado, como candidatos que la capa de IA interpretará.
+  Umbral por *nearest-rank* sobre todos los módulos (el
+  `ceil(p/100·n)`-ésimo menor valor): sin interpolación, siempre es una
+  puntuación real y explicable. Empates incluidos, puntuación 0 nunca;
+  orden por puntuación descendente y luego nombre.
+- **Fachadas con `import paquete as alias`**: el uso `alias.func()` no se
+  puede resolver estáticamente, así que el paquete raíz acumula un Ca muy
+  alto (en networkx, 253 de 288 módulos). Es un dato real — todo depende de
+  la fachada —, pero el reporte/IA deben interpretarlo como tal, no como un
+  "god module" clásico.
 
 Output consolidado (`AnalysisResult`): `graph`, `coupling_metrics`, `cycles`,
-`high_coupling_modules`, `parse_warnings`. Este objeto es el punto de unión
-entre el análisis determinista y la interpretación por IA/reporte.
+`high_coupling_modules`, `parse_warnings`, `cycles_truncated`, `tangles`.
+`analyze()` es composición pura `build_graph → compute_coupling →
+find_cycles → find_tangles → find_high_coupling` y espera un `ParseResult` ya pasado por
+`resolve_indirection`. Este objeto es el punto de unión entre el análisis
+determinista y la interpretación por IA/reporte.
 
 ---
 
 ## 5. Pipeline de IA (`ai/client.py`, `ai/prompts.py`)
 
 Principio rector: **el LLM interpreta agregados y casos destacados, nunca el
-grafo completo** (problema de tamaño de contexto y costo).
+grafo completo**, y **el grafo es la verdad**: lo que el LLM diga se contrasta con
+él antes de mostrarse.
 
-### Serialización acotada
-
-```python
-@dataclass
-class AIContext:
-    total_modules: int
-    total_dependencies: int
-    cycles: list[list[str]]          # truncado (default: primeros 20)
-    top_coupled_modules: list[dict]  # solo los N peores (default: 15)
-    parse_warnings: list[str]        # truncado (default: 10)
+```
+analyze → build_context → build_messages → AIClient.generate_report → ground_report
 ```
 
-Si se trunca, el reporte final debe decirlo explícitamente ("mostrando N de M
-totales") — nunca ocultar silenciosamente que hay más.
+### Contexto acotado (`AIContext`)
 
-### Salida estructurada (Pydantic)
+Solo nombres de módulo y métricas (nunca código fuente ni rutas): las mayores
+marañas (5, con hasta 20 miembros), los ciclos más cortos (10, con hasta 8 miembros
+cada uno y su longitud real en `CycleSummary.length`), los 15 módulos con mayor
+`Ca + Ce` y el recuento de warnings por código. Cada lista truncada lleva su total al
+lado, para que el LLM sepa que hay más. Los ciclos se resumen porque `find_cycles`
+no acota su longitud (dentro de una maraña son casi tan largos como ella); el peor
+caso medido (maraña de 120 módulos, 100 ciclos, nombres de ~45 caracteres, 2000
+módulos) queda por debajo de `MAX_PROMPT_CHARS` (16 000). Si aun así el mensaje no
+cabe (p. ej. nombres de módulo muy largos), `build_messages` aplica `shrink_context`
+en silencio (solo `DEBUG`): parte a la mitad cada lista y los miembros de cada
+maraña/ciclo, sin bajar de uno y conservando los totales, hasta que cabe o ya no se
+puede reducir más; en ese caso se envía en su tamaño mínimo.
 
-```python
-class Problem(BaseModel):
-    severity: str   # "low" | "medium" | "high"
-    title: str
-    description: str
-    affected_modules: list[str]
-    recommendation: str
-    code_snippet: str | None = None   # siempre None en v0.1 — snippets son v0.2
+### Prompt
 
-class AIReport(BaseModel):
-    summary: str
-    architecture_health: str   # "good" | "fair" | "concerning"
-    problems: list[Problem]
-```
+`build_messages(context, lang)` devuelve `[system, user]`. El system lleva una
+rúbrica de severidad anclada en los datos (`high`: maraña o ciclo; `medium`: módulo
+en el top de `Ca + Ce` volátil del que otros dependen — inestabilidad ≥
+`UNSTABLE_THRESHOLD` (0.7) y `Ca > 0` — o con `Ce` muy por encima del resto; `low`: el
+resto; nunca se señala un módulo solo por ser estable, porque inestabilidad baja con
+muchos dependientes es sano), la regla de
+copiar los nombres de módulo literalmente y la instrucción de idioma. El user lleva
+los datos y el JSON schema de `AIReport` (dentro del prompt además de en la API:
+los modelos económicos ignoran `response_format`). La serialización es
+determinista.
 
-### Cliente — vía LiteLLM, agnóstico de proveedor
+### Cliente
 
-```python
-@dataclass
-class AIConfig:
-    model: str
-    api_key: str | None = None
-    api_base: str | None = None
-```
+`AIClient(config)` resuelve un `ModelProfile` **una sola vez**, al construirse, y
+solo si la IA está activa (`--no-ai` nunca importa `litellm`):
 
-`fallback_models`, `max_retries` y `timeout_seconds` se eliminaron
-deliberadamente de `AIConfig` — LiteLLM gestiona fallback entre modelos,
-reintentos y timeout de forma transparente (vía su propio Router o un
-`config.yaml` de proxy). `unskein` solo pasa `model`, `api_key`, `api_base`.
+- `temperature`: 1.0 si `litellm.supports_reasoning(model)` (los modelos de
+  razonamiento solo aceptan 1.0), 0.2 en los demás.
+- `response_format`: la clase `AIReport` si el modelo soporta JSON schema; si no,
+  `{"type": "json_object"}`.
+- `timeout`: 60 s en llamadas directas; ninguno con `litellm_proxy/…` (manda el
+  proxy).
 
-```python
-class AIClient:
-    def __init__(self, config: AIConfig):
-        self.config = config
+`generate_report(messages)` hace **una** llamada a `litellm.completion` (reintentos
+y fallback son de LiteLLM/proxy) y devuelve un `AIOutcome`: `Timeout` →
+`TIMEOUT`; el resto de `litellm.LITELLM_EXCEPTION_TYPES` → `CALL_ERROR` (solo el
+nombre de la clase); respuesta vacía, truncada o que no cumple el schema →
+`INVALID_RESPONSE`. Cualquier otra excepción es un bug y sale con exit 3.
 
-    def generate_report(self, context: AIContext) -> AIReport | None:
-        prompt = build_prompt(context)
-        try:
-            response = litellm.completion(
-                model=self.config.model,
-                api_key=self.config.api_key,
-                api_base=self.config.api_base,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"},
-            )
-        except litellm.exceptions.APIError as e:
-            logger.warning(f"Fallo en análisis de IA: {e}")
-            return None
-        return self._parse_and_validate(response)
+La validación quita los bloques `<think>…</think>`, prueba el JSON tal cual y
+después el extraído (bloque cercado o del primer `{` al último `}`).
 
-    def _parse_and_validate(self, response) -> AIReport | None:
-        raw = response.choices[0].message.content
-        try:
-            return AIReport.model_validate_json(raw)
-        except ValidationError:
-            extracted = extract_json_block(raw)  # busca ```json ... ``` o { ... }
-            if extracted:
-                try:
-                    return AIReport.model_validate_json(extracted)
-                except ValidationError as e:
-                    logger.warning(f"Respuesta del modelo no cumple el schema: {e}")
-            return None
-```
+El import de LiteLLM es perezoso y endurecido: `LITELLM_LOCAL_MODEL_COST_MAP=True`
+(sin descarga remota del mapa de precios), `telemetry = False` y
+`suppress_debug_info = True`. Nunca se activa `set_verbose`.
 
-**Nota importante sobre modelos económicos (Ollama/HuggingFace):** el soporte
-de `response_format`/JSON mode varía mucho según el modelo. Reforzar incluyendo
-el JSON schema completo *dentro del prompt* además del parámetro de API, y
-mantener el fallback de extracción de JSON embebido — con estos modelos va a
-activarse con más frecuencia que con modelos grandes de proveedores cloud.
+### Anclaje al grafo (`ground_report`)
 
-### System prompt
+Cada nombre de módulo se normaliza antes de compararlo con el grafo
+(`normalize_module_name`): se quitan espacios, comillas/backticks y puntos en los
+extremos, y una ruta (`app/core.py`, `./app/core.py`, `app/__init__.py`,
+`src/app/core.py`) o un nombre con `.py` se convierte a nombre con puntos. Un segmento
+inicial `src` (raíz de fuentes) solo se quita si el nombre con él no existe en el
+grafo; ningún otro segmento se adivina. Luego se eliminan de cada problema los módulos que no son nodos del grafo
+(sin duplicados) y se descartan los problemas que se quedan sin ninguno;
+`code_snippet` se fuerza a `None` (v0.2). `ground_report` devuelve
+`GroundingResult(report, dropped_problems)`; si hubo descartes, se avisa por consola
+(`WARNING`, solo el número, nunca el texto del LLM) y en el reporte.
 
-Debe instruir explícitamente a no inventar información no presente en los
-datos, y a declarar cuando los datos son insuficientes para una conclusión —
-sin esto, el LLM tiende a rellenar con "buenas prácticas" genéricas sin
-relación con el proyecto real analizado.
+### Seguridad
 
-### Gestión de costo
-
-LiteLLM expone `success_callback` para trackear costo por llamada
-(`litellm.completion_cost`). Usarlo para logging local de costo acumulado, en
-vez de implementar tracking propio.
+La API key nunca aparece en logs, `repr`, reporte ni errores. `WARNING` solo lleva
+el tipo de fallo y la clase de la excepción; el mensaje del proveedor solo va a
+`DEBUG`, con la key sustituida por `***`.
 
 ### Degradación
 
-Si falla la config (`load_ai_config` devuelve `None`), la llamada, o la
-validación del schema, el reporte se genera igual sin la sección de IA, con
-aviso claro. **Nunca** debe caerse el comando completo por un fallo del LLM.
+Modelo no configurado, `--no-ai` o fallo de la llamada/validación: el reporte se
+genera igual. `AIStatus` (`PRESENT`, `DISABLED`, `NOT_CONFIGURED`, `FAILED`)
+explica por qué la sección de IA está vacía; con `FAILED`, el `AIFailure` elige el
+aviso. **Nunca** cae el comando por un fallo del LLM.
+
+### Coste
+
+`DEBUG` local con los tokens y el coste de `litellm.completion_cost`; no aparece
+en el reporte.
 
 ---
 
@@ -620,30 +757,21 @@ def t(key: str, lang: Lang, **kwargs) -> str:
 
 ### Detección del idioma
 
-Misma jerarquía de configuración que el resto del proyecto: env var
-(`UNSKEIN_LANG`) → `.unskein.toml` (`[general] lang = "es"`) → flag `--lang`.
+Precedencia de las opciones no secretas: flag `--lang` > env var
+(`UNSKEIN_LANG`) > `.unskein.toml` (`[general] lang = "es"`). Si el toml es
+inválido, el idioma se decide sin él (para poder traducir ese mismo error).
 Si nada está configurado, se usa `locale.getlocale()`; si no es `es*`,
 **default a inglés** — más seguro para adopción OSS amplia, no asumir que
 quien instala el CLI habla español.
 
 ### Impacto en el pipeline de IA
 
-`build_prompt` recibe el idioma y lo incluye como instrucción explícita en el
-`SYSTEM_PROMPT` — el LLM debe generar `AIReport.summary` y
-`Problem.description` en el idioma seleccionado, no solo el CLI/reporte:
-
-```python
-def build_prompt(context: AIContext, lang: Lang) -> str:
-    lang_instruction = {
-        Lang.ES: "Responde en español.",
-        Lang.EN: "Respond in English.",
-    }[lang]
-    return f"{lang_instruction}\n\n" + _build_prompt_body(context)
-```
-
-El `SYSTEM_PROMPT` base (instrucción de no inventar información, declarar
-insuficiencia de datos) se mantiene igual en ambos idiomas — solo cambia el
-idioma de salida esperado, no el criterio de análisis.
+`build_messages(context, lang)` incluye el idioma como instrucción explícita
+(`LANG_INSTRUCTION`) en el mensaje `system` — el LLM debe generar
+`AIReport.summary` y `Problem.description` en el idioma seleccionado, no solo
+el CLI/reporte. El resto del `SYSTEM_PROMPT` (rúbrica de severidad, no inventar
+información, declarar insuficiencia de datos) es el mismo en ambos idiomas —
+solo cambia el idioma de salida esperado, no el criterio de análisis.
 
 ## 6. Reporte (`report/markdown.py`)
 
@@ -659,14 +787,33 @@ Estructura del reporte:
 ## Métricas generales
 ## Ciclos de dependencia
 ## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado)
-## Problemas señalados (IA)         (omitida solo si no hay AIReport; con aviso)
+## Problemas señalados (IA)         (siempre presente: los problemas si hay AIReport;
+                                    si no, el aviso de por qué no hay: DISABLED,
+                                    NOT_CONFIGURED o FAILED)
 ## Advertencias del análisis        (solo si hay parse_warnings)
 ```
 
+API: `render_report(context: ReportContext, lang) -> str`, con
+`ReportContext(root, result, ai_report, ai_status, min_severity, ai_failure,
+ai_error_type)`. `root`
+nombra el reporte y hace **relativas** las rutas de los warnings.
+
 Reglas:
-- El "no hay IA" nunca es un hueco vacío ni un error crudo — siempre da un
-  resumen basado en números + sugerencia de cómo obtener más (quitar
-  `--no-ai`).
+- El "no hay IA" nunca es un hueco vacío ni un error crudo: `AIStatus`
+  (`PRESENT`, `DISABLED` por `--no-ai`, `NOT_CONFIGURED` sin modelo — con
+  cómo configurarlo —, `FAILED` si la llamada falló; el `AIFailure` elige el
+  aviso) elige el aviso de la sección.
+- **Warnings agrupados por `WarningCode`**: `### <título> (<n>)` con
+  `MAX_WARNING_EXAMPLES` (5) ejemplos `ruta:línea — mensaje` y "…y N más".
+  Con networkx: 264 star imports → 1 grupo, 5 líneas.
+- Sección de ciclos: primero las **marañas** (tamaño + hasta
+  `MAX_TANGLE_MEMBERS_SHOWN` = 10 miembros y "…y N más"), luego los ciclos
+  como ejemplos, en bucle cerrado (`a` → `b` → `a`), con aviso si se
+  truncaron. El resumen menciona la maraña mayor y la tabla de métricas
+  cuenta las marañas.
+- Todo texto sale del catálogo `i18n` (ES/EN); un test exige que cada
+  `WarningCode`, cada `ErrorKey` y cada clave tengan ambos idiomas con los
+  mismos placeholders.
 - `--min-severity` se aplica en esta capa (filtrando `ai_report.problems`
   antes de renderizar), no se le pide al LLM que filtre — mantiene la
   generación de IA independiente de la presentación.
@@ -694,24 +841,44 @@ Flags:
 | `--api-key` | API key vía flag (documentado como inseguro) |
 | `--version` | Versión del CLI |
 
-Orquestación separada del decorador de `typer` (`run_scan`, testeable sin
-invocar el CLI completo; reutilizable como librería más adelante):
+Orquestación en `scan.py`, separada de `typer` (testeable sin el CLI y
+reutilizable como librería), en **dos fases** para que cualquier error
+posterior a la config salga en el idioma configurado:
 
 ```
-run_scan:
-  1. valida que <path> existe
-  2. adapter = PythonAdapter()  # hardcodeado en v0.1, único lenguaje
-  3. discover_files → parse → resolve_indirection
-  4. analyze() → AnalysisResult
-  5. si no --no-ai: load_ai_config() → AIClient.generate_report()
-     (config ausente o fallo de IA → ai_report = None, se continúa igual)
-  6. filtra por --min-severity si aplica
-  7. devuelve (AnalysisResult, AIReport | None) a output_report()
+prepare_scan(options) -> ScanContext        # única fase que lee .unskein.toml
+  load_toml_config → detect_lang → resolve_analysis_config → ai_config
+  (ConfigError → el CLI lo traduce con flag > env > locale, sin el toml)
+execute_scan(context) -> ScanOutcome        # = analyze_project + interpret
+  1. valida que <path> es un directorio          (UnskeinError PATH_NOT_FOUND)
+  2. adapter = PythonAdapter(config)             # único lenguaje en v0.1
+  3. discover (excludes + tests) → sin .py       (UnskeinError NO_FILES_FOUND)
+  4. adapter.parse (secuencial hasta el PR de paralelismo)
+     → resolve_indirection → analyze
+  5. interpret: con modelo configurado y sin --no-ai, build_context →
+     build_messages → AIClient.generate_report → ground_report; el AIStatus
+     final (PRESENT/DISABLED/NOT_CONFIGURED/FAILED) va al reporte
+     (spinner en stderr, solo TTY, mientras responde el modelo)
 ```
 
-`load_ai_config` implementa la jerarquía de configuración (env var → `.unskein.toml`
-→ flag `--api-key`), devolviendo `None` si no hay modelo configurado en
-ninguna capa.
+El CLI (`cli.py`) solo parsea flags, renderiza (`rich.markdown` en terminal,
+Markdown crudo UTF-8 con `-o`), muestra `--verbose` y elige el código de
+salida. Ayuda en formato click clásico (`rich_markup_mode=None`): las tablas
+de rich truncaban `--no-follow-symlinks` a 80 columnas.
+
+**Entry point `run()`** (también `python -m unskein`): ejecuta la app con
+`standalone_mode=False` y traduce errores de uso a **1** (click usa 2, que en
+unskein significa "severidad alta"). typer 0.27 trae su propio click
+vendorizado, así que solo se capturan tipos públicos de typer
+(`typer.TyperException`, `typer.Abort`), nunca los de `click`. También
+configura stdout/stderr con `errors="replace"`: las tuberías de Windows usan
+cp1252, sin `→`, y sin esto imprimir un ciclo acababa en código 3.
+
+Configuración (`config.py`): `load_toml_config(root)` es la única función con
+E/S (lee y valida cada archivo, combina); `resolve_analysis_config(toml,
+flags)` (flag > toml > default, excludes sumados) y `resolve_ai_config(toml,
+env, cli_api_key)` (secretos: env > toml > flag; `None` si no hay modelo en
+ninguna capa) son puras y se testean sin disco ni entorno real.
 
 Manejo de errores: `UnskeinError` para casos de uso esperados (ruta inválida,
 sin archivos Python) → mensaje limpio sin traceback. Cualquier excepción no
@@ -757,7 +924,7 @@ para la config de IA, sin excepción aquí tampoco.
 
 | Código | Significado |
 |---|---|
-| `0` | Análisis completado, sin problemas de severidad ≥ `--min-severity` |
+| `0` | Análisis completado, sin problemas de severidad `high` (`--min-severity` solo filtra lo que se muestra) |
 | `1` | Error de uso (ruta inválida, sin archivos `.py`, config inválida) |
 | `2` | Análisis completado, con problemas de severidad `high` encontrados |
 | `3` | Error interno inesperado (bug real — traceback completo visible) |
@@ -769,7 +936,7 @@ app = typer.Typer(
 )
 ```
 
-`run_scan` determina el código según el resultado (`UnskeinError` → 1,
+El CLI determina el código según el resultado (`UnskeinError` o error de uso → 1,
 `ai_report` con algún `Problem.severity == "high"` → 2, excepción no
 capturada → 3 con traceback completo, éxito limpio → 0). Útil para quien
 quiera scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI
@@ -785,32 +952,35 @@ informativa**, mostrada al propio usuario con `--verbose`, nunca enviada a
 ningún servidor:
 
 ```python
-import psutil
-import time
-from dataclasses import dataclass
-
-@dataclass
-class PerformanceStats:
-    duration_seconds: float
-    peak_memory_mb: float
+def peak_rss_bytes() -> int:
+    if sys.platform == "win32":
+        return psutil.Process().memory_info().peak_wset
+    import resource  # solo Unix
+    max_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return max_rss if sys.platform == "darwin" else max_rss * 1024  # Linux: KiB
 
 def measure(fn):
-    process = psutil.Process()
     start = time.perf_counter()
     result = fn()
     duration = time.perf_counter() - start
-    peak_mb = process.memory_info().rss / (1024 * 1024)
-    return result, PerformanceStats(duration, peak_mb)
+    return result, PerformanceStats(duration, peak_rss_bytes() / (1024 * 1024))
 ```
 
-`psutil` en vez de `resource` (stdlib, pero solo Unix) — necesario porque el
-soporte de rendimiento es **Windows + Linux/macOS** desde v0.1, no solo Unix.
+**Pico real** (#9): la versión anterior leía el RSS *después* del análisis,
+así que un pico de 200 MB liberado antes de terminar aparecía como 21 MB.
+`psutil` solo expone el pico en Windows (`peak_wset`); en Linux/macOS la
+fuente portable es `resource.ru_maxrss` (KiB en Linux, bytes en macOS), por
+eso `resource` se usa **solo en la rama Unix**. Es la marca máxima de todo
+el proceso (incluye el arranque, no se puede reiniciar): la cifra honesta de
+cuánta memoria usó unskein. La memoria de los workers del futuro parseo
+paralelo no está incluida — se decide en ese PR (p. ej. `RUSAGE_CHILDREN`).
+La rama macOS no tiene runner en CI.
 
 ## Notas sobre extensión futura (no implementar en v0.1)
 
 - **Multi-lenguaje**: el punto de selección dinámica del adapter (por
   extensión de archivo o flag `--lang`) es exactamente donde hoy está
-  `adapter = PythonAdapter()` hardcodeado en `run_scan`. Al agregar TS/Java,
+  `adapter = PythonAdapter(config)` hardcodeado en `execute_scan`. Al agregar TS/Java,
   introducir un registro/factory ahí.
 - **`tree-sitter`** se adopta recién al implementar el segundo lenguaje, no
   antes — Python usa `ast` de la stdlib en v0.1 sin necesidad de esa capa.
@@ -843,6 +1013,9 @@ soporte de rendimiento es **Windows + Linux/macOS** desde v0.1, no solo Unix.
   `@dataclass(slots=True)` en estructuras instanciadas en masa (`ImportEdge`,
   `ModuleInfo`), `itertools` para composición sin overhead de lambdas
   anidadas.
+- **Clean Code obligatorio**, con docstrings estilo Google en todo módulo,
+  clase y función (privados incluidos), exigidos en CI con las reglas `D` de
+  ruff. Reglas completas en `CLAUDE.md`, sección *Clean Code (obligatorio)*.
 
 ## Testing (decisión revertida: desde el inicio, no pospuesto)
 

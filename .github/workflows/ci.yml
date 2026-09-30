@@ -32,3 +32,5 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --locked
       - run: uv run pytest --cov --cov-report=term-missing
+      - name: Smoke test - scan unskein itself end to end
+        run: uv run unskein scan src --no-ai --lang en

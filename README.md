@@ -9,7 +9,7 @@
 <p align="center">
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%20%7C%203.13%20%7C%203.14-3444A8">
   <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-18877A">
-  <img alt="Status: pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-D69A1C">
+  <img alt="Status: alpha" src="https://img.shields.io/badge/status-alpha-D69A1C">
   <img alt="Zero telemetry" src="https://img.shields.io/badge/telemetry-none-6A3F99">
 </p>
 
@@ -28,8 +28,9 @@ unskein scan .
 ```
 
 > [!NOTE]
-> unskein is in **pre-alpha**. The design is settled ([docs/architecture.md](docs/architecture.md))
-> and v0.1 is being built in the open. The output below shows the target for v0.1.
+> unskein is in **alpha** (v0.1.0). `unskein scan <path>` already works end to end (graph,
+> coupling, cycles, AI interpretation, Markdown report in English or Spanish). The
+> sample below shows the v0.1 report, AI section included.
 
 ## What you get
 
@@ -92,7 +93,7 @@ unskein never runs your code. It reads it with Python's own `ast` parser.
 ## Quickstart
 
 ```bash
-pip install unskein          # coming with v0.1
+pip install unskein
 unskein scan path/to/project
 ```
 
@@ -100,7 +101,7 @@ Common options:
 
 ```bash
 unskein scan . --no-ai                         # metrics only, no LLM call
-unskein scan . --exclude "migrations/**"       # skip paths (repeatable)
+unskein scan . --exclude "migrations/"        # skip paths (repeatable)
 unskein scan . --min-severity medium           # hide low-severity findings
 unskein scan . -o report.md                    # also save the report as Markdown
 unskein scan . --lang es                       # informe en español
@@ -118,7 +119,7 @@ automatically; for other layouts, set `source_roots` in `.unskein.toml`.
 
 | Code | Meaning |
 |---|---|
-| `0` | Analysis finished, nothing at or above `--min-severity` |
+| `0` | Analysis finished with no high-severity problems (`--min-severity` only filters what is shown) |
 | `1` | Usage error: bad path, no `.py` files, invalid config |
 | `2` | Analysis finished and found high-severity problems |
 | `3` | Internal error (a bug; the traceback is shown) |
@@ -134,6 +135,20 @@ export UNSKEIN_AI_API_BASE="http://localhost:11434"
 unskein scan .
 ```
 
+Behind a team [LiteLLM Proxy](https://docs.litellm.ai/docs/simple_proxy)? Use the
+`litellm_proxy/` prefix and your virtual key:
+
+```bash
+export UNSKEIN_AI_MODEL="litellm_proxy/gpt-5"
+export UNSKEIN_AI_API_BASE="https://litellm.example.com"
+export UNSKEIN_API_KEY="sk-..."
+```
+
+Name the alias like the real model when you can: unskein asks LiteLLM whether the
+model is a reasoning model (they only accept `temperature=1.0`), and an opaque alias
+hides that. Direct calls are limited to 60 s; through a proxy the proxy decides.
+If the AI call fails for any reason, the report is still produced, with a notice.
+
 Settings are read in this order, first match wins:
 
 1. Environment variables: `UNSKEIN_AI_MODEL`, `UNSKEIN_API_KEY`, `UNSKEIN_AI_API_BASE`
@@ -146,9 +161,11 @@ Templates: [`.env.example`](.env.example) and [`.unskein.toml.example`](.unskein
 
 **No telemetry. None.** unskein does not collect usage data, not even anonymously.
 The only network request it makes is the LLM call you configure yourself, and there
-is none with `--no-ai` or a local Ollama model. The timing and memory stats shown with
-`--verbose` are computed on your machine and stay there. API keys never appear in logs
-or reports.
+is none with `--no-ai` or a local Ollama model. With a cloud model, what leaves your
+machine is module names and coupling metrics (counts, cycles, tangles), never source
+code or file paths. unskein also stops LiteLLM from downloading its price map or
+sending telemetry. The timing and memory stats shown with `--verbose` are computed
+on your machine and stay there. API keys never appear in logs or reports.
 
 ## Roadmap
 
