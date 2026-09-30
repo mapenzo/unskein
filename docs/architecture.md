@@ -222,6 +222,19 @@ Dos riesgos distintos que esto evita:
   venv compartido) haría que se analice código que el usuario no consideraba
   parte de "su proyecto".
 
+### Poda de directorios excluidos
+
+`walk_files` no entra en los directorios que el spec de excludes ya descarta
+(`.venv/`, `build/`, `tests/`…): antes de iterar los archivos de cada directorio
+quita de `dirnames` los subdirectorios cuya ruta relativa + `/` casa con el spec. Así
+el coste del descubrimiento depende del contenido **analizado**, no del ignorado (un
+`.venv/` con miles de archivos pasaba de ~300 ms a una fracción).
+
+Semántica de git para las negaciones: un directorio excluido nunca se re-incluye,
+así que con `build/` y `!build/keep.py`, `build/keep.py` **no** se analiza. Los
+patrones que solo afectan a archivos no podan nada; los archivos se siguen filtrando
+uno a uno.
+
 **Default: `follow_symlinks=False`** — opción segura, sin fuga de alcance ni
 riesgo de ciclo. `--follow-symlinks` la activa explícitamente para quien
 tenga symlinks legítimos dentro de su propio proyecto (monorepos con paquetes

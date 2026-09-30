@@ -36,6 +36,24 @@ def load_exclude_spec(
     return pathspec.GitIgnoreSpec.from_lines(patterns)
 
 
+def _prune_excluded_dirs(
+    relative_dir: str, dirnames: list[str], exclude_spec: pathspec.PathSpec
+) -> None:
+    """Remove excluded directories from an ``os.walk`` listing, in place.
+
+    Mutating ``dirnames`` is the only way to stop ``os.walk`` from descending.
+    Like git, an excluded directory is never re-included by a negated pattern
+    for a file inside it.
+
+    Args:
+        relative_dir: Directory being listed, relative to the root, in posix form.
+        dirnames: Subdirectory names of that directory; excluded ones are removed.
+        exclude_spec: Paths matching it (relative to root) are skipped.
+    """
+    prefix = "" if relative_dir == "." else f"{relative_dir}/"
+    dirnames[:] = [d for d in dirnames if not exclude_spec.match_file(f"{prefix}{d}/")]
+
+
 def walk_files(
     root: Path,
     extensions: tuple[str, ...],
@@ -44,8 +62,9 @@ def walk_files(
 ) -> Iterator[Path]:
     """Yield the files under root with the given extensions that are not excluded.
 
-    Every real directory is visited at most once, so symlink loops cannot cause
-    an endless walk even when symlinks are followed.
+    Excluded directories are pruned, never entered. Every real directory is
+    visited at most once, so symlink loops cannot cause an endless walk even
+    when symlinks are followed.
 
     Args:
         root: Project directory to walk.
@@ -64,6 +83,8 @@ def walk_files(
             dirnames.clear()
             continue
         visited_real_dirs.add(real)
+        relative_dir = Path(dirpath).relative_to(root).as_posix()
+        _prune_excluded_dirs(relative_dir, dirnames, exclude_spec)
         for fname in filenames:
             if fname.endswith(extensions):
                 full = Path(dirpath, fname)
