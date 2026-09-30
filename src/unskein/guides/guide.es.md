@@ -73,6 +73,7 @@ unskein scan [RUTA] [opciones]
 | `--exclude PATRÓN` | Excluye más rutas, sintaxis gitignore (repetible). |
 | `--min-severity low\|medium\|high` | Severidad mínima de los problemas de IA que se muestran. |
 | `--include-tests` / `--no-include-tests` | Analiza también el código de tests (desactivado por defecto). |
+| `--findings` / `--no-findings` | Muestra u oculta la sección de hallazgos (se muestra por defecto). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Sigue carpetas enlazadas (desactivado por defecto). |
 | `--encoding NOMBRE` | Encoding de reserva para archivos que no declaran ninguno. |
 | `--lang es\|en` | Idioma del informe. |

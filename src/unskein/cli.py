@@ -164,6 +164,14 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             show_default=False,
         ),
     ] = None,
+    findings: Annotated[
+        bool | None,
+        typer.Option(
+            "--findings/--no-findings",
+            help="Show architecture findings (default: yes, or .unskein.toml).",
+            show_default=False,
+        ),
+    ] = None,
     encoding: Annotated[
         str | None, typer.Option("--encoding", help="Fallback encoding when undetectable.")
     ] = None,
@@ -179,6 +187,7 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         lang=lang,
         follow_symlinks=follow_symlinks,
         include_tests=include_tests,
+        findings=findings,
         encoding=encoding,
     )
     try:

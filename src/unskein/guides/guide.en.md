@@ -68,6 +68,7 @@ unskein scan [PATH] [options]
 | `--exclude PATTERN` | Skip more paths, gitignore syntax (repeatable). |
 | `--min-severity low\|medium\|high` | Lowest AI problem severity to show. |
 | `--include-tests` / `--no-include-tests` | Also analyze test code (off by default). |
+| `--findings` / `--no-findings` | Show or hide the findings section (shown by default). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Follow symlinked folders (off by default). |
 | `--encoding NAME` | Fallback encoding for files that declare none. |
 | `--lang es\|en` | Report language. |

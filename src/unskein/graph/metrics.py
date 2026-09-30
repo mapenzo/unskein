@@ -5,12 +5,15 @@ from itertools import islice
 
 import networkx as nx
 
+from unskein.config import FindingsConfig
 from unskein.graph.builder import build_graph
+from unskein.graph.findings import Finding, find_findings
 from unskein.graph.percentile import nearest_rank_percentile
 from unskein.parsers.models import ParseResult, ParseWarning
 
 MAX_CYCLES = 100
 HIGH_COUPLING_PERCENTILE = 90
+PACKAGE_INIT_FILE = "__init__.py"
 
 
 @dataclass(slots=True)
@@ -47,6 +50,8 @@ class AnalysisResult:
         cycles_truncated: Whether cycle detection stopped at its limit.
         tangles: Groups of mutually dependent modules (strongly connected
             components with more than one module), largest first; never truncated.
+        findings: Architecture findings, ordered by kind and module.
+        findings_enabled: Whether findings were computed; the report omits its section when False.
     """
 
     graph: nx.DiGraph
@@ -56,6 +61,8 @@ class AnalysisResult:
     parse_warnings: list[ParseWarning] = field(default_factory=list)
     cycles_truncated: bool = False
     tangles: list[list[str]] = field(default_factory=list)
+    findings: list[Finding] = field(default_factory=list)
+    findings_enabled: bool = True
 
 
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
@@ -158,21 +165,24 @@ def find_high_coupling(
     return sorted(selected, key=lambda name: (-score[name], name))
 
 
-def analyze(result: ParseResult) -> AnalysisResult:
-    """Run graph construction, coupling metrics and cycle detection.
+def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) -> AnalysisResult:
+    """Run graph construction, coupling metrics, cycle detection and findings.
 
     Expects re-exports to be resolved already (``resolve_indirection``);
     otherwise dependencies routed through package facades point at the facade.
 
     Args:
         result: Parse result with re-exports already resolved.
+        findings_config: Findings thresholds; None means the defaults.
 
     Returns:
         The consolidated deterministic analysis.
     """
+    findings_config = findings_config or FindingsConfig()
     graph = build_graph(result)
     coupling = compute_coupling(graph)
     cycles, cycles_truncated = find_cycles(graph)
+    packages = {m.name for m in result.modules if m.file_path.name == PACKAGE_INIT_FILE}
     return AnalysisResult(
         graph=graph,
         coupling_metrics=coupling,
@@ -181,4 +191,6 @@ def analyze(result: ParseResult) -> AnalysisResult:
         parse_warnings=list(result.warnings),
         cycles_truncated=cycles_truncated,
         tangles=find_tangles(graph),
+        findings=find_findings(graph, coupling, findings_config, packages=packages),
+        findings_enabled=findings_config.enabled,
     )
