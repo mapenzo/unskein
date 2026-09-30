@@ -28,7 +28,7 @@ unskein scan .
 ```
 
 > [!NOTE]
-> unskein is in **alpha** (v0.1.0). `unskein scan <path>` already works end to end (graph,
+> unskein is in **alpha** (v0.1.1). `unskein scan <path>` already works end to end (graph,
 > coupling, cycles, AI interpretation, Markdown report in English or Spanish). The
 > sample below shows the v0.1 report, AI section included.
 
