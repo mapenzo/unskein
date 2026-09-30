@@ -593,7 +593,11 @@ aplicados) y construye el grafo real.
   número de ciclos puede crecer exponencialmente — se consumen como máximo
   `MAX_CYCLES + 1` (100 + 1) con `itertools.islice`; el extra solo indica si
   hay más (`cycles_truncated`). Cada ciclo se rota para empezar por su módulo
-  menor: el mismo ciclo siempre se escribe igual.
+  menor: el mismo ciclo siempre se escribe igual. networkx recorre conjuntos
+  internos cuyo orden depende de la semilla del hash de los `str`
+  (`PYTHONHASHSEED`), así que el grafo se enumera con etiquetas enteras (índice
+  del nombre ordenado): la lista y el punto de truncado son idénticos entre
+  ejecuciones (coste medido: 0,7 s con 20.000 nodos y 200.000 aristas).
 - **Marañas** (`find_tangles`, #8): componentes fuertemente conexas de más
   de un módulo (`nx.strongly_connected_components`, lineal y exacto, nunca
   se trunca). Todo ciclo vive dentro de una maraña, así que dan el tamaño
