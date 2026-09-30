@@ -2,7 +2,7 @@
 
 import os
 import tokenize
-from collections.abc import Iterator
+from collections.abc import Hashable, Iterator
 from pathlib import Path
 
 import pathspec
@@ -54,6 +54,26 @@ def _prune_excluded_dirs(
     dirnames[:] = [d for d in dirnames if not exclude_spec.match_file(f"{prefix}{d}/")]
 
 
+def _directory_identity(dirpath: str) -> Hashable:
+    """Return a key that is equal for every path leading to the same directory.
+
+    ``os.stat`` follows symlinks, so it identifies the real directory much
+    more cheaply than ``Path.resolve``. Where the filesystem reports no inode
+    numbers (``st_ino`` is 0) every directory would look the same, so the
+    resolved path is used instead.
+
+    Args:
+        dirpath: Directory reached by the walk.
+
+    Returns:
+        ``(st_dev, st_ino)``, or the resolved path when there is no inode.
+    """
+    stat = os.stat(dirpath)
+    if stat.st_ino == 0:
+        return Path(dirpath).resolve()
+    return (stat.st_dev, stat.st_ino)
+
+
 def walk_files(
     root: Path,
     extensions: tuple[str, ...],
@@ -62,9 +82,9 @@ def walk_files(
 ) -> Iterator[Path]:
     """Yield the files under root with the given extensions that are not excluded.
 
-    Excluded directories are pruned, never entered. Every real directory is
-    visited at most once, so symlink loops cannot cause an endless walk even
-    when symlinks are followed.
+    Excluded directories are pruned, never entered. When symlinks are followed,
+    every real directory is visited at most once, so symlink loops cannot cause
+    an endless walk. Without following them no loop is possible and no check runs.
 
     Args:
         root: Project directory to walk.
@@ -76,13 +96,14 @@ def walk_files(
         Each matching file path, as the walk reaches it.
     """
     # os.walk instead of Path.rglob: rglob always follows symlinks on 3.12.
-    visited_real_dirs: set[Path] = set()
+    visited_directories: set[Hashable] = set()
     for dirpath, dirnames, filenames in os.walk(root, followlinks=follow_symlinks):
-        real = Path(dirpath).resolve()
-        if real in visited_real_dirs:
-            dirnames.clear()
-            continue
-        visited_real_dirs.add(real)
+        if follow_symlinks:
+            identity = _directory_identity(dirpath)
+            if identity in visited_directories:
+                dirnames.clear()
+                continue
+            visited_directories.add(identity)
         relative_dir = Path(dirpath).relative_to(root).as_posix()
         _prune_excluded_dirs(relative_dir, dirnames, exclude_spec)
         for fname in filenames:
