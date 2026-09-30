@@ -53,8 +53,11 @@ def test_zero_inode_falls_back_to_the_resolved_path(
         (tmp_path / name / f"{name}.py").write_text("")
     real_stat = os.stat
 
-    def stat_without_inodes(path: str | os.PathLike[str]) -> SimpleNamespace:
+    def stat_without_inodes(path: str) -> SimpleNamespace:
         return SimpleNamespace(st_dev=real_stat(path).st_dev, st_ino=0)
 
-    monkeypatch.setattr("unskein.parsers.discovery.os.stat", stat_without_inodes)
+    # Replace only the `os` seen by discovery: patching `os.stat` itself would
+    # also break pathlib and pytest, which need the full stat result.
+    discovery_os = SimpleNamespace(walk=os.walk, stat=stat_without_inodes)
+    monkeypatch.setattr("unskein.parsers.discovery.os", discovery_os)
     assert relative_files(tmp_path, follow_symlinks=True) == ["one/one.py", "two/two.py"]
