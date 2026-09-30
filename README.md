@@ -101,6 +101,9 @@ No config file is needed. To tune settings, `unskein init` writes a `.unskein.to
 the current folder with every option commented out at its default (`--user` writes
 `~/.config/unskein/config.toml` instead).
 
+`unskein guide` shows the full usage guide of the installed version, in English or
+Spanish (`--lang es`).
+
 Common options:
 
 ```bash

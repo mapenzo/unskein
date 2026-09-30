@@ -1,9 +1,9 @@
 """Commented configuration template shipped with the package, and ``unskein init``'s writer."""
 
-from importlib.resources import files
 from pathlib import Path
 
 from unskein.errors import ErrorKey, UnskeinError
+from unskein.resources import read_package_text
 
 TEMPLATE_RESOURCE = "templates/unskein.toml"
 
@@ -14,7 +14,7 @@ def config_template() -> str:
     Returns:
         The template text, where every setting is commented out at its default.
     """
-    return files("unskein").joinpath(TEMPLATE_RESOURCE).read_text(encoding="utf-8")
+    return read_package_text(TEMPLATE_RESOURCE)
 
 
 def write_config(target: Path, *, force: bool = False) -> None:

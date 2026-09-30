@@ -17,6 +17,7 @@ from unskein import __version__
 from unskein import config as config_module
 from unskein.ai.models import AIReport, Severity
 from unskein.errors import ErrorKey, ExitCode, UnskeinError
+from unskein.guide import usage_guide
 from unskein.i18n import Lang, detect_lang, t, translate_error
 from unskein.init_config import write_config
 from unskein.logging_setup import setup_logging
@@ -212,6 +213,22 @@ def init(
         _print_to_stderr(translate_error(e, message_lang), style="red")
         raise typer.Exit(ExitCode.USAGE_ERROR) from e
     _print_to_stderr(t("cli.config_written", message_lang, path=str(target)))
+
+
+@app.command()
+def guide(
+    lang: Annotated[
+        Literal["es", "en"] | None, typer.Option("--lang", help="Guide language.")
+    ] = None,
+) -> None:
+    """Show the usage guide of the installed version."""
+    text = usage_guide(detect_lang(lang))
+    console = Console()
+    if console.is_terminal:
+        console.print(Markdown(text))
+    else:
+        # Piped or redirected: raw Markdown, so `unskein guide > guide.md` is a clean file.
+        typer.echo(text, nl=False)
 
 
 def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitCode:

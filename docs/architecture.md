@@ -826,7 +826,7 @@ Reglas:
 
 Framework: `typer` (type hints, genera `--help` automático).
 
-Comandos: `unskein scan <path> [opciones]` y `unskein init [path]`.
+Comandos: `unskein scan <path> [opciones]`, `unskein init [path]` y `unskein guide`.
 
 `unskein init` escribe `<path>/.unskein.toml` (default `.`), o
 `~/.config/unskein/config.toml` con `--user`, copiando la plantilla que viaja en
@@ -838,6 +838,16 @@ archivo existe no lo toca (`UnskeinError CONFIG_EXISTS`, código 1) salvo con
 documenta todas las claves del esquema `TomlConfig`, que descomentada valida en
 modo estricto y que sus valores coinciden con los defaults de `AnalysisConfig`:
 un default que cambie sin actualizar la plantilla rompe la CI.
+
+`unskein guide [--lang]` imprime la guía de uso que viaja en el paquete
+(`src/unskein/guides/guide.{es,en}.md`, con `{version}` sustituido por la versión
+instalada), así que siempre describe la versión que se ejecuta. El idioma sigue
+flag > `UNSKEIN_LANG` > locale (no lee `.unskein.toml`, igual que `init`). En
+terminal se renderiza con rich; redirigida sale el Markdown crudo. Ambos comandos
+leen sus recursos con `resources.read_package_text`. `tests/unit/test_guide.py`
+exige que las dos guías nombren cada comando y cada opción larga (introspección de
+los parámetros de typer), los cuatro códigos de salida y el mismo número de
+secciones: una flag nueva sin documentar rompe la CI.
 
 Flags de `scan`:
 
