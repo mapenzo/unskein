@@ -122,7 +122,10 @@ MAX_RESOLUTION_DEPTH = 10
 ReExportIndex = dict[tuple[str, str], str]  # (módulo_exportador, símbolo) -> módulo_original
 
 def build_reexport_index(re_exports: list[ReExport]) -> ReExportIndex:
-    return {(re.exporting_module, re.symbol_name): re.original_module for re in re_exports}
+    index: ReExportIndex = {}
+    for re_export in re_exports:  # orden de código: el primero gana
+        index.setdefault((re_export.exporting_module, re_export.symbol_name), re_export.original_module)
+    return index
 
 def resolve_target(
     module: str, symbol: str | None, index: ReExportIndex, path: list[str] | None = None,
@@ -283,7 +286,8 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
 - **`parse`**: calcula primero los nombres de todos los archivos
   (`ProjectIndex`), luego llama `parse_file(path, name, index, config)` por
   archivo — función de módulo pura y picklable, unidad de trabajo del futuro
-  `ProcessPoolExecutor`. `ast.walk` captura:
+  `ProcessPoolExecutor`. `iter_statements` (recorrido en profundidad, en orden de
+  código, solo por listas de sentencias) captura:
 
   | Caso | `target` | `symbol_name` |
   |---|---|---|
@@ -300,7 +304,11 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   interno de un *símbolo* (no de un submódulo) genera
   `ReExport(paquete, módulo_origen, asname or name)`. Con alias, la cadena se
   sigue con el nombre exportado: si un eslabón posterior re-exporta con otro
-  nombre, la resolución se detiene en el módulo intermedio.
+  nombre, la resolución se detiene en el módulo intermedio. Si un facade expone
+  el mismo símbolo más de una vez (típico: `try: from ._fast import X` /
+  `except ImportError: from ._slow import X`), **gana el primero en el código**.
+  Los imports se recorren en profundidad y en orden de código, así que los avisos
+  de un archivo también salen en ese orden.
 - **Errores por archivo** → warning, el archivo se omite y el análisis sigue:
   tamaño > `max_file_size_bytes` (ni se lee; `FILE_TOO_LARGE`, detail
   `"<tamaño> > <límite>"`), `OSError`, `SyntaxError` (incluye bytes nulos
@@ -314,7 +322,7 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
 
 Limitaciones conocidas, documentadas explícitamente (no bugs a "arreglar" sin
 discutirlo primero):
-- `ast.walk` no distingue nivel de anidamiento — un import dentro de una
+- El recorrido (`iter_statements`) no distingue nivel de anidamiento — un import dentro de una
   función se trata igual que uno a nivel de módulo. Aceptable para v0.1;
   un `NodeVisitor` completo permitiría marcar imports condicionales
   (`TYPE_CHECKING`, `try/except ImportError`) en v0.2.
