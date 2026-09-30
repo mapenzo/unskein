@@ -88,3 +88,21 @@ def test_include_tests_keeps_the_test_directories(
     root = make_project({"app.py": "", "tests/a.py": ""})
     spec = load_exclude_spec(root, [], include_tests=True)
     assert relative_files(root, spec) == {"app.py", "tests/a.py"}
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("migrations/", {"app/models.py"}),
+        ("**/migrations/**", {"app/models.py"}),
+        ("migrations/**", {"app/models.py", "app/migrations/0001.py"}),
+    ],
+)
+def test_exclude_pattern_reaches_nested_migrations_only_when_not_root_anchored(
+    make_project: Callable[[dict[str, str]], Path], pattern: str, expected: set[str]
+) -> None:
+    root = make_project(
+        {"migrations/0001.py": "", "app/migrations/0001.py": "", "app/models.py": ""}
+    )
+    spec = load_exclude_spec(root, [pattern])
+    assert relative_files(root, spec) == expected

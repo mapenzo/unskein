@@ -101,7 +101,7 @@ Common options:
 
 ```bash
 unskein scan . --no-ai                         # metrics only, no LLM call
-unskein scan . --exclude "migrations/**"       # skip paths (repeatable)
+unskein scan . --exclude "migrations/"        # skip paths (repeatable)
 unskein scan . --min-severity medium           # hide low-severity findings
 unskein scan . -o report.md                    # also save the report as Markdown
 unskein scan . --lang es                       # informe en español

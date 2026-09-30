@@ -56,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The README example `--exclude "migrations/**"` only skipped a `migrations/` folder at
+  the project root, not the ones inside each app. It now reads `--exclude "migrations/"`,
+  which matches at any depth (a pattern with a slash in the middle is anchored to the
+  root, as in `.gitignore`).
 - `--verbose` now reports the real peak memory of the run. It used to read the resident
   memory after the analysis, so memory freed before the end was invisible (a 200 MB
   spike showed as 21 MB) (#9).
