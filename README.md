@@ -97,6 +97,10 @@ pip install unskein
 unskein scan path/to/project
 ```
 
+No config file is needed. To tune settings, `unskein init` writes a `.unskein.toml` in
+the current folder with every option commented out at its default (`--user` writes
+`~/.config/unskein/config.toml` instead).
+
 Common options:
 
 ```bash
@@ -155,7 +159,7 @@ Settings are read in this order, first match wins:
 2. `.unskein.toml` in the project, or `~/.config/unskein/config.toml`
 3. The `--api-key` flag, for quick tests only, since it ends up in your shell history
 
-Templates: [`.env.example`](.env.example) and [`.unskein.toml.example`](.unskein.toml.example).
+Templates: [`.env.example`](.env.example), and `unskein init` for a commented `.unskein.toml`.
 
 ## Privacy
 

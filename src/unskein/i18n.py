@@ -38,6 +38,10 @@ _ERRORS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Valor no válido para '{field}' en {file}: {detail}",
         Lang.EN: "Invalid value for '{field}' in {file}: {detail}",
     },
+    "config_exists": {
+        Lang.ES: "{path} ya existe; usa --force para sobrescribirlo",
+        Lang.EN: "{path} already exists; use --force to overwrite it",
+    },
 }
 
 _WARNINGS: dict[str, dict[Lang, str]] = {
@@ -223,6 +227,16 @@ _CLI: dict[str, dict[Lang, str]] = {
     "cli.stats": {
         Lang.ES: "Duración: {seconds} s, pico de memoria: {memory} MB",
         Lang.EN: "Duration: {seconds} s, peak memory: {memory} MB",
+    },
+    "cli.config_written": {
+        Lang.ES: (
+            "Configuración creada en {path}. "
+            "Todo está comentado: descomenta lo que quieras cambiar."
+        ),
+        Lang.EN: (
+            "Config written to {path}. "
+            "Everything is commented out: uncomment what you want to change."
+        ),
     },
 }
 

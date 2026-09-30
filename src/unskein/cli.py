@@ -14,9 +14,11 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from unskein import __version__
+from unskein import config as config_module
 from unskein.ai.models import AIReport, Severity
-from unskein.errors import ExitCode, UnskeinError
+from unskein.errors import ErrorKey, ExitCode, UnskeinError
 from unskein.i18n import Lang, detect_lang, t, translate_error
+from unskein.init_config import write_config
 from unskein.logging_setup import setup_logging
 from unskein.perf import PerformanceStats, measure
 from unskein.report.markdown import ReportContext, render_report
@@ -184,6 +186,32 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         Console(stderr=True).print_exception()
         code = ExitCode.INTERNAL_ERROR
     raise typer.Exit(code)
+
+
+@app.command()
+def init(
+    path: Annotated[Path, typer.Argument(help="Project folder to write .unskein.toml in.")] = Path(
+        "."
+    ),
+    user: Annotated[
+        bool, typer.Option("--user", help="Write ~/.config/unskein/config.toml instead.")
+    ] = False,
+    force: Annotated[bool, typer.Option("--force", help="Overwrite an existing file.")] = False,
+    lang: Annotated[
+        Literal["es", "en"] | None, typer.Option("--lang", help="Message language.")
+    ] = None,
+) -> None:
+    """Write a commented config file with every setting at its default."""
+    message_lang = detect_lang(lang)
+    target = config_module.USER_CONFIG_PATH if user else path / config_module.PROJECT_CONFIG_NAME
+    try:
+        if not user and not path.is_dir():
+            raise UnskeinError(ErrorKey.PATH_NOT_FOUND, {"path": str(path)})
+        write_config(target, force=force)
+    except UnskeinError as e:
+        _print_to_stderr(translate_error(e, message_lang), style="red")
+        raise typer.Exit(ExitCode.USAGE_ERROR) from e
+    _print_to_stderr(t("cli.config_written", message_lang, path=str(target)))
 
 
 def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitCode:

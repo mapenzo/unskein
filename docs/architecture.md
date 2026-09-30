@@ -826,9 +826,20 @@ Reglas:
 
 Framework: `typer` (type hints, genera `--help` automático).
 
-Comando único en v0.1: `unskein scan <path> [opciones]`.
+Comandos: `unskein scan <path> [opciones]` y `unskein init [path]`.
 
-Flags:
+`unskein init` escribe `<path>/.unskein.toml` (default `.`), o
+`~/.config/unskein/config.toml` con `--user`, copiando la plantilla que viaja en
+el paquete (`src/unskein/templates/unskein.toml`, leída con
+`importlib.resources`). Toda clave está comentada con su valor por defecto, así
+que el archivo generado no cambia nada hasta que se descomenta una línea. Si el
+archivo existe no lo toca (`UnskeinError CONFIG_EXISTS`, código 1) salvo con
+`--force`. Tests en `tests/unit/test_init_config.py` fijan que la plantilla
+documenta todas las claves del esquema `TomlConfig`, que descomentada valida en
+modo estricto y que sus valores coinciden con los defaults de `AnalysisConfig`:
+un default que cambie sin actualizar la plantilla rompe la CI.
+
+Flags de `scan`:
 
 | Flag | Propósito |
 |---|---|

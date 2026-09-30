@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `unskein init` writes a commented `.unskein.toml` with every setting at its default,
+  so a fresh install does not start from an empty file. `--user` writes
+  `~/.config/unskein/config.toml` instead, and `--force` overwrites an existing file,
+  which is otherwise kept (exit code 1). The template ships inside the package; the
+  generated file changes nothing until a line is uncommented.
+
+### Removed
+
+- `.unskein.toml.example` in the repository root, replaced by `unskein init`. It was not
+  in the installed package, and its uncommented `parallel_threshold = 50` overrode the
+  calibrated default of 500.
+
 ## [0.1.0] - 2026-09-30
 
 ### Added
