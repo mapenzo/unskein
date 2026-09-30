@@ -57,6 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- File discovery no longer enters excluded directories (`.venv/`, `build/`,
+  `node_modules/`, `tests/`…), so its cost no longer grows with ignored content. As in
+  git, a negated pattern (`!build/keep.py`) cannot re-include a file inside an excluded
+  directory: such a file is no longer analyzed.
 - The placeholder notice about the AI arriving later is gone: the report now says
   either that the AI is disabled or not configured, or why the call failed.
 - Precedence for non-secret options is now flag > env var > `.unskein.toml` (so
