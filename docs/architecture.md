@@ -57,7 +57,7 @@ class ParseResult:
 
 class WarningCode(StrEnum):
     STAR_IMPORT, RELATIVE_BEYOND_TOP, UNRESOLVED_IMPORT, FILE_TOO_LARGE,
-    PARSE_ERROR, REEXPORT_CYCLE, REEXPORT_DEPTH_EXCEEDED
+    PARSE_ERROR, PARSE_TIMEOUT, REEXPORT_CYCLE, REEXPORT_DEPTH_EXCEEDED
 
 @dataclass(frozen=True, slots=True)
 class ParseWarning:
@@ -80,7 +80,16 @@ class LanguageAdapter(ABC):
     def discover_files(self, root: Path, exclude: list[str]) -> list[Path]: ...
 
     @abstractmethod
-    def parse(self, files: list[Path], root: Path) -> ParseResult: ...
+    def plan_parse(self, files: list[Path], root: Path) -> ParsePlan: ...
+    # ParsePlan(tasks=[(path, nombre)], shared=...): las tareas en el orden en que
+    # se combinan los resultados, y lo que todas comparten (el índice de módulos).
+
+    @abstractmethod
+    def parse_task(self, task: ParseTask, shared: Any) -> FileParseResult: ...
+    # Pura y serializable: es la unidad de trabajo de un worker.
+
+    def parse(self, files: list[Path], root: Path) -> ParseResult:
+        """Secuencial, construido sobre plan_parse + parse_task (un solo camino)."""
 
     @abstractmethod
     def normalize_module_name(self, file_path: Path, root: Path) -> str: ...
@@ -351,12 +360,36 @@ diseño de colas por etapa cubre todo el pipeline `parse → resolve → metrics
 ```python
 @dataclass
 class AnalysisConfig:
-    parallel_threshold: int = 50           # archivos; por debajo, secuencial
-    max_workers: int | None = None         # None = os.cpu_count()
+    parallel_threshold: int = 500          # archivos; por debajo, secuencial
+    max_workers: int | None = None         # None = min(os.cpu_count(), 8)
     queue_maxsize: int = 200               # archivos "en vuelo" como máximo
     max_file_size_bytes: int = 5 * 1024 * 1024   # 5 MB; se salta con warning
     per_file_timeout_seconds: int = 30     # por archivo, al recoger resultados
 ```
+
+**Calibración del umbral (P4.4).** Medido en una máquina de 16 núcleos
+(WSL2, Python 3.14) con networkx 3.4.2, Django 5.1.4 y sympy 1.13.3, tomando
+los primeros *N* archivos de cada uno; speedup = secuencial / paralelo, mejor
+de 3, con el resultado siempre idéntico al secuencial. `spawn` es el método de
+Windows y, desde Python 3.14, también el coste aproximado de `forkserver`, el
+default de Linux:
+
+| Archivos | fork, 4 workers | spawn, 4 workers |
+|---:|---|---|
+| 50 | 0,5–0,9× | 0,04–0,12× |
+| 100 | 0,6–1,7× | 0,06–0,36× |
+| 200 | 0,9–2,1× | 0,22–0,41× |
+| 300–400 | 1,8–2,2× | 0,6–1,6× |
+| 365–891 (proyecto entero) | 1,9–2,9× | 1,0–2,6× |
+
+Arrancar el pool con `spawn` cuesta unos 130 ms con 2 workers y unos 300 ms
+con 16 (≈10 ms por worker), y el speedup deja de crecer pasados 4–8 workers
+(Django, 875 archivos, `spawn`: 1,49× con 4 workers, 1,22× con 16). De ahí los
+defaults: **umbral 500** (con el 50 anterior el paralelo era entre 2 y 40 veces
+más lento en todo lo medido) y **tope de 8 workers** cuando `max_workers` no
+está fijado. El número de archivos es un proxy tosco del coste real (Django y networkx
+cuestan unos 0,5 ms por archivo y sympy 1,7 ms); `should_parallelize` es el punto
+donde una decisión basada en bytes o en tiempos medidos podría sustituirlo.
 
 Por debajo de `parallel_threshold`, el overhead de arrancar
 `ProcessPoolExecutor` (serialización, spawn de procesos) supera la ganancia —
@@ -405,15 +438,32 @@ resto termina y queda ocioso. Una cola compartida se autobalancea
 dinámicamente: cualquier worker libre toma el siguiente archivo, sin importar
 cuán desigual sea el costo de cada uno.
 
+El paralelo no usa una `queue.Queue` explícita, sino una **ventana deslizante
+de lotes** con el mismo efecto: `_parse_in_pool` envía lotes de archivos al pool
+y no deja más de `queue_maxsize` archivos en vuelo (backpressure: no se
+materializa todo el trabajo de una vez). Cada worker toma el siguiente lote
+libre, así que el autobalanceo es el mismo que el de una cola compartida. Los
+resultados se recogen **en el orden de los archivos**, de modo que la salida es
+idéntica a la secuencial (determinismo).
+
 ```python
-def _parse_parallel(
-    files: Iterator[Path], adapter: LanguageAdapter, root: Path, config: AnalysisConfig,
-) -> ParseResult:
-    work_queue: queue.Queue[Path | None] = queue.Queue(maxsize=config.queue_maxsize)
-    # el productor bloquea al llenar la cola — esto ES el backpressure,
-    # evita materializar miles de Path en memoria de una sola vez
-    ...
+plan = adapter.plan_parse(files, root)         # tareas + datos compartidos
+with ProcessPoolExecutor(
+    max_workers=worker_count(config),
+    initializer=_init_worker,                  # variables de módulo del worker
+    initargs=(adapter, plan.shared),           # el índice viaja UNA vez por worker
+) as pool:
+    results = _parse_in_pool(pool, batches, config)
 ```
+
+- **El índice de módulos se serializa una vez por worker**, no por archivo.
+  Enviarlo con cada tarea costaba 23 MiB en total en sympy y crecía de forma
+  cuadrática con el proyecto.
+- **Lotes** (`batch_size`): entre 1 y 32 archivos, unos 4 lotes por worker, sin
+  superar `queue_maxsize`. Con un archivo por mensaje, el IPC añade ≈0,85 ms
+  por archivo.
+- **Un pool que muere** (`BrokenProcessPool`) no tumba el análisis: se avisa por
+  el log y se vuelve a parsear en secuencial.
 
 ### Colas por etapa del pipeline (estilo SEDA)
 
@@ -488,19 +538,30 @@ if file_path.stat().st_size > config.max_file_size_bytes:
     continue
 ```
 
-**C — cuelgue de un worker individual sin timeout.** Con la cola compartida
+**C — cuelgue de un worker individual sin timeout.** Con lotes compartidos
 (no sharding), un archivo pesado ralentiza solo a su propio worker — el resto
-sigue tomando trabajo sin bloquearse. Pero si algo se cuelga de verdad (bug
-real del parser en un caso extremo), ese worker nunca libera su slot.
-Mitigación: `per_file_timeout_seconds` al recoger resultados del
-`ProcessPoolExecutor`:
+sigue tomando trabajo sin bloquearse. Mitigación: `per_file_timeout_seconds` al
+recoger resultados, aplicado a cada lote como `timeout × archivos del lote`:
 
 ```python
 try:
-    result = future.result(timeout=config.per_file_timeout_seconds)
-except concurrent.futures.TimeoutError:
-    warnings.append(f"Timeout parseando {file_path}, se omite")
+    return future.result(timeout=per_file_timeout_seconds * len(batch))
+except TimeoutError:
+    ...  # se reintenta el lote archivo por archivo para señalar al culpable
 ```
+
+Al vencer el plazo de un lote, sus archivos se reenvían de uno en uno y solo
+el que vuelve a vencer se omite, con un warning `PARSE_TIMEOUT` (detail = el
+límite en segundos); el resto se analiza con normalidad.
+
+**Limitación aceptada y documentada (decisión del mantenedor).** El timeout
+solo deja de *esperar* el resultado: no puede cancelar un proceso que ya está
+parseando. El worker sigue con ese archivo y, al cerrar el pool, se espera a que
+termine, así que un archivo patológico de verdad puede retrasar el cierre del
+análisis. Reciclar el proceso afectado (terminar y recrear el pool) resolvería
+eso, pero es bastante más complejo y queda diferido. El plazo se cuenta desde
+que se empieza a esperar el lote, no desde que empieza a ejecutarse, así que
+solo puede ser más generoso que el nominal.
 
 Ningún caso de los tres debe tumbar el análisis completo del resto del
 proyecto — mismo principio que ya rige para `SyntaxError`/`UnicodeDecodeError`

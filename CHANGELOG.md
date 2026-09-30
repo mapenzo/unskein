@@ -47,6 +47,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exact and never truncated, shown before the cycle list with their size, so a
   "100+ cycles" report reveals it is really one knot of, say, 279 modules (#8).
 
+- Parallel parsing: projects with 500 files or more are parsed in a process pool
+  (`parallel_threshold`, `max_workers`, `queue_maxsize` in `.unskein.toml`), up to
+  2.9x faster on large projects (1.0-2.6x where processes are spawned, as on Windows), with the same result and order as the sequential parser. A
+  file that exceeds `per_file_timeout_seconds` is skipped with a warning; a worker that
+  dies makes the parser fall back to sequential. The timeout only stops waiting: a
+  worker stuck on a pathological file still delays closing the pool.
+
 ### Fixed
 
 - `--verbose` now reports the real peak memory of the run. It used to read the resident
@@ -57,6 +64,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The default `parallel_threshold` is now 500 files (was 50) and `max_workers` defaults to
+  the core count capped at 8. Measured, a pool at 50 files was 2-40x slower than
+  sequential parsing because starting it costs 130-300 ms.
+- `LanguageAdapter.parse` is now concrete, built on the new `plan_parse` and `parse_task`
+  that language adapters implement, so the parallel and sequential paths share one code
+  path. `FileParseResult` moved to `unskein.parsers.models`.
 - File discovery no longer enters excluded directories (`.venv/`, `build/`,
   `node_modules/`, `tests/`…), so its cost no longer grows with ignored content. As in
   git, a negated pattern (`!build/keep.py`) cannot re-include a file inside an excluded
