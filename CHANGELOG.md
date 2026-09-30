@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.config/unskein/config.toml` instead, and `--force` overwrites an existing file,
   which is otherwise kept (exit code 1). The template ships inside the package; the
   generated file changes nothing until a line is uncommented.
+- `unskein guide` shows the usage guide of the installed version, in Spanish or English
+  (`--lang`, `UNSKEIN_LANG` or the system locale): what the report means, every option,
+  excludes, configuration, AI and privacy, exit codes and troubleshooting. Rendered in a
+  terminal, raw Markdown when piped (`unskein guide > guide.md`). Tests fail if a
+  command or option is missing from either guide.
 
 ### Removed
 

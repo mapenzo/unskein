@@ -119,6 +119,9 @@ src/unskein/
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
 ├── init_config.py         # `unskein init`: plantilla .unskein.toml comentada
 ├── templates/unskein.toml # plantilla (viaja en el wheel)
+├── guide.py               # `unskein guide`: guía de uso ES/EN de la versión instalada
+├── guides/guide.{es,en}.md # la guía (viaja en el wheel; un test exige cada opción)
+├── resources.py           # lectura de archivos del paquete (importlib.resources)
 ├── i18n.py                # diccionario ES/EN
 ├── pipeline.py            # parse_all + should_parallelize
 ├── parsers/
