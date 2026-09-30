@@ -15,6 +15,9 @@ ENV_API_KEY = "UNSKEIN_API_KEY"
 ENV_AI_API_BASE = "UNSKEIN_AI_API_BASE"
 ENV_LANG = "UNSKEIN_LANG"
 
+DEFAULT_PARALLEL_THRESHOLD = 500
+DEFAULT_MAX_WORKERS_CAP = 8
+
 PROJECT_CONFIG_NAME = ".unskein.toml"
 USER_CONFIG_PATH = Path.home() / ".config" / "unskein" / "config.toml"
 
@@ -53,7 +56,8 @@ class AnalysisConfig:
 
     Attributes:
         parallel_threshold: File count from which parsing runs in parallel.
-        max_workers: Worker processes for parsing; None means ``os.cpu_count()``.
+        max_workers: Worker processes for parsing; None means ``os.cpu_count()``
+            capped at ``DEFAULT_MAX_WORKERS_CAP``.
         queue_maxsize: Maximum number of files in flight at once.
         max_file_size_bytes: Files larger than this are skipped unread, with a warning.
         per_file_timeout_seconds: Time limit to parse one file before skipping it.
@@ -67,7 +71,7 @@ class AnalysisConfig:
         pipeline: Per-stage concurrency settings.
     """
 
-    parallel_threshold: int = 50
+    parallel_threshold: int = DEFAULT_PARALLEL_THRESHOLD
     max_workers: int | None = None
     queue_maxsize: int = 200
     max_file_size_bytes: int = 5 * 1024 * 1024

@@ -12,7 +12,7 @@ from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any
 
-from unskein.config import AnalysisConfig
+from unskein.config import DEFAULT_MAX_WORKERS_CAP, AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.models import (
     FileParseResult,
@@ -64,6 +64,23 @@ def parse_all(
     if not should_parallelize(len(files), config):
         return adapter.parse(files, root)
     return _parse_parallel(files, adapter, root, config)
+
+
+def worker_count(config: AnalysisConfig) -> int:
+    """Return how many worker processes to start.
+
+    Starting a pool costs about 10 ms per worker and the speedup stops growing
+    past a handful of workers, so the default is capped.
+
+    Args:
+        config: Analysis settings; an explicit ``max_workers`` is used as is.
+
+    Returns:
+        ``max_workers`` when set, else the core count up to ``DEFAULT_MAX_WORKERS_CAP``.
+    """
+    if config.max_workers:
+        return config.max_workers
+    return min(os.cpu_count() or 1, DEFAULT_MAX_WORKERS_CAP)
 
 
 def batch_size(task_count: int, workers: int, queue_maxsize: int) -> int:
@@ -201,7 +218,7 @@ def _parse_parallel(
         The combined parse result for all files.
     """
     plan = adapter.plan_parse(files, root)
-    workers = config.max_workers or os.cpu_count() or 1
+    workers = worker_count(config)
     size = batch_size(len(plan.tasks), workers, config.queue_maxsize)
     batches = [plan.tasks[start : start + size] for start in range(0, len(plan.tasks), size)]
     try:

@@ -246,3 +246,19 @@ def test_below_the_threshold_no_pool_is_created(
 
     assert isinstance(result, ParseResult)
     assert log.initializers == []
+
+
+@pytest.mark.parametrize(
+    ("configured", "cores", "expected"),
+    [(None, 4, 4), (None, 64, 8), (None, None, 1), (16, 4, 16), (2, 64, 2)],
+)
+def test_worker_count_defaults_to_the_cores_up_to_a_cap(
+    monkeypatch: pytest.MonkeyPatch, configured: int | None, cores: int | None, expected: int
+) -> None:
+    monkeypatch.setattr(pipeline.os, "cpu_count", lambda: cores)
+
+    assert pipeline.worker_count(AnalysisConfig(max_workers=configured)) == expected
+
+
+def test_default_threshold_is_where_a_pool_starts_to_pay_off() -> None:
+    assert AnalysisConfig().parallel_threshold == 500
