@@ -20,6 +20,32 @@ from unskein.parsers.models import (
     WarningCode,
 )
 
+# Import statements only occur in statement lists; ``handlers`` holds ExceptHandler
+# nodes and ``cases`` holds match_case nodes, each with its own ``body``. The order
+# is the one in which a compound statement's blocks appear in the source.
+STATEMENT_LIST_FIELDS = ("body", "handlers", "cases", "orelse", "finalbody")
+
+
+def iter_statements(tree: ast.Module) -> Iterator[ast.AST]:
+    """Yield every statement of a module, nested ones included, in code order.
+
+    Skips expressions on purpose: ``ast.walk`` visits millions of expression
+    nodes that can never contain an import.
+
+    Args:
+        tree: Parsed module.
+
+    Yields:
+        Each statement, exception handler and match case, depth-first.
+    """
+    stack = list(reversed(tree.body))
+    while stack:
+        node = stack.pop()
+        yield node
+        for field_name in reversed(STATEMENT_LIST_FIELDS):
+            if children := getattr(node, field_name, None):
+                stack.extend(reversed(children))
+
 
 @dataclass(slots=True)
 class FileParseResult:
@@ -227,12 +253,12 @@ class _ImportCollector:
         return ".".join(parts)
 
     def visit(self, tree: ast.Module) -> None:
-        """Collect every import in a module, including nested ones.
+        """Collect every import in a module, including nested ones, in code order.
 
         Args:
             tree: Parsed module.
         """
-        for node in ast.walk(tree):
+        for node in iter_statements(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     self.add(alias.name, None, node.lineno)

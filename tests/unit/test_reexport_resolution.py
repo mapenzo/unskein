@@ -1,4 +1,5 @@
 import copy
+from collections.abc import Callable
 from pathlib import Path
 
 import pathspec
@@ -124,3 +125,32 @@ def test_depth_limit_degrades_with_warning() -> None:
     target, warnings = resolve_target("m0", "X", build_reexport_index(chain))
     assert target == f"m{MAX_RESOLUTION_DEPTH}"
     assert [w.code for w in warnings] == [WarningCode.REEXPORT_DEPTH_EXCEEDED]
+
+
+def test_index_keeps_the_first_entry_of_a_duplicated_key() -> None:
+    index = build_reexport_index(
+        [ReExport("app", "app._fast", "Engine"), ReExport("app", "app._slow", "Engine")]
+    )
+    assert index[("app", "Engine")] == "app._fast"
+
+
+def reexport_targets(root: Path, exporting_module: str, symbol: str) -> str:
+    """Return the module the parsed project re-exports ``symbol`` from."""
+    index = build_reexport_index(parse_fixture(root).re_exports)
+    return index[(exporting_module, symbol)]
+
+
+def test_duplicate_reexport_in_try_except_resolves_to_first_in_code(
+    make_project: Callable[[dict[str, str]], Path],
+) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": (
+                "try:\n    from ._fast import Engine\n"
+                "except ImportError:\n    from ._slow import Engine\n"
+            ),
+            "app/_fast.py": "",
+            "app/_slow.py": "",
+        }
+    )
+    assert reexport_targets(root, "app", "Engine") == "app._fast"

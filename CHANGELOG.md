@@ -61,11 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `node_modules/`, `tests/`…), so its cost no longer grows with ignored content. As in
   git, a negated pattern (`!build/keep.py`) cannot re-include a file inside an excluded
   directory: such a file is no longer analyzed.
-- File discovery no longer resolves every directory to detect symlink loops. Without
-  `--follow-symlinks` no check runs (loops are impossible); with it, directories are
-  identified by device and inode instead of `Path.resolve()`, falling back to the
-  resolved path when the filesystem reports no inodes. Faster on trees with many
-  directories, with the same files.
+- Import collection walks only statement lists instead of every AST node, making parsing
+  1.3-1.5x faster on large projects (networkx, Django, sympy) with the same graph.
+  Imports are now visited depth-first in code order, so a file's warnings come out in
+  line order and the report may show different examples per warning kind.
+- When a package `__init__.py` re-exports the same symbol more than once (for example a
+  `try/except ImportError` fallback), the first one in the code now wins; before, the
+  last one did.
 - The placeholder notice about the AI arriving later is gone: the report now says
   either that the AI is disabled or not configured, or why the call failed.
 - Precedence for non-secret options is now flag > env var > `.unskein.toml` (so
