@@ -182,8 +182,9 @@ def expand_package_access(
 ) -> tuple[list[ImportEdge], list[ParseWarning]]:
     """Replace the import of a package by one edge per module its attributes come from.
 
-    Unresolvable uses keep the edge to the package, so no dependency is ever lost:
-    the name is used by itself, or no attribute of it is read.
+    Uses that cannot be followed keep the edge to the package: the name is used by
+    itself, or no attribute of it is read. Chains that resolve to the importing module
+    itself add no edge.
 
     Args:
         edge: Internal whole-module import edge.

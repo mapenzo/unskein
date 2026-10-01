@@ -1,6 +1,7 @@
 """Find which attributes a module reads through the names its imports bind."""
 
 import ast
+import re
 from collections.abc import Collection
 from dataclasses import dataclass, field
 
@@ -17,6 +18,19 @@ class NameUsage:
 
     chains: set[str] = field(default_factory=set)
     escapes: bool = False
+
+
+def _mentions(text: str, name: str) -> bool:
+    """Tell whether a string is the name or reads an attribute of it.
+
+    Args:
+        text: String constant found in the module.
+        name: Tracked name.
+
+    Returns:
+        True when ``text`` equals ``name`` or contains ``name.`` as a whole identifier.
+    """
+    return text == name or re.search(rf"(?<![\w.]){re.escape(name)}\.", text) is not None
 
 
 # NodeVisitor dispatches on ``visit_<NodeClass>`` names, so pylint's snake_case rule does not apply.
@@ -50,6 +64,25 @@ class _UsageCollector(ast.NodeVisitor):
                 usage.escapes = True
         else:
             self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> None:
+        """Follow a string that references a tracked name, such as a quoted annotation.
+
+        Args:
+            node: A constant; only strings are inspected.
+        """
+        if not isinstance(node.value, str):
+            return
+        mentioned = [name for name in self.usages if _mentions(node.value, name)]
+        if not mentioned:
+            return
+        try:
+            expression = ast.parse(node.value, mode="eval")
+        except (SyntaxError, ValueError):
+            for name in mentioned:
+                self.usages[name].escapes = True
+            return
+        self.visit(expression)
 
     def visit_Name(self, node: ast.Name) -> None:
         """Mark a tracked name that is used by itself.

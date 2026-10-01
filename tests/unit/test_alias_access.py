@@ -88,16 +88,32 @@ def test_submodule_package_reached_with_from_import_resolves(make_project: MakeP
         "import pkg as p\np = None\nx = p.Engine\n",
         "import pkg as p\np.Engine = 1\n",
         "import pkg as p\n",
-        "import pkg as p\nx = 'p.Engine'\n",
+        "import pkg as p\nx = 'p.Engine('\n",
         "import pkg as p\nimport pkg.util as p\nx = p.Engine\n",
     ],
-    ids=["escapes", "rebound", "attribute_write", "unused", "only_in_a_string", "bound_twice"],
+    ids=["escapes", "rebound", "attribute_write", "unused", "unparsable_string", "bound_twice"],
 )
 def test_unresolvable_uses_keep_the_edge_to_the_facade(
     make_project: MakeProject, source: str
 ) -> None:
     root = make_project(consumer(source))
     assert ("pkg", None) in edges_of(resolve(root), "pkg.use")
+
+
+def test_dotted_reference_inside_a_string_is_followed(make_project: MakeProject) -> None:
+    root = make_project(consumer("import pkg as p\nx = 'p.Engine'\n"))
+    assert edges_of(resolve(root), "pkg.use") == {("pkg.core.engine", "Engine")}
+
+
+def test_quoted_annotation_keeps_its_dependency_next_to_other_chains(
+    make_project: MakeProject,
+) -> None:
+    source = "import pkg as p\ny = p.util.helper\ndef f(x: 'p.Engine'): ...\n"
+    root = make_project(consumer(source))
+    assert edges_of(resolve(root), "pkg.use") == {
+        ("pkg.util", "helper"),
+        ("pkg.core.engine", "Engine"),
+    }
 
 
 def test_attribute_defined_in_the_facade_itself_depends_on_the_facade(

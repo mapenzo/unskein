@@ -193,7 +193,8 @@ siguiente se sigue por los re-exports hasta el módulo que lo define
 destino es el propio módulo, no hay arista. Conservador: con `escapes`, sin ningún
 atributo leído o sin resolución, se mantiene la arista a la fachada. Fuera de alcance:
 sombreado del nombre por parámetros o variables locales, definiciones `def`/`class` que
-reutilicen el nombre, `__getattr__` dinámico y `__all__` (no se consulta en el acceso por atributo).
+reutilicen el nombre, `__getattr__` dinámico y el `__all__` propio de la fachada (no se
+consulta en el acceso por atributo; el `__all__` literal de la fuente de un star sí).
 
 ---
 
@@ -348,7 +349,7 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   el mismo símbolo más de una vez (típico: `try: from ._fast import X` /
   `except ImportError: from ._slow import X`), **gana el primero en el código**.
   Un `from x import *` dentro de una fachada, con `x` módulo del proyecto, genera
-  `ReExport(paquete, x, STAR_EXPORT)`; `star_exports` calcula los nombres que trae
+  `ReExport(paquete, x, STAR_EXPORT)`; `star_exports` (sobre `module_exports` de `parsers/exports.py`) calcula los nombres que trae
   (`__all__` literal, o nombres públicos de `x` más los de sus star-imports
   anidados si `x` no declara `__all__`) y `build_reexport_index(re_exports,
   star_names)` los indexa. Un star nunca aporta un nombre que la fachada liga ella

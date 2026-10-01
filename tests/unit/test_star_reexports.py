@@ -137,3 +137,12 @@ def test_explicit_import_after_a_star_wins(make_project: MakeProject) -> None:
     assert targets_of(resolve_indirection(parse(make_project(files))), "use") == {
         ("pkg.a", "Thing")
     }
+
+
+def test_facade_own_definition_before_a_star_wins(make_project: MakeProject) -> None:
+    files = {
+        "pkg/__init__.py": "class Thing: ...\nfrom pkg.b import *\n",
+        "pkg/b.py": "class Thing: ...\n",
+        "use.py": "from pkg import Thing\n",
+    }
+    assert targets_of(resolve_indirection(parse(make_project(files))), "use") == {("pkg", "Thing")}

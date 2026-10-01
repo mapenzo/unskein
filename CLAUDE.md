@@ -130,6 +130,8 @@ src/unskein/
 │   ├── base.py             # interfaz LanguageAdapter (el "adapter")
 │   ├── discovery.py        # os.walk, excludes, encoding
 │   ├── indirection.py      # resolución de re-exports
+│   ├── usage.py            # acceso por atributo a través de los nombres importados
+│   ├── exports.py          # nombres que un módulo expone a `import *`
 │   └── python_parser.py    # implementación para Python con ast
 ├── graph/
 │   ├── builder.py           # construcción del grafo con NetworkX
