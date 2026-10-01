@@ -12,7 +12,9 @@ import pathspec
 from unskein.config import AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
+from unskein.parsers.exports import module_exports
 from unskein.parsers.models import (
+    STAR_EXPORT,
     FileParseResult,
     ImportEdge,
     ImportKind,
@@ -380,7 +382,9 @@ class _ImportCollector:
 
         A name that is a submodule of base becomes a module import; any other
         name is a symbol of base. Symbol imports in a package `__init__.py` are
-        recorded as re-exports under their exported (alias) name.
+        recorded as re-exports under their exported (alias) name. A star import in a
+        package `__init__.py` of an existing project module is recorded as a star
+        re-export (``STAR_EXPORT``) instead of a warning.
 
         Args:
             base: Absolute dotted module the names are imported from.
@@ -389,8 +393,14 @@ class _ImportCollector:
         """
         for alias in node.names:
             if alias.name == "*":
-                self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
+                is_star_reexport = (
+                    self.is_package and base in self.index.modules and base != self.source
+                )
+                if not is_star_reexport:
+                    self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
                 self.add(base, None, node.lineno, kind=kind)
+                if is_star_reexport:
+                    self.re_exports.append(ReExport(self.source, base, STAR_EXPORT))
                 continue
             binding = Binding(alias.asname or alias.name, True)
             submodule = f"{base}.{alias.name}"
@@ -459,9 +469,9 @@ def parse_file(
     collector = _ImportCollector(file_path, name, index)
     collector.visit(tree)
     collector.attach_usage(tree)
-    return FileParseResult(
-        ModuleInfo(name, file_path, collector.edges), collector.re_exports, collector.warnings
-    )
+    exports = module_exports(tree)
+    module = ModuleInfo(name, file_path, collector.edges, exports.names, exports.declares_all)
+    return FileParseResult(module, collector.re_exports, collector.warnings)
 
 
 class PythonAdapter(LanguageAdapter):
