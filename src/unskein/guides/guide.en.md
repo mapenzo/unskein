@@ -207,11 +207,11 @@ direnv. `.env.example` in the repository lists the variables.
 | Groq | `groq/<model>` | `GROQ_API_KEY` |
 | DeepSeek | `deepseek/<model>` | `DEEPSEEK_API_KEY` |
 | LiteLLM Proxy | `litellm_proxy/<alias>` | `api_base` (the proxy URL) and your virtual key |
-| OpenAI-compatible server (LM Studio, vLLM) | `openai/<model>` | `api_base` (e.g. `http://localhost:1234/v1`); any key if the server checks none |
+| OpenAI-compatible server (LM Studio, vLLM) | `openai/<model>` | `api_base` (e.g. `http://localhost:1234/v1`); any non-empty key (e.g. `sk-local`) if the server checks none |
 
 Replace `<model>` with a current model of the provider; the LiteLLM
 documentation lists the names. `UNSKEIN_API_KEY` can replace any of the keys
-above. Some examples:
+above, except the AWS credentials. Some examples:
 
 ```bash
 # Claude

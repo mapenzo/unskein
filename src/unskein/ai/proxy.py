@@ -2,6 +2,7 @@
 
 import json
 import logging
+from http.client import HTTPException
 from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -13,6 +14,8 @@ logger = logging.getLogger("unskein")
 PROXY_MODEL_PREFIX = "litellm_proxy/"
 MODEL_INFO_PATH = "/model/info"
 MODEL_INFO_TIMEOUT_SECONDS = 10
+# A model list is a few kilobytes; anything far larger is not a proxy's answer.
+MAX_MODEL_INFO_BYTES = 1_000_000
 HTTP_SCHEMES = frozenset({"http", "https"})
 
 
@@ -42,12 +45,15 @@ def proxy_supports_reasoning(config: AIConfig) -> bool | None:
         The proxy's ``supports_reasoning`` for the alias, or None when there is
         no http(s) URL, the query fails or the proxy says nothing about it.
     """
-    if not config.api_base or urlsplit(config.api_base).scheme not in HTTP_SCHEMES:
+    if not config.api_base:
         return None
     alias = config.model.removeprefix(PROXY_MODEL_PREFIX)
     try:
+        if urlsplit(config.api_base).scheme not in HTTP_SCHEMES:
+            return None
         payload = _fetch_model_info(config.api_base, config.api_key)
-    except (OSError, ValueError) as error:
+    # An odd URL or reply must never stop the scan: the AI step only falls back.
+    except (OSError, ValueError, HTTPException, RecursionError) as error:
         # Only the error type is logged: a provider message may repeat the key.
         logger.debug("Could not ask the LiteLLM Proxy about %s (%s)", alias, type(error).__name__)
         return None
@@ -67,12 +73,17 @@ def _fetch_model_info(api_base: str, api_key: str | None) -> Any:
     Raises:
         OSError: If the proxy cannot be reached, times out or answers with an
             HTTP error (``URLError`` and ``HTTPError`` are ``OSError``).
-        ValueError: If the answer is not JSON.
+        ValueError: If the URL is malformed or the answer is not JSON (an
+            answer cut at ``MAX_MODEL_INFO_BYTES`` is not JSON either).
+        HTTPException: If the reply is not valid HTTP or ends too early.
+        RecursionError: If the JSON is nested too deeply to decode.
     """
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
-    request = Request(f"{api_base.rstrip('/')}{MODEL_INFO_PATH}", headers=headers)
+    request = Request(f"{api_base.rstrip('/')}{MODEL_INFO_PATH}")
+    if api_key:
+        # Unredirected: a redirect, even to another host, never carries the key.
+        request.add_unredirected_header("Authorization", f"Bearer {api_key}")
     with urlopen(request, timeout=MODEL_INFO_TIMEOUT_SECONDS) as response:
-        return json.load(response)
+        return json.loads(response.read(MAX_MODEL_INFO_BYTES))
 
 
 def _reasoning_flag(payload: Any, alias: str) -> bool | None:

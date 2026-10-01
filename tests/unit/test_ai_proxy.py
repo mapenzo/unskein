@@ -2,19 +2,30 @@ import json
 import logging
 import socket
 import threading
+import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 import pytest
 
+from unskein.ai import proxy as proxy_module
 from unskein.ai.proxy import MODEL_INFO_PATH, is_proxy_model, proxy_supports_reasoning
 from unskein.config import AIConfig
 
 KEY = "sk-virtual-123"
 # serve_forever checks for shutdown at this interval; the 0.5 s default slows every test.
 SERVER_POLL_SECONDS = 0.01
+PROXY_ENV_VARS = (
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+)
 MODEL_INFO = {
     "data": [
         {"model_name": "GPT Luna", "model_info": {"supports_reasoning": True}},
@@ -31,32 +42,46 @@ class FakeProxy:
     Attributes:
         status: HTTP status to answer with.
         body: Raw body to answer with.
+        location: Where to redirect to; set it with a 30x status.
+        raw: Bytes written instead of a well-formed HTTP answer.
+        delay_seconds: How long to wait before answering.
         requests: Path and Authorization header of every request received.
         base: Base URL of the server, set once it is listening.
     """
 
     status: int = 200
     body: bytes = json.dumps(MODEL_INFO).encode()
+    location: str | None = None
+    raw: bytes | None = None
+    delay_seconds: float = 0
     requests: list[tuple[str, str | None]] = field(default_factory=list)
     base: str = ""
 
 
-@pytest.fixture
-def fake_proxy() -> Iterator[FakeProxy]:
-    """Serve a ``FakeProxy`` on a free local port for the duration of a test.
+@contextmanager
+def serving(proxy: FakeProxy) -> Iterator[FakeProxy]:
+    """Serve a ``FakeProxy`` on a free local port while the block runs.
+
+    Args:
+        proxy: The scripted answers.
 
     Yields:
-        The scriptable proxy, with ``base`` pointing at the server.
+        The same proxy, with ``base`` pointing at the server.
     """
-    proxy = FakeProxy()
 
     class Handler(BaseHTTPRequestHandler):
-        """Answer every GET with the proxy's scripted status and body."""
+        """Answer every GET with the proxy's scripted reply."""
 
         def do_GET(self) -> None:  # noqa: N802 - name required by BaseHTTPRequestHandler
             """Record the request and send the scripted answer."""
             proxy.requests.append((self.path, self.headers.get("Authorization")))
+            time.sleep(proxy.delay_seconds)
+            if proxy.raw is not None:
+                self.wfile.write(proxy.raw)
+                return
             self.send_response(proxy.status)
+            if proxy.location:
+                self.send_header("Location", proxy.location)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(proxy.body)
@@ -70,9 +95,27 @@ def fake_proxy() -> Iterator[FakeProxy]:
         target=server.serve_forever, kwargs={"poll_interval": SERVER_POLL_SECONDS}, daemon=True
     )
     thread.start()
-    yield proxy
-    server.shutdown()
-    server.server_close()
+    try:
+        yield proxy
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture
+def fake_proxy(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeProxy]:
+    """Serve a ``FakeProxy`` reached directly, never through an HTTP proxy of the machine.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+
+    Yields:
+        The scriptable proxy, with ``base`` pointing at the server.
+    """
+    for name in PROXY_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    with serving(FakeProxy()) as proxy:
+        yield proxy
 
 
 def config_for(alias: str, base: str | None, api_key: str | None = KEY) -> AIConfig:
@@ -139,7 +182,7 @@ def test_an_unusable_answer_gives_no_answer(
     assert proxy_supports_reasoning(config_for("GPT Luna", fake_proxy.base)) is None
 
 
-def test_an_unreachable_proxy_gives_no_answer() -> None:
+def test_an_unreachable_proxy_gives_no_answer(fake_proxy: FakeProxy) -> None:
     config = config_for("GPT Luna", f"http://127.0.0.1:{closed_port()}")
 
     assert proxy_supports_reasoning(config) is None
@@ -150,15 +193,68 @@ def test_no_query_without_an_http_api_base(base: str | None) -> None:
     assert proxy_supports_reasoning(config_for("GPT Luna", base)) is None
 
 
-def test_a_failed_query_is_logged_without_the_key(
-    fake_proxy: FakeProxy, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("base", ["http://[::1", "http://host:abc", "https://exa mple.com"])
+def test_a_malformed_api_base_gives_no_answer(base: str) -> None:
+    assert proxy_supports_reasoning(config_for("GPT Luna", base)) is None
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"garbage\r\n\r\n",
+        b'HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{"data"',
+    ],
+)
+def test_a_garbled_or_truncated_reply_gives_no_answer(fake_proxy: FakeProxy, raw: bytes) -> None:
+    fake_proxy.raw = raw
+
+    assert proxy_supports_reasoning(config_for("GPT Luna", fake_proxy.base)) is None
+
+
+def test_a_slow_proxy_gives_no_answer(
+    fake_proxy: FakeProxy, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(proxy_module, "MODEL_INFO_TIMEOUT_SECONDS", 0.05)
+    fake_proxy.delay_seconds = 0.3
+
+    assert proxy_supports_reasoning(config_for("GPT Luna", fake_proxy.base)) is None
+
+
+def test_an_oversized_reply_is_cut_and_gives_no_answer(
+    fake_proxy: FakeProxy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(proxy_module, "MAX_MODEL_INFO_BYTES", 10)
+
+    assert proxy_supports_reasoning(config_for("GPT Luna", fake_proxy.base)) is None
+
+
+def test_a_deeply_nested_reply_gives_no_answer(fake_proxy: FakeProxy) -> None:
+    fake_proxy.body = b"[" * 100_000
+
+    assert proxy_supports_reasoning(config_for("GPT Luna", fake_proxy.base)) is None
+
+
+def test_a_redirect_never_carries_the_key_to_another_server(fake_proxy: FakeProxy) -> None:
+    with serving(FakeProxy()) as elsewhere:
+        fake_proxy.status = 302
+        fake_proxy.location = f"{elsewhere.base}{MODEL_INFO_PATH}"
+
+        proxy_supports_reasoning(config_for("GPT Luna", fake_proxy.base))
+
+    assert all(authorization is None for _, authorization in elsewhere.requests)
+
+
+def test_a_failed_query_is_logged_without_the_key(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail(api_base: str, api_key: str | None) -> None:
+        raise OSError(f"proxy said: bad key {api_key}")
+
+    monkeypatch.setattr(proxy_module, "_fetch_model_info", fail)
     monkeypatch.setattr(logging.getLogger("unskein"), "propagate", True)
     caplog.set_level(logging.DEBUG, logger="unskein")
-    fake_proxy.status = 401
-    fake_proxy.body = json.dumps({"error": f"bad key {KEY}"}).encode()
 
-    proxy_supports_reasoning(config_for("GPT Luna", fake_proxy.base))
+    proxy_supports_reasoning(config_for("GPT Luna", "https://litellm.example.com"))
 
     assert "GPT Luna" in caplog.text
     assert KEY not in caplog.text
