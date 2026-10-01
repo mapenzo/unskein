@@ -767,7 +767,7 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   de las marañas del escaneo). Con `--all-edges` se usa el grafo completo e incluye el
   acoplamiento oculto (imports dentro de funciones o bajo `TYPE_CHECKING`). **Todas** las
   marañas se planifican y se simulan; `--max-tangles` (`DEFAULT_MAX_TANGLES = 5`) solo limita
-  cuántas detalla el informe. `scan.parse_project` comparte el parseo con `scan`, así que los
+  cuántas detalla el informe. `scan.parse_sources` y `scan.resolve_parsed` comparten el parseo con `scan`, así que los
   `exclude` y `include_tests` de `.unskein.toml` se respetan igual. Las advertencias del
   parseo (archivos saltados) se cuentan en `UntanglePlan.warnings` y el informe las señala en
   una línea, porque un archivo saltado puede esconder una maraña.
@@ -793,9 +793,17 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   `LAZY` y `TYPE_CHECKING` no se ofrecen (se quitan los contextos de la evidencia) cuando:
   el import ya es perezoso o está bajo `TYPE_CHECKING`; con `--all-edges`, para **toda**
   arista, porque el objetivo es el acoplamiento de diseño y esos pasos lo conservan; y
-  cuando otro módulo importa por nombre, desde el módulo origen, alguno de los nombres que
-  ese import enlaza (`c` hace `from a import Thing`: mover `a → b` dentro de una función
-  rompería `c`).
+  cuando otro módulo lee en ejecución, a través del módulo origen, alguno de los nombres
+  que ese import enlaza: mover `a → b` dentro de una función rompería a `c` si hace
+  `from a import Thing`, `from pkg import a` + `a.Thing`, `import pkg.a` + `pkg.a.Thing`,
+  `from a import *` o usa `a` suelto (`getattr(a, …)`). `collect_names_read_from` mira los
+  imports **tal como se escriben** (`scan.parse_sources`, antes de resolver re-exports, que
+  apuntarían `c` al módulo que define el nombre y ocultarían el paso por `a`); los imports
+  bajo `TYPE_CHECKING` no cuentan. Los accesos por atributo que el parser no analizó (import
+  de un módulo entero que no es paquete) se buscan releyendo solo esos importadores; un
+  importador ilegible cuenta como si leyera todos los nombres. Es conservador: un segmento
+  de la cadena con el nombre basta. Límite: un paquete antecesor usado suelto
+  (`getattr(pkg, n)`) no se sigue hasta sus submódulos.
 - **Por qué `PACKAGE_STRUCTURE` es prohibitivo y por qué existe `BYPASS_FACADE`.** En networkx,
   14 de 15 cortes eran aristas fachada a hijo propio y con costes planos el algoritmo las
   elegía porque todas cuestan igual. Con coste 1000 solo quedan las inevitables (3). Esas

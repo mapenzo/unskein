@@ -138,7 +138,9 @@ annotations too when the module has `from __future__ import annotations`), move 
 symbol (one or two symbols imported), extract a shared module, and review the package
 structure (a package importing its own submodule, only when nothing else breaks the
 cycle). With `--all-edges` only the structural steps are offered, since a lazy or
-`TYPE_CHECKING` import keeps the coupling. The cuts come from a heuristic and the
+`TYPE_CHECKING` import keeps the coupling. Neither is offered when another module reads
+one of the names through the source module (`from a import Thing`, `a.Thing`, `from a
+import *`): the name would no longer exist there. The cuts come from a heuristic and the
 simulation is optimistic: read it as a plan to review.
 
 Like `scan`, `untangle` honors the `exclude` and `include_tests` settings of

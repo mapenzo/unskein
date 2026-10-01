@@ -14,7 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   module, lazy import, move the symbol, extract a shared module, review the package
   structure) with its evidence, and a simulation of tangles, cycles and coupling before
   and after. `--all-edges` includes hidden coupling. The `scan` summary points to it
-  when there are tangles.
+  when there are tangles. The lazy and `TYPE_CHECKING` steps are never offered when
+  another module reads one of the names through the importing module (by name, by
+  attribute, by a star import or by using the module by itself), since the name would
+  no longer exist there.
 - Hidden coupling: the report lists groups of modules that depend on each other only
   through imports inside functions or under `TYPE_CHECKING`, with their own summary
   line and a "Hidden tangles" metric.
