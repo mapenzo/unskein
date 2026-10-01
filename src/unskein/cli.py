@@ -19,10 +19,11 @@ from unskein.ai.models import AIReport, Severity
 from unskein.errors import ErrorKey, ExitCode, UnskeinError
 from unskein.guide import usage_guide
 from unskein.i18n import Lang, detect_lang, t, translate_error
-from unskein.init_config import write_config
+from unskein.init_config import save_user_config, write_config
 from unskein.logging_setup import setup_logging
 from unskein.perf import PerformanceStats, measure
 from unskein.report.markdown import ReportContext, render_report
+from unskein.report.untangle import render_untangle
 from unskein.scan import (
     ScanContext,
     ScanOptions,
@@ -30,6 +31,12 @@ from unskein.scan import (
     analyze_project,
     interpret,
     prepare_scan,
+)
+from unskein.untangle import (
+    DEFAULT_MAX_TANGLES,
+    UntangleOptions,
+    build_untangle_plan,
+    prepare_untangle,
 )
 
 EXIT_CODES_EPILOG = (
@@ -43,6 +50,12 @@ app = typer.Typer(
     # Plain click help: rich tables squeeze the --x/--no-x columns unreadably at 80 columns.
     rich_markup_mode=None,
 )
+config_app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage unskein's config files.",
+    rich_markup_mode=None,
+)
+app.add_typer(config_app, name="config")
 
 
 def run() -> None:
@@ -199,6 +212,33 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
 
 @app.command()
+def untangle(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    path: Annotated[Path, typer.Argument(help="Directory to analyze.")] = Path("."),
+    all_edges: Annotated[
+        bool,
+        typer.Option("--all-edges", help="Also untangle hidden coupling (lazy, TYPE_CHECKING)."),
+    ] = False,
+    max_tangles: Annotated[
+        int, typer.Option("--max-tangles", min=1, help="Tangles to detail, largest first.")
+    ] = DEFAULT_MAX_TANGLES,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Also save the Markdown plan here.")
+    ] = None,
+    lang: Annotated[
+        Literal["es", "en"] | None, typer.Option("--lang", help="Output language.")
+    ] = None,
+) -> None:
+    """Plan which imports to cut to undo each tangle, with the step and its evidence."""
+    options = UntangleOptions(path=path, lang=lang, all_edges=all_edges, max_tangles=max_tangles)
+    try:
+        code = _run_untangle(options, output)
+    except Exception:  # pylint: disable=broad-exception-caught  # any bug -> exit 3
+        Console(stderr=True).print_exception()
+        code = ExitCode.INTERNAL_ERROR
+    raise typer.Exit(code)
+
+
+@app.command()
 def init(
     path: Annotated[Path, typer.Argument(help="Project folder to write .unskein.toml in.")] = Path(
         "."
@@ -222,6 +262,33 @@ def init(
         _print_to_stderr(translate_error(e, message_lang), style="red")
         raise typer.Exit(ExitCode.USAGE_ERROR) from e
     _print_to_stderr(t("cli.config_written", message_lang, path=str(target)))
+    if not user:
+        _print_to_stderr(t("cli.config_project_hint", message_lang))
+
+
+@config_app.command("save")
+def config_save(
+    source: Annotated[
+        Path, typer.Argument(help="Config file to save. Default: ./.unskein.toml.")
+    ] = Path(config_module.PROJECT_CONFIG_NAME),
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite an existing user config.")
+    ] = False,
+    lang: Annotated[
+        Literal["es", "en"] | None, typer.Option("--lang", help="Message language.")
+    ] = None,
+) -> None:
+    """Check a config file and save it as your config for every project."""
+    message_lang = detect_lang(lang)
+    target = config_module.USER_CONFIG_PATH
+    try:
+        settings = save_user_config(source, target, force=force)
+    except UnskeinError as e:
+        _print_to_stderr(translate_error(e, message_lang), style="red")
+        raise typer.Exit(ExitCode.USAGE_ERROR) from e
+    _print_to_stderr(t("cli.config_saved", message_lang, path=str(target)))
+    if settings.ai.api_key:
+        _print_to_stderr(t("cli.config_saved_key", message_lang), style="yellow")
 
 
 @app.command()
@@ -285,6 +352,36 @@ def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitC
     if verbose:
         _print_stats(stats, context)
     return exit_code_for(outcome.ai_report)
+
+
+def _run_untangle(options: UntangleOptions, output: Path | None) -> ExitCode:
+    """Prepare and build the plan, print it and pick the exit code.
+
+    Expected errors become translated messages (exit code 1); anything else
+    propagates to ``untangle`` (exit code 3).
+
+    Args:
+        options: What the user asked for.
+        output: File to also write the raw Markdown plan to.
+
+    Returns:
+        The process exit code.
+    """
+    try:
+        context = prepare_untangle(options)
+    except UnskeinError as e:
+        _print_to_stderr(translate_error(e, detect_lang(options.lang)), style="red")
+        return ExitCode.USAGE_ERROR
+    try:
+        plan = build_untangle_plan(context, all_edges=options.all_edges)
+    except UnskeinError as e:
+        _print_to_stderr(translate_error(e, context.lang), style="red")
+        return ExitCode.USAGE_ERROR
+    report = render_untangle(plan, context.root, context.lang, max_tangles=options.max_tangles)
+    if output:
+        output.write_text(report, encoding="utf-8")
+    Console().print(Markdown(report))
+    return ExitCode.OK
 
 
 def _run_pipeline(context: ScanContext) -> ScanOutcome:

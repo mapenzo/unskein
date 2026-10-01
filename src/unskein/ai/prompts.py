@@ -55,7 +55,11 @@ insufficient for a conclusion, say so explicitly instead of giving generic advic
 Data guide: ca = modules that depend on a module, ce = modules it depends on,
 instability = ce / (ca + ce). A tangle is a group of modules that all depend on each
 other, directly or not; size and length are real sizes, members may be truncated. Lists are
-truncated: compare them with their totals.
+truncated: compare them with their totals. Cycles and tangles are computed at import time
+(module-level imports only; imports inside functions or under TYPE_CHECKING are not
+counted there), while ca and ce count every import. hidden_tangles are groups that only
+become tangles through those lazy or type-only imports: they do not fail at import time,
+but the modules are still coupled.
 impact = modules that depend on a module directly or not (only given for bottleneck
 findings); package_edges = imports from one package to another, largest first, with their
 real total.
@@ -70,7 +74,8 @@ the importing module sits in the lower layer.
 Severity rubric:
 - high: a tangle or a dependency cycle.
 - medium: a module with top ca + ce that is volatile while others rely on it
-  (instability >= {UNSTABLE_THRESHOLD} and ca > 0), or whose ce is far above the rest.
+  (instability >= {UNSTABLE_THRESHOLD} and ca > 0), or whose ce is far above the rest; a
+  hidden tangle.
 - low: anything else worth mentioning.
 Never flag a module only for low instability: a stable module many others depend on is
 healthy.
@@ -115,10 +120,7 @@ def build_context(result: AnalysisResult) -> AIContext:
     return AIContext(
         total_modules=result.graph.number_of_nodes(),
         total_dependencies=result.graph.number_of_edges(),
-        tangles=[
-            TangleSummary(size=len(members), members=members[:MAX_TANGLE_MEMBERS_IN_PROMPT])
-            for members in result.tangles[:MAX_TANGLES_IN_PROMPT]
-        ],
+        tangles=_tangle_summaries(result.tangles),
         total_tangles=len(result.tangles),
         cycles=[
             CycleSummary(length=len(cycle), members=cycle[:MAX_CYCLE_MEMBERS_IN_PROMPT])
@@ -145,7 +147,24 @@ def build_context(result: AnalysisResult) -> AIContext:
             for edge in result.package_edges[:MAX_PACKAGE_EDGES_IN_PROMPT]
         ],
         total_package_edges=len(result.package_edges),
+        hidden_tangles=_tangle_summaries(result.hidden_tangles),
+        total_hidden_tangles=len(result.hidden_tangles),
     )
+
+
+def _tangle_summaries(tangles: list[list[str]]) -> list[TangleSummary]:
+    """Summarize the largest tangles with their members capped for the prompt.
+
+    Args:
+        tangles: Tangles, largest first.
+
+    Returns:
+        At most ``MAX_TANGLES_IN_PROMPT`` summaries.
+    """
+    return [
+        TangleSummary(size=len(members), members=members[:MAX_TANGLE_MEMBERS_IN_PROMPT])
+        for members in tangles[:MAX_TANGLES_IN_PROMPT]
+    ]
 
 
 def shrink_context(context: AIContext) -> AIContext:
@@ -162,9 +181,8 @@ def shrink_context(context: AIContext) -> AIContext:
     """
     return replace(
         context,
-        tangles=[
-            replace(tangle, members=_halved(tangle.members)) for tangle in _halved(context.tangles)
-        ],
+        tangles=_halved_tangles(context.tangles),
+        hidden_tangles=_halved_tangles(context.hidden_tangles),
         cycles=[
             replace(cycle, members=_halved(cycle.members)) for cycle in _halved(context.cycles)
         ],
@@ -172,6 +190,18 @@ def shrink_context(context: AIContext) -> AIContext:
         findings=_halved(context.findings),
         package_edges=_halved(context.package_edges),
     )
+
+
+def _halved_tangles(tangles: list[TangleSummary]) -> list[TangleSummary]:
+    """Halve a list of tangles and the members of each.
+
+    Args:
+        tangles: Tangle summaries, most relevant first.
+
+    Returns:
+        The first half of the tangles, each with the first half of its members.
+    """
+    return [replace(tangle, members=_halved(tangle.members)) for tangle in _halved(tangles)]
 
 
 def _halved[T](items: list[T]) -> list[T]:

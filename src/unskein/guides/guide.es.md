@@ -31,7 +31,7 @@ por defecto.
 
 - **Resumen**: módulos, dependencias internas y ciclos, el módulo más acoplado
   y, si las hay, las marañas.
-- **Métricas generales**: número de módulos, dependencias, ciclos, marañas y
+- **Métricas generales**: número de módulos, dependencias, ciclos, marañas, marañas ocultas y
   advertencias.
 - **Paquetes**: la misma medida de acoplamiento entre paquetes, que da la visión de
   conjunto que una tabla de módulos no puede (se muestra con dos o más). Un módulo pertenece
@@ -53,11 +53,16 @@ por defecto.
     él) a 1 (inestable, depende de otros).
   - **Impacto**: cuántos módulos dependen de este, directa o indirectamente: hasta dónde
     puede llegar un cambio. Se muestra para los módulos listados y para los cuellos de botella.
-- **Ciclos de dependencia**: módulos que acaban importándose a sí mismos.
+- **Ciclos de dependencia**: módulos que acaban importándose a sí mismos al importar
+  el código (imports a nivel de módulo).
   - Primero van las **marañas**: grupos donde cada módulo alcanza a todos los
     demás. Su tamaño es exacto aunque la lista de ciclos se corte.
   - Después, los **ciclos** como bucles de ejemplo, como máximo 100; el
     informe avisa cuando la búsqueda se detuvo en ese límite.
+  - **Acoplamiento oculto** lista los grupos que dependen entre sí, o los grupos mayores
+    que una maraña de las anteriores, solo si se cuentan los imports dentro de funciones
+    o bajo `TYPE_CHECKING`. Esos imports no fallan al importar, pero siguen siendo
+    acoplamiento de diseño y cuentan en el resto de números del informe.
 - **Hallazgos**: reglas calculadas a partir del grafo, también con `--no-ai`. Cada
   tipo tiene una explicación y una recomendación, y luego sus módulos con los
   números que lo justifican (como máximo 10 por tipo):
@@ -79,14 +84,17 @@ por defecto.
   recomendación. Los problemas que nombran módulos inexistentes se descartan,
   y el informe dice cuántos.
 - **Advertencias del análisis**: archivos omitidos o imports que no se
-  pudieron resolver (imports con asterisco, imports relativos fuera del
-  paquete raíz, archivos demasiado grandes, no analizables o demasiado lentos,
-  ciclos o cadenas de re-exports demasiado largas). Una advertencia nunca
-  detiene el análisis.
+  pudieron resolver (imports con asterisco fuera de las fachadas o de módulos ajenos al
+  proyecto, imports relativos fuera del paquete raíz, archivos demasiado grandes, no
+  analizables o demasiado lentos, ciclos o cadenas de re-exports demasiado largas). Una
+  advertencia nunca detiene el análisis.
 
 Los imports a través del `__init__.py` de un paquete se siguen hasta el módulo
 que define el nombre, así que un ciclo escondido tras una fachada también
-aparece.
+aparece. Eso incluye `import pkg as p` seguido de `p.nombre`: la dependencia va al
+módulo que define `nombre`, salvo que no se pueda seguir el uso de `p` (se pasa como
+valor, se reasigna o se escribe en él), y entonces se queda en el paquete. Los `from x import *` del
+`__init__.py` de un paquete también se siguen.
 
 ## Opciones de `scan`
 
@@ -118,9 +126,42 @@ unskein scan . --exclude "migrations/"       # omite todas las carpetas migratio
 unskein scan . --min-severity high           # solo problemas de IA de severidad alta
 ```
 
-Otros comandos: `unskein init` (ver Configuración), `unskein guide` (esta
+Otros comandos: `unskein init` y `unskein config save` (ver Configuración), `unskein guide` (esta
 guía, `--lang` para elegir su idioma; `unskein guide > guia.md` la guarda) y
 `unskein --version`.
+
+## Desenredar: `untangle`
+
+`unskein untangle [RUTA]` planifica qué imports cortar para deshacer cada maraña. Para
+cada una lista los imports a cortar, el paso de refactor más barato de cada uno y la
+evidencia que lo apoya (archivo, línea y símbolos importados), y simula el resultado:
+marañas, ciclos y acoplamiento de los módulos afectados, antes y después.
+
+Los pasos, del más barato al más caro: mover bajo `TYPE_CHECKING` (nombres que solo
+se usan en anotaciones), importar del módulo que lo define (el import pasa por el
+`__init__.py` de un paquete que no define él mismo el nombre), import perezoso (nombres
+que solo se usan dentro de funciones, o también en anotaciones si el módulo tiene
+`from __future__ import annotations`), mover el símbolo (se importan uno o dos
+símbolos), extraer un módulo compartido y revisar la estructura del paquete (un paquete
+importando su propio submódulo, solo cuando nada más rompe el ciclo). Con `--all-edges`
+solo se ofrecen los pasos estructurales, porque un import perezoso o bajo
+`TYPE_CHECKING` conserva el acoplamiento. Ninguno de los dos se ofrece cuando otro
+módulo lee alguno de los nombres a través del módulo origen (`from a import Thing`,
+`a.Thing`, `from a import *`): el nombre dejaría de existir ahí. Los cortes salen de una heurística y la
+simulación es optimista: léelo como un plan que hay que revisar.
+
+Como `scan`, `untangle` respeta los ajustes `exclude` e `include_tests` de
+`.unskein.toml`. Si algún archivo no se pudo analizar, el plan dice cuántas advertencias
+del análisis hubo; `unskein scan` las muestra en detalle.
+
+- `--all-edges`: desenreda también el acoplamiento oculto (imports dentro de funciones
+  o bajo `TYPE_CHECKING`).
+- `--max-tangles N`: cuántas marañas detallar, de mayor a menor (por defecto 5).
+- `--output FICHERO` / `-o FICHERO`: guarda también el plan en Markdown.
+- `--lang es|en`: idioma de la salida.
+
+Códigos de salida: 0 si el plan se construyó (con o sin marañas), 1 en errores de uso y
+3 en errores internos. `untangle` nunca llama a la IA.
 
 ## Excluir rutas
 
@@ -140,16 +181,36 @@ solo omite la carpeta de primer nivel, mientras que `migrations/` o
 
 ## Configuración
 
+unskein lee dos archivos, ambos opcionales:
+
+- **Archivo del proyecto**: `.unskein.toml` (con el punto inicial) en la carpeta
+  que **analizas**, no en la carpeta desde la que lanzas el comando.
+  `unskein scan ~/code/app` lee `~/code/app/.unskein.toml`.
+- **Archivo de usuario**: `~/.config/unskein/config.toml`, que se usa en todos
+  los proyectos que analices. Es el sitio para tu modelo de IA cuando analizas
+  proyectos que no son tuyos.
+
 ```bash
 unskein init                # escribe ./.unskein.toml
-unskein init --user         # escribe ~/.config/unskein/config.toml
+unskein init --user         # escribe ~/.config/unskein/config.toml (crea la carpeta)
 unskein init --force        # sustituye un archivo existente
+unskein config save         # valida ./.unskein.toml y lo guarda como archivo de usuario
 ```
 
 `init` acepta una carpeta (`PATH`, por defecto la actual), `--user`, `--force`
 y `--lang` para sus mensajes. Escribe un archivo con todas las opciones comentadas en su valor por
 defecto y una línea que explica cada una. Descomenta solo lo que quieras
 cambiar. Nunca sobrescribe un archivo existente sin `--force`.
+
+`config save` acepta un archivo (`SOURCE`, por defecto `./.unskein.toml`),
+`--force` y `--lang`. Primero valida el archivo, así que una errata lo detiene
+antes de escribir nada; después lo copia tal cual, comentarios incluidos, a
+`~/.config/unskein/config.toml`, y crea la carpeta si hace falta. Nunca
+sustituye un archivo de usuario existente sin `--force`. Un camino habitual:
+`unskein init` en cualquier carpeta, editar el archivo, probarlo con
+`unskein scan` y después `unskein config save`. Si el archivo lleva
+`[ai] api_key`, se guarda legible solo por ti y verás un aviso: mejor usa la
+variable `UNSKEIN_API_KEY`.
 
 Precedencia, de mayor a menor:
 

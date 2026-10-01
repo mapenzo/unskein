@@ -11,7 +11,8 @@ class WarningCode(StrEnum):
     """Kinds of non-fatal problems found while parsing and resolving a project.
 
     Attributes:
-        STAR_IMPORT: ``from x import *``; the exported names cannot be known.
+        STAR_IMPORT: ``from x import *`` outside a package facade (or of a module outside
+            the project); the names it brings in are not followed.
         RELATIVE_BEYOND_TOP: A relative import climbs above the top-level package.
         UNRESOLVED_IMPORT: An internal import names a module that does not exist.
         FILE_TOO_LARGE: A file exceeds ``max_file_size_bytes`` and was not read.
@@ -52,6 +53,46 @@ class ParseWarning:
     detail: str
 
 
+class ImportKind(StrEnum):
+    """Where an import statement sits, which decides whether it exists at import time.
+
+    Attributes:
+        MODULE: At module level (also in class bodies, ``try``/``except`` and ``if``
+            blocks): it runs when the module is imported.
+        LAZY: Inside a function or method body: it runs only when that function is called.
+        TYPE_CHECKING: Under ``if TYPE_CHECKING:``: it never runs, type checkers only.
+    """
+
+    MODULE = "module"
+    LAZY = "lazy"
+    TYPE_CHECKING = "type_checking"
+
+    def stronger(self, other: Self) -> Self:
+        """Return the kind that runs more often.
+
+        Args:
+            other: Kind to compare with.
+
+        Returns:
+            ``self`` or ``other``, whichever is closer to ``MODULE``.
+        """
+        return self if _KIND_STRENGTH[self] >= _KIND_STRENGTH[other] else other
+
+    def weaker(self, other: Self) -> Self:
+        """Return the kind that runs less often.
+
+        Args:
+            other: Kind to compare with.
+
+        Returns:
+            ``self`` or ``other``, whichever is closer to ``TYPE_CHECKING``.
+        """
+        return self if _KIND_STRENGTH[self] <= _KIND_STRENGTH[other] else other
+
+
+_KIND_STRENGTH = {ImportKind.MODULE: 2, ImportKind.LAZY: 1, ImportKind.TYPE_CHECKING: 0}
+
+
 @dataclass(slots=True)
 class ImportEdge:
     """One import from a project module to another module.
@@ -64,6 +105,12 @@ class ImportEdge:
             comparing its first segment with the project's top-level packages.
         symbol_name: Imported symbol, or None when the whole module is imported.
         line_number: Line of the import statement in the source file.
+        kind: Where the statement sits; see ``ImportKind``.
+        accessed: Dotted attribute chains the module reads through the name this
+            import binds, sorted (``algorithms.shortest_path`` for ``nx.algorithms.shortest_path``);
+            only filled for imports of a package whose use was analyzed.
+        escapes: Whether that name is also used by itself (passed, assigned, rebound),
+            so its attribute accesses do not tell everything the module depends on.
     """
 
     source: str
@@ -71,6 +118,9 @@ class ImportEdge:
     is_external: bool
     symbol_name: str | None = None
     line_number: int | None = None
+    kind: ImportKind = ImportKind.MODULE
+    accessed: tuple[str, ...] = ()
+    escapes: bool = False
 
 
 @dataclass(slots=True)
@@ -81,11 +131,21 @@ class ModuleInfo:
         name: Dotted module name, e.g. "app.services.user".
         file_path: Source file the module was parsed from.
         imports: Imports found in the module.
+        public_names: Names the module exposes to ``from module import *``, sorted.
+        declares_all: Whether those names come from a literal ``__all__``.
+        bound_names: Every name the module binds at module level, sorted.
     """
 
     name: str
     file_path: Path
     imports: list[ImportEdge] = field(default_factory=list)
+    public_names: tuple[str, ...] = ()
+    declares_all: bool = False
+    bound_names: tuple[str, ...] = ()
+
+
+# Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.
+STAR_EXPORT = "*"
 
 
 @dataclass(slots=True)

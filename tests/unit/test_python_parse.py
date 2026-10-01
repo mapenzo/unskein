@@ -192,7 +192,7 @@ def test_aliased_reexport_uses_exported_name(make_project: MakeProject) -> None:
 def test_non_reexports_are_ignored(make_project: MakeProject) -> None:
     root = make_project(
         {
-            "app/__init__.py": "from . import models\nfrom os import path\nfrom .models import *\n",
+            "app/__init__.py": "from . import models\nfrom os import path\nfrom os.path import *\n",
             "app/models.py": "",
             "app/views.py": "from app.models import User\n",
         }

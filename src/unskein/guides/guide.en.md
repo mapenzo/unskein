@@ -29,7 +29,7 @@ config file is needed: every setting has a default.
 
 - **Summary**: modules, internal dependencies and cycles, the most coupled
   module and, if any, the tangles.
-- **General metrics**: counts of modules, dependencies, cycles, tangles and
+- **General metrics**: counts of modules, dependencies, cycles, tangles, hidden tangles and
   warnings.
 - **Packages**: the same coupling measured between packages, which gives the overview a
   table of modules cannot (shown when the project has two or more). A module belongs to the
@@ -50,11 +50,16 @@ config file is needed: every setting has a default.
     to 1 (unstable, it depends on others).
   - **Impact**: how many modules depend on this one, directly or indirectly: what a change
     to it can reach. Shown for the modules listed and for bottlenecks.
-- **Dependency cycles**: modules that end up importing themselves.
+- **Dependency cycles**: modules that end up importing themselves when the code is
+  imported (imports at module level).
   - **Tangles** come first: groups where every module reaches every other one.
     Their size is exact, even when the cycle list is cut short.
   - **Cycles** are then listed as example loops, at most 100; the report says
     when the search stopped at that limit.
+  - **Hidden coupling** lists groups that depend on each other, or groups larger than a
+    tangle above, only once imports inside functions or under `TYPE_CHECKING` are counted.
+    Those imports do not fail at import time, but they are still design coupling, and
+    they count in every other number of the report.
 - **Findings**: rules computed from the graph, shown also with `--no-ai`. Each kind has
   one explanation and one recommendation, then its modules with the numbers behind
   them (at most 10 per kind):
@@ -74,12 +79,16 @@ config file is needed: every setting has a default.
   recommendation. Problems naming modules that do not exist are discarded, and
   the report says how many.
 - **Analysis warnings**: files skipped or imports that could not be resolved
-  (star imports, relative imports beyond the top package, files too large,
-  unparseable or too slow to parse, re-export cycles or chains too long). A
-  warning never stops the analysis.
+  (star imports outside package facades or of modules outside the project, relative
+  imports beyond the top package, files too large, unparseable or too slow to parse,
+  re-export cycles or chains too long). A warning never stops the analysis.
 
 Imports through a package's `__init__.py` are followed to the module that
-defines the name, so a cycle hidden behind a facade still shows up.
+defines the name, so a cycle hidden behind a facade still shows up. That includes
+`import pkg as p` followed by `p.name`: the dependency goes to the module that defines
+`name`, unless the way `p` is used cannot be followed (it is passed around,
+reassigned or written to), in which case it stays on the package. `from x import *` inside a package's
+`__init__.py` is followed too.
 
 ## `scan` options
 
@@ -111,9 +120,41 @@ unskein scan . --exclude "migrations/"       # skip every migrations/ folder
 unskein scan . --min-severity high           # only high-severity AI problems
 ```
 
-Other commands: `unskein init` (see Configuration), `unskein guide` (this
+Other commands: `unskein init` and `unskein config save` (see Configuration), `unskein guide` (this
 guide, `--lang` to pick its language; `unskein guide > guide.md` saves it) and
 `unskein --version`.
+
+## Untangling: `untangle`
+
+`unskein untangle [PATH]` plans which imports to cut to undo each tangle. For every
+tangle it lists the imports to cut, the cheapest refactoring step for each one and the
+evidence behind it (file, line and imported symbols), then simulates the result:
+tangles, cycles and the coupling of the affected modules before and after.
+
+The steps, cheapest first: move under `TYPE_CHECKING` (names only used in annotations),
+import from the defining module (the import goes through a package's `__init__.py` that
+does not define the name itself), lazy import (names only used inside functions, or in
+annotations too when the module has `from __future__ import annotations`), move the
+symbol (one or two symbols imported), extract a shared module, and review the package
+structure (a package importing its own submodule, only when nothing else breaks the
+cycle). With `--all-edges` only the structural steps are offered, since a lazy or
+`TYPE_CHECKING` import keeps the coupling. Neither is offered when another module reads
+one of the names through the source module (`from a import Thing`, `a.Thing`, `from a
+import *`): the name would no longer exist there. The cuts come from a heuristic and the
+simulation is optimistic: read it as a plan to review.
+
+Like `scan`, `untangle` honors the `exclude` and `include_tests` settings of
+`.unskein.toml`. When some file could not be parsed, the plan says how many analysis
+warnings there were; `unskein scan` shows them in detail.
+
+- `--all-edges`: also untangle hidden coupling (imports inside functions or under
+  `TYPE_CHECKING`).
+- `--max-tangles N`: how many tangles to detail, largest first (default 5).
+- `--output FILE` / `-o FILE`: also save the Markdown plan.
+- `--lang es|en`: output language.
+
+Exit codes: 0 when the plan was built (with or without tangles), 1 for usage errors,
+3 for internal errors. `untangle` never calls the AI.
 
 ## Excluding paths
 
@@ -133,16 +174,35 @@ A pattern with a slash in the middle is anchored to the root:
 
 ## Configuration
 
+unskein reads two files, both optional:
+
+- **Project file**: `.unskein.toml` (with the leading dot) in the folder you
+  **analyze**, not the folder you run the command from. `unskein scan ~/code/app`
+  reads `~/code/app/.unskein.toml`.
+- **User file**: `~/.config/unskein/config.toml`, used for every project you
+  analyze. The place for your AI model when you scan projects that are not
+  yours.
+
 ```bash
 unskein init                # writes ./.unskein.toml
-unskein init --user         # writes ~/.config/unskein/config.toml
+unskein init --user         # writes ~/.config/unskein/config.toml (creates the folder)
 unskein init --force        # replaces an existing file
+unskein config save         # checks ./.unskein.toml and saves it as the user file
 ```
 
 `init` takes a folder (`PATH`, default: current folder), `--user`, `--force`
 and `--lang` for its messages. It writes a file where every setting is commented out at its default,
 with a line explaining it. Uncomment only what you want to change. It never
 overwrites an existing file without `--force`.
+
+`config save` takes a file (`SOURCE`, default: `./.unskein.toml`), `--force`
+and `--lang`. It validates the file first, so a typo stops it before anything
+is written, then copies it as it is, comments included, to
+`~/.config/unskein/config.toml`, creating the folder if needed. It never
+replaces an existing user file without `--force`. A usual path: `unskein init`
+in any folder, edit the file, try it with `unskein scan`, then
+`unskein config save`. If the file holds `[ai] api_key`, it is saved readable
+only by you and you get a warning: prefer the `UNSKEIN_API_KEY` variable.
 
 Precedence, highest first:
 

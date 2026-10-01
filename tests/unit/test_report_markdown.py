@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from unskein.parsers.models import ParseWarning, WarningCode
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.report.markdown import (
     MAX_FINDINGS_PER_KIND,
+    MAX_HIDDEN_TANGLES_SHOWN,
     MAX_MODULES_IN_TABLE,
     MAX_PACKAGE_EDGES_SHOWN,
     MAX_PACKAGES_IN_TABLE,
@@ -137,7 +139,9 @@ def test_cycles_are_listed_as_loops(circular_imports: Path) -> None:
 
 
 def test_no_cycles_message(simple_project: Path) -> None:
-    assert "No dependency cycles found." in render(simple_project, analyzed(simple_project))
+    assert "No dependency cycles found at import time." in render(
+        simple_project, analyzed(simple_project)
+    )
 
 
 def test_truncated_cycles_are_announced(circular_imports: Path) -> None:
@@ -178,6 +182,18 @@ def test_ai_status_messages(simple_project: Path) -> None:
     result = analyzed(simple_project)
     assert "--no-ai" in render(simple_project, result, ai_status=AIStatus.DISABLED)
     assert "UNSKEIN_AI_MODEL" in render(simple_project, result, ai_status=AIStatus.NOT_CONFIGURED)
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_missing_model_message_names_where_the_config_is_read(
+    simple_project: Path, lang: Lang
+) -> None:
+    report = render(
+        simple_project, analyzed(simple_project), ai_status=AIStatus.NOT_CONFIGURED, lang=lang
+    )
+
+    assert "~/.config/unskein/config.toml" in report
+    assert "unskein init --user" in report
 
 
 def test_ai_problems_are_rendered_and_filtered(simple_project: Path) -> None:
@@ -515,3 +531,84 @@ def test_layer_violation_is_in_spanish_when_asked(tmp_path: Path) -> None:
 
     assert "### Violación de capas (1)" in report
     assert "- `core.db` → `web.views` (capa core → web)" in report
+
+
+HIDDEN_PROJECT = {
+    "app/__init__.py": "",
+    "app/a.py": "from app import b\n",
+    "app/b.py": "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from app import a\n",
+}
+
+
+def test_hidden_coupling_is_reported_apart_from_import_cycles(
+    make_project: Callable[[dict[str, str]], Path],
+) -> None:
+    root = make_project(HIDDEN_PROJECT)
+    report = render(root, analyzed(root))
+    summary = report.split("## General metrics", maxsplit=1)[0]
+    assert "lazy or type-only imports" in summary
+    assert "| Hidden tangles | 1 |" in report
+    assert "| Tangles | 0 |" in report
+    assert "No dependency cycles found at import time." in report
+    assert "### Hidden coupling" in report
+    assert "- **2 modules**: `app.a`, `app.b`" in report
+    assert "### Tangles" not in report
+
+
+GROWN_TANGLE_PROJECT = {
+    "app/__init__.py": "",
+    "app/a.py": "from app import b\n",
+    "app/b.py": "from app import a\n\ndef run():\n    from app import c\n",
+    "app/c.py": "from app import a\n",
+}
+
+
+def test_hidden_coupling_lists_a_tangle_grown_by_a_lazy_import(
+    make_project: Callable[[dict[str, str]], Path],
+) -> None:
+    root = make_project(GROWN_TANGLE_PROJECT)
+    report = render(root, analyzed(root))
+    assert "- **2 modules**: `app.a`, `app.b`" in report
+    assert "- **3 modules**: `app.a`, `app.b`, `app.c`" in report
+    assert "or groups larger than a tangle above" in report
+
+
+def test_hidden_coupling_in_spanish(make_project: Callable[[dict[str, str]], Path]) -> None:
+    root = make_project(HIDDEN_PROJECT)
+    report = render(root, analyzed(root), Lang.ES)
+    assert "### Acoplamiento oculto" in report
+    assert "| Marañas ocultas | 1 |" in report
+    assert "No se encontraron ciclos de dependencia al importar." in report
+
+
+def test_no_hidden_coupling_section_without_hidden_tangles(
+    circular_imports: Path, simple_project: Path
+) -> None:
+    for root in (circular_imports, simple_project):
+        report = render(root, analyzed(root))
+        assert "Hidden coupling" not in report
+        assert "| Hidden tangles | 0 |" in report
+
+
+def test_hidden_tangles_are_truncated(tmp_path: Path) -> None:
+    hidden = [[f"a{i:02d}", f"b{i:02d}"] for i in range(MAX_HIDDEN_TANGLES_SHOWN + 2)]
+    result = AnalysisResult(
+        graph=nx.DiGraph(),
+        coupling_metrics={},
+        cycles=[],
+        high_coupling_modules=[],
+        hidden_tangles=hidden,
+    )
+    report = render(tmp_path, result)
+    assert f"`a{MAX_HIDDEN_TANGLES_SHOWN - 1:02d}`" in report
+    assert f"`a{MAX_HIDDEN_TANGLES_SHOWN:02d}`" not in report
+    assert "…and 2 more" in report
+
+
+def test_summary_points_to_untangle_when_there_are_tangles(
+    circular_imports: Path, simple_project: Path
+) -> None:
+    tangled = render(circular_imports, analyzed(circular_imports))
+    assert "`unskein untangle`" in tangled.split("## General metrics", maxsplit=1)[0]
+    clean = render(simple_project, analyzed(simple_project))
+    assert "unskein untangle" not in clean

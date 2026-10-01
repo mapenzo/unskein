@@ -9,7 +9,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from unskein import config as config_module
 from unskein.ai.client import AIClient
 from unskein.ai.models import AIOutcome, AIReport, Severity
 from unskein.ai.prompts import build_context, build_messages, ground_report
@@ -29,6 +28,7 @@ from unskein.graph.findings import unmatched_layers
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
 from unskein.parsers.discovery import load_exclude_spec
+from unskein.parsers.models import ParseResult
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.pipeline import parse_all
 from unskein.report.markdown import AIStatus
@@ -132,7 +132,7 @@ def prepare_scan(
         ConfigError: If a configuration file is invalid.
     """
     env = os.environ if env is None else env
-    toml = load_toml_config(options.path, user_config or config_module.USER_CONFIG_PATH)
+    toml = load_toml_config(options.path, user_config)
     flags = AnalysisFlags(
         exclude=options.exclude,
         include_tests=options.include_tests,
@@ -151,6 +151,62 @@ def prepare_scan(
     )
 
 
+def parse_sources(context: ScanContext) -> ParseResult:
+    """Discover and parse the project's Python files, with imports as written.
+
+    Projects with at least ``parallel_threshold`` files are parsed in a process
+    pool; smaller ones sequentially.
+
+    Args:
+        context: A prepared scan.
+
+    Returns:
+        The parse result before re-exports and package access are resolved.
+
+    Raises:
+        UnskeinError: If the path is not a directory or holds no Python files.
+    """
+    root = context.root
+    if not root.is_dir():
+        raise UnskeinError(ErrorKey.PATH_NOT_FOUND, {"path": str(root)})
+    config = context.analysis
+    adapter = PythonAdapter(config)
+    spec = load_exclude_spec(root, config.exclude, config.include_tests)
+    files = sorted(adapter.discover_files(root, spec, config.follow_symlinks))
+    if not files:
+        raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
+    logger.debug("Discovered %d Python files under %s", len(files), root)
+    return parse_all(files, adapter, root, config)
+
+
+def parse_project(context: ScanContext) -> ParseResult:
+    """Discover, parse and resolve the project's Python files.
+
+    Args:
+        context: A prepared scan.
+
+    Returns:
+        The parse result with re-exports and package access resolved.
+
+    Raises:
+        UnskeinError: If the path is not a directory or holds no Python files.
+    """
+    return resolve_parsed(parse_sources(context), context)
+
+
+def resolve_parsed(parsed: ParseResult, context: ScanContext) -> ParseResult:
+    """Resolve the re-exports and package access of a parse result.
+
+    Args:
+        parsed: Parse result as returned by ``parse_sources``.
+        context: The scan it belongs to.
+
+    Returns:
+        A new parse result with import targets pointing at the defining modules.
+    """
+    return PythonAdapter(context.analysis).resolve_indirection(parsed)
+
+
 def analyze_project(context: ScanContext) -> AnalysisResult:
     """Run discovery, parsing, re-export resolution and analysis.
 
@@ -166,18 +222,7 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
     Raises:
         UnskeinError: If the path is not a directory or holds no Python files.
     """
-    root = context.root
-    if not root.is_dir():
-        raise UnskeinError(ErrorKey.PATH_NOT_FOUND, {"path": str(root)})
-    config = context.analysis
-    adapter = PythonAdapter(config)
-    spec = load_exclude_spec(root, config.exclude, config.include_tests)
-    files = sorted(adapter.discover_files(root, spec, config.follow_symlinks))
-    if not files:
-        raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
-    logger.debug("Discovered %d Python files under %s", len(files), root)
-    parsed = parse_all(files, adapter, root, config)
-    result = analyze(adapter.resolve_indirection(parsed), context.findings)
+    result = analyze(parse_project(context), context.findings)
     if context.findings.enabled:
         for layer in unmatched_layers(result.graph.nodes, context.findings.layers):
             logger.warning("Layer %s in [layers] matches no module of the project", layer)

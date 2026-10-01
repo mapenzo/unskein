@@ -116,9 +116,10 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
 src/unskein/
 ├── cli.py                 # typer: flags, salida, códigos de salida (capa fina)
 ├── scan.py                # orquestación: prepare_scan + execute_scan
+├── untangle.py            # orquestación de `unskein untangle` (prepare + build del plan)
 ├── entry_points.py        # puntos de entrada de pyproject.toml (scripts)
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
-├── init_config.py         # `unskein init`: plantilla .unskein.toml comentada
+├── init_config.py         # `unskein init` (plantilla comentada) y `unskein config save`
 ├── templates/unskein.toml # plantilla (viaja en el wheel)
 ├── guide.py               # `unskein guide`: guía de uso ES/EN de la versión instalada
 ├── guides/guide.{es,en}.md # la guía (viaja en el wheel; un test exige cada opción)
@@ -130,6 +131,8 @@ src/unskein/
 │   ├── base.py             # interfaz LanguageAdapter (el "adapter")
 │   ├── discovery.py        # os.walk, excludes, encoding
 │   ├── indirection.py      # resolución de re-exports
+│   ├── usage.py            # uso de nombres importados: acceso por atributo y evidencia para `untangle`
+│   ├── exports.py          # nombres que un módulo expone a `import *`
 │   └── python_parser.py    # implementación para Python con ast
 ├── graph/
 │   ├── builder.py           # construcción del grafo con NetworkX
@@ -137,6 +140,8 @@ src/unskein/
 │   ├── metrics.py           # Ca, Ce, inestabilidad, ciclos
 │   ├── findings.py          # hallazgos: reglas deterministas sobre el grafo
 │   ├── impact.py            # radio de impacto transitivo (impact_radius)
+│   ├── steps.py             # pasos de refactor y sus costes (choose_step)
+│   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
 │   ├── packages.py          # resumen por paquetes: Ca/Ce entre paquetes y dependencias
 │   └── percentile.py        # percentil por rango más cercano (compartido)
 ├── ai/
@@ -144,7 +149,8 @@ src/unskein/
 │   ├── proxy.py              # pregunta a un LiteLLM Proxy si su alias es de razonamiento
 │   └── prompts.py            # system prompt + construcción de prompts
 └── report/
-    └── markdown.py           # generación del reporte final
+    ├── markdown.py           # generación del reporte final
+    └── untangle.py           # informe del plan de `unskein untangle`
 ```
 
 Layout `src/` deliberado (evita bugs de import en desarrollo, estándar actual
@@ -161,9 +167,16 @@ para paquetes Python distribuibles).
   Son cinco reglas; la quinta (violación de capas) solo existe con `[layers]`.
 - **`is_external` se calcula comparando el primer segmento del import contra los
   módulos del proyecto**, no contra una lista de stdlib/paquetes conocidos.
+- **Ciclos y marañas = grafo al importar.** Cada `ImportEdge` lleva su `ImportKind`
+  (`MODULE`, `LAZY`, `TYPE_CHECKING`) y la arista del grafo el más fuerte de sus
+  sentencias. `cycles` y `tangles` solo usan aristas `MODULE`; las marañas que solo
+  existen con imports perezosos o de tipos son `hidden_tangles`. Ca/Ce, hallazgos,
+  capas e impacto cuentan todas las aristas.
 - **Resolución de re-exports (indirección) es parte de v0.1**, no se pospuso.
   Ver `docs/architecture.md` para el algoritmo completo (incluye límite de
-  profundidad y detección de ciclos de re-export).
+  profundidad y detección de ciclos de re-export). Incluye el acceso por atributo
+  a través de un alias de paquete (`import pkg as p` + `p.f()`), conservador: lo
+  que no se puede seguir se queda en la fachada.
 - **Fallos de IA nunca detienen el comando.** Si falla la config, la llamada, o
   la validación del schema de salida, el reporte se genera igual sin la sección
   de IA, con un aviso claro.

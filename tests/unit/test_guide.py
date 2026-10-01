@@ -13,15 +13,25 @@ EXIT_CODES = ("`0`", "`1`", "`2`", "`3`")
 
 
 def unskein_commands() -> dict[str, Any]:
-    """Return unskein's commands by name.
+    """Return unskein's runnable commands by their full name, subcommands of groups included.
 
     Typer vendors its own click, so the objects are inspected by attribute,
     never checked against ``click`` types.
 
     Returns:
-        The click command of every subcommand, keyed by its name.
+        The click command of every command, keyed by what follows ``unskein``,
+        such as ``scan`` or ``config save``.
     """
-    return typer.main.get_command(app).commands
+    found: dict[str, Any] = {}
+    pending = list(typer.main.get_command(app).commands.items())
+    while pending:
+        name, command = pending.pop()
+        subcommands = getattr(command, "commands", None)
+        if subcommands:
+            pending.extend((f"{name} {sub}", child) for sub, child in subcommands.items())
+        else:
+            found[name] = command
+    return found
 
 
 def documented_options() -> set[str]:

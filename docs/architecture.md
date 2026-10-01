@@ -35,6 +35,7 @@ class ImportEdge:
     is_external: bool
     symbol_name: str | None = None   # None si es import de módulo completo
     line_number: int | None = None
+    kind: ImportKind = ImportKind.MODULE   # dónde está la sentencia (MODULE, LAZY, TYPE_CHECKING)
 
 @dataclass
 class ModuleInfo:
@@ -178,6 +179,23 @@ Decisiones:
 - Resolución recursiva simple en v0.1, sin memoización — optimizar solo si el
   perfilado en proyectos grandes muestra que es necesario.
 
+**Accesos por atributo.** Un `import pkg as p`, `import pkg` o `from pkg import sub`
+(con `sub` paquete) liga un nombre a una fachada. En los módulos que importan algún
+paquete, el parser recorre el árbol (`parsers/usage.py`, `collect_name_usage`) y guarda en
+la arista las cadenas de atributos leídas a través del nombre (`ImportEdge.accessed`,
+ordenadas) y si el nombre se usa suelto, se reasigna o se escribe a través de él (`p.x = ...`,
+`del p.x`) (`ImportEdge.escapes`). Solo se analizan los nombres ligados por un único
+import (un nombre ligado por dos imports no se analiza); `import a.b` (sin alias) liga `a`, no
+`a.b`, y no se analiza. `resolve_indirection` expande la arista (`expand_package_access`):
+cada cadena baja por el prefijo más largo que sean submódulos del proyecto y el atributo
+siguiente se sigue por los re-exports hasta el módulo que lo define
+(`resolve_access`). Una arista por módulo destino, con el `kind` de la sentencia; si el
+destino es el propio módulo, no hay arista. Conservador: con `escapes`, sin ningún
+atributo leído o sin resolución, se mantiene la arista a la fachada. Fuera de alcance:
+sombreado del nombre por parámetros o variables locales, definiciones `def`/`class` que
+reutilicen el nombre, `__getattr__` dinámico y el `__all__` propio de la fachada (no se
+consulta en el acceso por atributo; el `__all__` literal de la fuente de un star sí).
+
 ---
 
 ## 2.5. Discovery de archivos: excludes, symlinks, encoding
@@ -302,7 +320,8 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   (`ProjectIndex`), luego llama `parse_file(path, name, index, config)` por
   archivo — función de módulo pura y picklable, unidad de trabajo del futuro
   `ProcessPoolExecutor`. `iter_statements` (recorrido en profundidad, en orden de
-  código, solo por listas de sentencias) captura:
+  código, solo por listas de sentencias, y con el contexto de cada una: `ImportKind`)
+  captura:
 
   | Caso | `target` | `symbol_name` |
   |---|---|---|
@@ -315,6 +334,13 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   Import interno inexistente → ancestro existente más cercano + warning (o se
   omite con warning si no hay ninguno, p. ej. namespace packages). Relativo
   más allá del paquete raíz → warning, se omite. Auto-import → sin arista.
+
+  **Tipo de import (`ImportKind`)**: `MODULE` (nivel de módulo, también en clases,
+  `try/except` e `if`), `LAZY` (cuerpo de una función o método) y `TYPE_CHECKING`
+  (cuerpo de un `if TYPE_CHECKING:`, también `typing.TYPE_CHECKING`; se reconoce por
+  nombre). Manda el contexto más débil: un import perezoso dentro de un bloque
+  `TYPE_CHECKING`, o un bloque `TYPE_CHECKING` dentro de una función, es `TYPE_CHECKING`.
+  El `else` de un `if TYPE_CHECKING` y el cuerpo de `if not TYPE_CHECKING` son `MODULE`.
 - **Detección de re-exports**: solo en `__init__.py`, cada `ImportFrom`
   interno de un *símbolo* (no de un submódulo) genera
   `ReExport(paquete, módulo_origen, asname or name)`. Con alias, la cadena se
@@ -322,6 +348,13 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   nombre, la resolución se detiene en el módulo intermedio. Si un facade expone
   el mismo símbolo más de una vez (típico: `try: from ._fast import X` /
   `except ImportError: from ._slow import X`), **gana el primero en el código**.
+  Un `from x import *` dentro de una fachada, con `x` módulo del proyecto, genera
+  `ReExport(paquete, x, STAR_EXPORT)`; `star_exports` (sobre `module_exports` de `parsers/exports.py`) calcula los nombres que trae
+  (`__all__` literal, o nombres públicos de `x` más los de sus star-imports
+  anidados si `x` no declara `__all__`) y `build_reexport_index(re_exports,
+  star_names)` los indexa. Un star nunca aporta un nombre que la fachada liga ella
+  misma (definiciones, imports explícitos) y, entre varias fuentes, **gana el
+  primero en el código**.
   Los imports se recorren en profundidad y en orden de código, así que los avisos
   de un archivo también salen en ese orden.
 - **Errores por archivo** → warning, el archivo se omite y el análisis sigue:
@@ -337,14 +370,18 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
 
 Limitaciones conocidas, documentadas explícitamente (no bugs a "arreglar" sin
 discutirlo primero):
-- El recorrido (`iter_statements`) no distingue nivel de anidamiento — un import dentro de una
-  función se trata igual que uno a nivel de módulo. Aceptable para v0.1;
-  un `NodeVisitor` completo permitiría marcar imports condicionales
-  (`TYPE_CHECKING`, `try/except ImportError`) en v0.2.
-- **Star-imports (`from x import *`) no resuelven re-exports** — sin ejecutar
-  el código o inspeccionar `__all__`, no se puede saber con certeza qué
-  símbolos exporta un `*`. Se genera un warning explícito, nunca falla
-  silenciosamente.
+- La posición de la sentencia aproxima si un import se ejecuta al importar
+  (`ImportKind`). Un ciclo de `import a`/`import b` a nivel de módulo suele funcionar
+  si los atributos se usan tarde y solo falla con `from a import nombre`; no se modela
+  (es el criterio de pylint). `TYPE_CHECKING` se reconoce por nombre, no por semántica:
+  `from typing import TYPE_CHECKING as flag` no se detecta.
+- **Star-imports (`from x import *`)**: dentro de una fachada (`__init__.py`)
+  y de un módulo `x` del proyecto se siguen: re-exportan el `__all__` literal de
+  `x` o, si no lo tiene, sus nombres públicos de nivel de módulo (más los de los
+  star-imports anidados de fachadas sin `__all__`). Fuera de una fachada, o de un
+  módulo externo, siguen sin resolverse y generan el aviso `STAR_IMPORT`. Un
+  `__all__` dinámico (no literal) no se sigue: se usan los nombres públicos.
+  Nunca falla silenciosamente.
 - **Imports dinámicos vía `importlib.import_module()` con strings son
   invisibles** — limitación conocida y común en análisis estático puro.
 
@@ -657,17 +694,25 @@ aplicados) y construye el grafo real.
   real del problema aunque la lista de ciclos se corte en 100: en networkx,
   "100+ ciclos" es en realidad **una maraña de 279 de 288 módulos**.
   Miembros ordenados; marañas de mayor a menor tamaño.
+- **Dos niveles de grafo**: `build_graph` guarda en cada arista `kind`, el
+  `ImportKind` más fuerte de sus sentencias (`weight` sigue contando todas).
+  `cycles` y `tangles` se calculan solo sobre las aristas `MODULE`
+  (`import_time_graph`): lo que existe al importar. Ca/Ce, hallazgos, capas, impacto y
+  paquetes cuentan todas. `hidden_tangles` (`find_hidden_tangles`) son las marañas del
+  grafo completo que no lo son al importar, incluidas las que un import perezoso o de
+  tipos agranda: acoplamiento de diseño que no rompe al importar. En pydantic, httpx y
+  huggingface_hub, todas las marañas reportadas antes eran de este tipo.
 - **"God modules" / alto acoplamiento**: percentil superior (default 90%) de
   `Ca + Ce` combinado, como candidatos que la capa de IA interpretará.
   Umbral por *nearest-rank* sobre todos los módulos (el
   `ceil(p/100·n)`-ésimo menor valor): sin interpolación, siempre es una
   puntuación real y explicable. Empates incluidos, puntuación 0 nunca;
   orden por puntuación descendente y luego nombre.
-- **Fachadas con `import paquete as alias`**: el uso `alias.func()` no se
-  puede resolver estáticamente, así que el paquete raíz acumula un Ca muy
-  alto (en networkx, 253 de 288 módulos). Es un dato real — todo depende de
-  la fachada —, pero el reporte/IA deben interpretarlo como tal, no como un
-  "god module" clásico.
+- **Fachadas con `import paquete as alias`**: `alias.func()` se resuelve hasta el módulo
+  que define `func` (ver §2, «Accesos por atributo»). Antes, el paquete raíz acumulaba un
+  Ca muy alto (en networkx, 253 de 288 módulos) por dependencias que en realidad iban a
+  los módulos que definen cada símbolo. Los usos que no se pueden resolver siguen
+  apuntando a la fachada, y ahí sí es un dato real.
 
 ### Impacto transitivo y paquetes (`graph/impact.py`, `graph/packages.py`)
 
@@ -714,6 +759,92 @@ find_high_coupling → find_findings → summarize_project_packages → find_tan
 impact_radius` y espera un `ParseResult` ya pasado por `resolve_indirection`. Este objeto es
 el punto de unión entre el análisis determinista y la interpretación por IA/reporte.
 
+### `unskein untangle` (`untangle.py`, `graph/steps.py`, `graph/untangle.py`, `report/untangle.py`)
+
+Para cada maraña, propone qué imports cortar y con qué refactor, y simula el resultado.
+
+- **Alcance.** Por defecto el grafo es el de imports que se ejecutan al importar (el mismo
+  de las marañas del escaneo). Con `--all-edges` se usa el grafo completo e incluye el
+  acoplamiento oculto (imports dentro de funciones o bajo `TYPE_CHECKING`). **Todas** las
+  marañas se planifican y se simulan; `--max-tangles` (`DEFAULT_MAX_TANGLES = 5`) solo limita
+  cuántas detalla el informe. `scan.parse_sources` y `scan.resolve_parsed` comparten el parseo con `scan`, así que los
+  `exclude` y `include_tests` de `.unskein.toml` se respetan igual. Las advertencias del
+  parseo (archivos saltados) se cuentan en `UntanglePlan.warnings` y el informe las señala en
+  una línea, porque un archivo saltado puede esconder una maraña.
+- **Evidencia** (`parsers/usage.py`). `collect_import_evidence(module, pairs, *, kinds,
+  encoding)` vuelve a leer **solo los módulos que están dentro de una maraña** y devuelve un
+  `ImportEvidence(file_path, lines, symbols, contexts, postponed_annotations, bound_names)`:
+  líneas del import, símbolos usados, `UseContext` de cada uso (`ANNOTATION`, `FUNCTION`,
+  `MODULE`), si el módulo tiene `from __future__ import annotations` y los nombres que el
+  import enlaza. Un conjunto vacío de contextos significa «desconocido» (`NO_EVIDENCE`) y
+  nunca habilita un paso que lo exija.
+  Releer todo es lo que domina el tiempo: durante la calibración, releer todos los módulos de litellm costaba 8 s; releer solo los de las marañas deja la ejecución completa de `untangle` en litellm en unos 3,5 s.
+- **Pasos y costes** (`StepKind`, `STEP_COSTS`). `choose_step` elige el aplicable más barato:
+
+  | Paso | Coste | Cuándo aplica |
+  |---|---|---|
+  | `TYPE_CHECKING` | 1 | todos los usos son anotaciones |
+  | `BYPASS_FACADE` | 2 | el destino es una fachada de paquete, salvo que la fachada defina ella misma todos los nombres importados (ni reexportados ni submódulos: no hay otro sitio de donde importarlos); un import del módulo entero lo admite siempre |
+  | `LAZY` | 3 | todos los usos están dentro de funciones; o en funciones y anotaciones si el módulo tiene `from __future__ import annotations` (sin él, las anotaciones de firmas y de nivel de módulo o clase se evalúan al importar y darían `NameError`) |
+  | `MOVE_SYMBOL` | 4 | a lo sumo `MAX_MOVABLE_SYMBOLS = 2` símbolos |
+  | `EXTRACT_SHARED` | 6 | siempre: es el recurso cuando ningún otro paso aplica |
+  | `PACKAGE_STRUCTURE` | 1000 | una fachada importa a su propio descendiente (único paso posible) |
+
+  `LAZY` y `TYPE_CHECKING` no se ofrecen (se quitan los contextos de la evidencia) cuando:
+  el import ya es perezoso o está bajo `TYPE_CHECKING`; con `--all-edges`, para **toda**
+  arista, porque el objetivo es el acoplamiento de diseño y esos pasos lo conservan; y
+  cuando otro módulo lee en ejecución, a través del módulo origen, alguno de los nombres
+  que ese import enlaza: mover `a → b` dentro de una función rompería a `c` si hace
+  `from a import Thing`, `from pkg import a` + `a.Thing`, `import pkg.a` + `pkg.a.Thing`,
+  `from a import *` o usa `a` suelto (`getattr(a, …)`). `collect_names_read_from` mira los
+  imports **tal como se escriben** (`scan.parse_sources`, antes de resolver re-exports, que
+  apuntarían `c` al módulo que define el nombre y ocultarían el paso por `a`); los imports
+  bajo `TYPE_CHECKING` no cuentan. Los accesos por atributo que el parser no registró (import
+  de un módulo entero que no es paquete, o de un paquete enlazado más de una vez o sin usos
+  registrados) se buscan releyendo solo esos importadores; un
+  importador ilegible cuenta como si leyera todos los nombres. Cada cadena se recorre por los
+  submódulos del proyecto (`walk_submodules`, compartido con `resolve_access`) y el nombre
+  enlazado se atribuye al módulo al que apunta (`import pkg.a` enlaza `pkg`, no `pkg.a`).
+  Una cadena que termina en el propio submódulo (`getattr(pkg.a, n)`) lo usa suelto y cuenta
+  todos sus nombres. Límites: un paquete antecesor usado suelto (`getattr(pkg, n)`) no se
+  sigue hasta sus submódulos; un submódulo que la fachada expone con otro nombre
+  (`from pkg import a as alpha` en `__init__.py`) o que llega por `from pkg import *` no se
+  sigue hasta él; y una cadena literal igual al nombre (`provider="ollama"`) cuenta como uso
+  suelto, el mismo criterio conservador de la fase 0b (en litellm, 2 pasos `LAZY` pasan a
+  `MOVE_SYMBOL` por esto).
+- **Por qué `PACKAGE_STRUCTURE` es prohibitivo y por qué existe `BYPASS_FACADE`.** En networkx,
+  14 de 15 cortes eran aristas fachada a hijo propio y con costes planos el algoritmo las
+  elegía porque todas cuestan igual. Con coste 1000 solo quedan las inevitables (3). Esas
+  aristas se resuelven casi siempre importando desde el módulo que define el símbolo, así que
+  se añadió `BYPASS_FACADE`: 29 de 32 cortes en networkx y 2 de 3 en aiohttp (el
+  tercero, `aiohttp.http → aiohttp`, importa `__version__`, definido en la propia fachada).
+- **Cortes** (`find_cuts`). Conjunto de aristas de realimentación de coste mínimo:
+  Eades–Lin–Smyth ponderado (ordenación de nodos) más una pasada que reañade las aristas
+  cortadas que no reabren ningún ciclo. Es una **heurística**, no el óptimo (el problema es
+  NP-difícil), pero **determinista**: mismo grafo, mismos cortes. `plan_tangles` lo aplica a
+  cada maraña.
+- **Simulación** (`simulate`). Quita todos los cortes y recalcula marañas y ciclos sobre el
+  grafo del alcance. El acoplamiento se recalcula sobre todas las dependencias quitando solo
+  los cortes estructurales (`STRUCTURAL_STEPS`: `BYPASS_FACADE`, `MOVE_SYMBOL`,
+  `EXTRACT_SHARED`, `PACKAGE_STRUCTURE`): un import perezoso o bajo `TYPE_CHECKING` sigue
+  siendo una dependencia y sigue contando en Ca/Ce. Es **optimista**: supone que cada paso
+  se aplica sin crear dependencias nuevas.
+- **Informe** (`render_untangle`). Texto «etiqueta: valor», coste por corte y nota de
+  heurística tras la simulación. Límites: `MAX_CUTS_SHOWN = 30`, `MAX_CHANGES_SHOWN = 15`,
+  `MAX_MEMBERS_SHOWN = 10`, `MAX_SYMBOLS_SHOWN = 3`; sugiere `--all-edges` si no se usó.
+- **Calibración medida.** Con costes planos, 14 de 15 cortes de networkx eran aristas
+  fachada a hijo propio (de ahí el coste de `PACKAGE_STRUCTURE` y `BYPASS_FACADE`). Resultado
+  final de esta rama, sin `--all-edges`: networkx 32 cortes (29 `BYPASS_FACADE` y 3
+  `PACKAGE_STRUCTURE`), rich 31 (23 `MOVE_SYMBOL`, 6 `TYPE_CHECKING`, 2 `LAZY`), aiohttp 3
+  (2 `BYPASS_FACADE`, 1 `MOVE_SYMBOL`), botocore 2 (1 `LAZY`, 1 `MOVE_SYMBOL`) y litellm 228
+  (140 `BYPASS_FACADE`, 73 `LAZY`, 13 `MOVE_SYMBOL`, 1 `EXTRACT_SHARED`, 1 `TYPE_CHECKING`;
+  3,5 s). Con `--all-edges` (solo pasos estructurales): rich 58 cortes en 2 marañas
+  (54 `MOVE_SYMBOL`, 4 `EXTRACT_SHARED`), aiohttp 28 (22 `MOVE_SYMBOL`, 4 `EXTRACT_SHARED`,
+  2 `BYPASS_FACADE`) y pydantic 57 en 2 marañas (47 `MOVE_SYMBOL`, 10 `EXTRACT_SHARED`).
+  Todos con 0 marañas y 0 ciclos tras la simulación, y el mismo resultado con cualquier
+  `PYTHONHASHSEED`. Los cortes cuestan menos de 35 ms; el tiempo lo domina la relectura de
+  evidencia.
+
 ---
 
 ## 5. Pipeline de IA (`ai/client.py`, `ai/prompts.py`)
@@ -729,7 +860,9 @@ analyze → build_context → build_messages → AIClient.generate_report → gr
 ### Contexto acotado (`AIContext`)
 
 Solo nombres de módulo y métricas (nunca código fuente ni rutas): las mayores
-marañas (5, con hasta 20 miembros), los ciclos más cortos (10, con hasta 8 miembros
+marañas (5, con hasta 20 miembros), las mayores marañas ocultas (`hidden_tangles`, mismo
+límite: acoplamiento que solo existe por imports perezosos o bajo `TYPE_CHECKING`), los
+ciclos más cortos (10, con hasta 8 miembros
 cada uno y su longitud real en `CycleSummary.length`), los 15 módulos con mayor
 `Ca + Ce` y el recuento de warnings por código. Cada lista truncada lleva su total al
 lado, para que el LLM sepa que hay más. Los ciclos se resumen porque `find_cycles`
@@ -746,7 +879,8 @@ puede reducir más; en ese caso se envía en su tamaño mínimo.
 `build_messages(context, lang)` devuelve `[system, user]`. El system lleva una
 rúbrica de severidad anclada en los datos (`high`: maraña o ciclo; `medium`: módulo
 en el top de `Ca + Ce` volátil del que otros dependen — inestabilidad ≥
-`UNSTABLE_THRESHOLD` (0.7) y `Ca > 0` — o con `Ce` muy por encima del resto; `low`: el
+`UNSTABLE_THRESHOLD` (0.7) y `Ca > 0` —, con `Ce` muy por encima del resto, o una maraña
+oculta, que no falla al importar pero sigue acoplando; `low`: el
 resto; nunca se señala un módulo solo por ser estable, porque inestabilidad baja con
 muchos dependientes es sano), la regla de
 copiar los nombres de módulo literalmente y la instrucción de idioma. El user lleva
@@ -915,7 +1049,8 @@ Reglas:
   `MAX_TANGLE_MEMBERS_SHOWN` = 10 miembros y "…y N más"), luego los ciclos
   como ejemplos, en bucle cerrado (`a` → `b` → `a`), con aviso si se
   truncaron. El resumen menciona la maraña mayor y la tabla de métricas
-  cuenta las marañas.
+  cuenta las marañas. Tras ellos, la subsección «Acoplamiento oculto» lista las
+  marañas ocultas (hasta `MAX_HIDDEN_TANGLES_SHOWN` = 10).
 - Todo texto sale del catálogo `i18n` (ES/EN); un test exige que cada
   `WarningCode`, cada `ErrorKey` y cada clave tengan ambos idiomas con los
   mismos placeholders.
@@ -931,7 +1066,8 @@ Reglas:
 
 Framework: `typer` (type hints, genera `--help` automático).
 
-Comandos: `unskein scan <path> [opciones]`, `unskein init [path]` y `unskein guide`.
+Comandos: `unskein scan <path> [opciones]`, `unskein init [path]`,
+`unskein config save [source]` y `unskein guide`.
 
 `unskein init` escribe `<path>/.unskein.toml` (default `.`), o
 `~/.config/unskein/config.toml` con `--user`, copiando la plantilla que viaja en
@@ -943,6 +1079,18 @@ archivo existe no lo toca (`UnskeinError CONFIG_EXISTS`, código 1) salvo con
 documenta todas las claves del esquema `TomlConfig`, que descomentada valida en
 modo estricto y que sus valores coinciden con los defaults de `AnalysisConfig`:
 un default que cambie sin actualizar la plantilla rompe la CI.
+
+`unskein config save [source]` (grupo `config` de typer, `init_config.save_user_config`)
+promueve un archivo ya probado (default `./.unskein.toml`) a
+`~/.config/unskein/config.toml`. Lo valida con el mismo `read_toml_file` que el
+escaneo antes de escribir nada (`ConfigError`, código 1), lo copia tal cual,
+comentarios incluidos, y crea la carpeta. Origen inexistente: `CONFIG_NOT_FOUND`;
+destino existente sin `--force`: `CONFIG_EXISTS`. Se escribe con modo `0600`
+(abierto ya privado con `os.open`, y `chmod` para un archivo previo) porque puede
+llevar `[ai] api_key`; en ese caso el CLI avisa y recomienda `UNSKEIN_API_KEY`, sin
+mostrar nunca el valor. El `.unskein.toml` del proyecto se busca en la carpeta
+**analizada**, no en el directorio de trabajo; el aviso de "sin modelo" del informe
+nombra ambas rutas (la de usuario literal, `~/...`, para no filtrar el home).
 
 `unskein guide [--lang]` imprime la guía de uso que viaja en el paquete
 (`src/unskein/guides/guide.{es,en}.md`, con `{version}` sustituido por la versión

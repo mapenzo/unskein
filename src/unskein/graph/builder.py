@@ -4,7 +4,7 @@ from collections import Counter
 
 import networkx as nx
 
-from unskein.parsers.models import ParseResult
+from unskein.parsers.models import ImportKind, ParseResult
 
 
 def build_graph(result: ParseResult) -> nx.DiGraph:
@@ -20,18 +20,22 @@ def build_graph(result: ParseResult) -> nx.DiGraph:
 
     Returns:
         Graph with one edge ``a -> b`` per importing/imported module pair,
-        whose ``weight`` counts the import statements behind it.
+        whose ``weight`` counts the import statements behind it and whose
+        ``kind`` is the strongest ``ImportKind`` among them.
     """
     edge_counts: Counter[tuple[str, str]] = Counter()
+    edge_kinds: dict[tuple[str, str], ImportKind] = {}
     nodes = {module.name for module in result.modules}
     for module in result.modules:
         for edge in module.imports:
             if not edge.is_external:
-                edge_counts[edge.source, edge.target] += 1
+                pair = (edge.source, edge.target)
+                edge_counts[pair] += 1
+                edge_kinds[pair] = edge_kinds.get(pair, edge.kind).stronger(edge.kind)
                 nodes.add(edge.target)
 
     graph = nx.DiGraph()
     graph.add_nodes_from(sorted(nodes))
     for (source, target), weight in sorted(edge_counts.items()):
-        graph.add_edge(source, target, weight=weight)
+        graph.add_edge(source, target, weight=weight, kind=edge_kinds[source, target])
     return graph

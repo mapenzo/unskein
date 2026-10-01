@@ -28,9 +28,10 @@ unskein scan .
 ```
 
 > [!NOTE]
-> unskein is in **alpha** (v0.2.0). `unskein scan <path>` already works end to end (graph,
-> coupling, cycles, findings, AI interpretation, Markdown report in English or Spanish). The
-> sample below shows the v0.1 report, AI section included.
+> unskein is in **alpha** (v0.3.0). `unskein scan <path>` already works end to end (graph,
+> coupling, cycles, findings, AI interpretation, Markdown report in English or Spanish), and
+> `unskein untangle <path>` plans how to undo the tangles. The first sample below shows the
+> v0.1 report, AI section included.
 
 ## What you get
 
@@ -71,12 +72,41 @@ Architecture health: fair.
   layers you declare.
 - **Package overview and impact**: coupling measured between packages, and for each
   coupled module how many others depend on it, directly or indirectly.
+- **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
+  cheapest refactoring step for each (with file, line and symbols) and a before/after
+  simulation. None of the open-source Python dependency tools we surveyed (pydeps,
+  import-linter, tach) proposes cuts; the commercial ones that do (Sonargraph,
+  Structure101, Lattix) target Java/.NET.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
+  Only imports that run when the code is imported count; those inside functions or under
+  `TYPE_CHECKING` are reported apart as hidden coupling.
 - **Re-exports resolved**: `from app import Engine` is traced through `__init__.py`
   facades to the module that actually defines `Engine`, so cycles hidden behind a
-  package's `__init__.py` still show up.
+  package's `__init__.py` still show up. `import pkg as p` followed by `p.name` is
+  traced the same way.
 - **An AI reading of the numbers** (optional): a short summary and the problems worth
   fixing, in English or Spanish.
+
+## Untangling a real project
+
+`unskein untangle` on [rich](https://github.com/Textualize/rich) (35 modules in one
+tangle), with no AI involved:
+
+```text
+$ unskein untangle ./rich
+
+Tangles: 1 · imports to cut: 31 · total cost: 104.
+Simulation after the cuts: tangles 1 → 0, cycles 100+ → 0.
+
+ Import                    Step                   Cost  Evidence
+ rich.console → rich.emoji Move under TYPE_CHECKING  1  rich/console.py:44 · EmojiVariant
+ rich.palette → rich.color Lazy import               3  rich/palette.py:78 · Color
+ rich.box → rich.panel     Move the symbol           4  rich/box.py:426 · Panel
+```
+
+The cuts are a heuristic (not guaranteed minimal) and the simulation is optimistic: read
+the output as a plan to review. On networkx the plan has 32 cuts, mostly "import from the
+module that defines it" instead of through the package's `__init__.py`.
 
 ## How it works
 
@@ -106,7 +136,9 @@ unskein scan path/to/project
 
 No config file is needed. To tune settings, `unskein init` writes a `.unskein.toml` in
 the current folder with every option commented out at its default (`--user` writes
-`~/.config/unskein/config.toml` instead).
+`~/.config/unskein/config.toml` instead). A project's `.unskein.toml` is read from the
+folder you analyze; the user file applies to every project. Once a `.unskein.toml` works
+for you, `unskein config save` validates it and saves it as your user file.
 
 `unskein guide` shows the full usage guide of the installed version, in English or
 Spanish (`--lang es`).
@@ -175,7 +207,9 @@ AI call fails for any reason, the report is still produced, with a notice.
 Settings are read in this order, first match wins:
 
 1. Environment variables: `UNSKEIN_AI_MODEL`, `UNSKEIN_API_KEY`, `UNSKEIN_AI_API_BASE`
-2. `.unskein.toml` in the project, or `~/.config/unskein/config.toml`
+2. `.unskein.toml` in the analyzed folder, or `~/.config/unskein/config.toml` for every
+   project (`unskein init --user` creates it, `unskein config save` fills it from a
+   `.unskein.toml`)
 3. The `--api-key` flag, for quick tests only, since it ends up in your shell history
 
 Templates: [`.env.example`](.env.example) (unskein reads environment variables, not
