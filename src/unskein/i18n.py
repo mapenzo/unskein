@@ -50,14 +50,8 @@ _ERRORS: dict[str, dict[Lang, str]] = {
 
 _WARNINGS: dict[str, dict[Lang, str]] = {
     "warning.star_import": {
-        Lang.ES: (
-            "Import con asterisco desde {detail} fuera de una fachada: "
-            "no se siguen los nombres que trae"
-        ),
-        Lang.EN: (
-            "Star import from {detail} outside a package facade: "
-            "the names it brings in are not followed"
-        ),
+        Lang.ES: "Import con asterisco desde {detail}: no se siguen los nombres que trae",
+        Lang.EN: "Star import from {detail}: the names it brings in are not followed",
     },
     "warning_title.star_import": {
         Lang.ES: "Imports con asterisco",

@@ -183,8 +183,9 @@ Decisiones:
 (con `sub` paquete) liga un nombre a una fachada. En los módulos que importan algún
 paquete, el parser recorre el árbol (`parsers/usage.py`, `collect_name_usage`) y guarda en
 la arista las cadenas de atributos leídas a través del nombre (`ImportEdge.accessed`,
-ordenadas) y si el nombre se usa suelto o se reasigna (`ImportEdge.escapes`). Solo se
-analizan los nombres ligados por un único import; `import a.b` (sin alias) liga `a`, no
+ordenadas) y si el nombre se usa suelto, se reasigna o se escribe a través de él (`p.x = ...`,
+`del p.x`) (`ImportEdge.escapes`). Solo se analizan los nombres ligados por un único
+import (un nombre ligado por dos imports no se analiza); `import a.b` (sin alias) liga `a`, no
 `a.b`, y no se analiza. `resolve_indirection` expande la arista (`expand_package_access`):
 cada cadena baja por el prefijo más largo que sean submódulos del proyecto y el atributo
 siguiente se sigue por los re-exports hasta el módulo que lo define
@@ -192,7 +193,7 @@ siguiente se sigue por los re-exports hasta el módulo que lo define
 destino es el propio módulo, no hay arista. Conservador: con `escapes`, sin ningún
 atributo leído o sin resolución, se mantiene la arista a la fachada. Fuera de alcance:
 sombreado del nombre por parámetros o variables locales, definiciones `def`/`class` que
-reutilicen el nombre, `__getattr__` dinámico y `__all__`.
+reutilicen el nombre, `__getattr__` dinámico y `__all__` (no se consulta en el acceso por atributo).
 
 ---
 
