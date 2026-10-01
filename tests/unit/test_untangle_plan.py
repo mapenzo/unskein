@@ -1,0 +1,107 @@
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+
+from unskein.graph.steps import StepKind
+from unskein.i18n import Lang
+from unskein.report.untangle import MAX_CUTS_SHOWN, render_untangle
+from unskein.untangle import UntangleOptions, build_untangle_plan, prepare_untangle
+
+MakeProject = Callable[[dict[str, str]], Path]
+
+CYCLE = {
+    "app/__init__.py": "",
+    "app/a.py": "from app.b import helper\n\nVALUE = helper()\n",
+    "app/b.py": (
+        "from app.a import VALUE\n\n\ndef helper():\n    return 1\n\n\n"
+        "def show():\n    return VALUE\n"
+    ),
+}
+TYPE_ONLY = {
+    "app/__init__.py": "",
+    "app/a.py": "from app.b import B, C, D\n\nx = (B(), C(), D())\n",
+    "app/b.py": (
+        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n    from app.a import x\n\n"
+        "class B: ...\nclass C: ...\nclass D: ...\n"
+    ),
+}
+
+
+def plan_for(root: Path, *, all_edges: bool = False):
+    """Prepare and build the untangle plan of a project.
+
+    Args:
+        root: Project directory.
+        all_edges: Whether hidden coupling is included.
+
+    Returns:
+        The plan.
+    """
+    context = prepare_untangle(UntangleOptions(path=root, all_edges=all_edges), env={})
+    return build_untangle_plan(context, all_edges=all_edges)
+
+
+def test_plan_cuts_the_lazy_side_of_a_cycle(make_project: MakeProject) -> None:
+    plan = plan_for(make_project(CYCLE))
+    [tangle] = plan.tangles
+    [cut] = tangle.cuts
+    assert (cut.source, cut.target, cut.step) == ("app.b", "app.a", StepKind.LAZY)
+    assert cut.evidence.lines == (1,) and cut.evidence.symbols == ("VALUE",)
+    assert (plan.simulation.tangles_before, plan.simulation.tangles_after) == (1, 0)
+
+
+def test_type_only_cycle_is_hidden_unless_all_edges(make_project: MakeProject) -> None:
+    root = make_project(TYPE_ONLY)
+    import_time = plan_for(root)
+    assert import_time.tangles == () and import_time.hidden_tangles == 1
+    everything = plan_for(root, all_edges=True)
+    [tangle] = everything.tangles
+    assert [(c.source, c.target, c.step) for c in tangle.cuts] == [
+        ("app.b", "app.a", StepKind.MOVE_SYMBOL)
+    ]
+
+
+def test_report_lists_cuts_with_step_and_evidence(make_project: MakeProject) -> None:
+    root = make_project(CYCLE)
+    report = render_untangle(plan_for(root), root, Lang.EN, max_tangles=5)
+    assert report.startswith(f"# Untangle plan for {root.resolve().name}")
+    assert "`app.b` → `app.a`" in report
+    assert "Lazy import" in report
+    assert "`app/b.py:1`" in report and "`VALUE`" in report
+    assert "from 1 tangles and 1 cycles to 0 tangles and 0 cycles" in report
+    assert "## What each step means" in report
+
+
+def test_report_in_spanish(make_project: MakeProject) -> None:
+    root = make_project(CYCLE)
+    report = render_untangle(plan_for(root), root, Lang.ES, max_tangles=5)
+    assert report.startswith(f"# Plan de desenredo de {root.resolve().name}")
+    assert "Import perezoso" in report and "## Qué significa cada paso" in report
+
+
+def test_report_without_tangles_points_to_all_edges(make_project: MakeProject) -> None:
+    root = make_project(TYPE_ONLY)
+    report = render_untangle(plan_for(root), root, Lang.EN, max_tangles=5)
+    assert "No import-time tangles: nothing to untangle." in report
+    assert "`unskein untangle --all-edges`" in report
+
+
+def test_report_limits_tangles_and_cuts(make_project: MakeProject) -> None:
+    files = {"app/__init__.py": ""}
+    for group in range(3):
+        files[f"app/g{group}a.py"] = f"from app.g{group}b import B\nx = B\n"
+        files[f"app/g{group}b.py"] = f"from app.g{group}a import x\nB = x\n"
+    root = make_project(files)
+    report = render_untangle(plan_for(root), root, Lang.EN, max_tangles=2)
+    assert report.count("## Tangle ") == 2
+    assert "Showing 2 of 3 tangles" in report
+    assert MAX_CUTS_SHOWN >= 10
+
+
+def test_parse_project_failure_is_a_usage_error(tmp_path: Path) -> None:
+    from unskein.errors import UnskeinError
+
+    context = prepare_untangle(UntangleOptions(path=tmp_path / "missing"), env={})
+    with pytest.raises(UnskeinError):
+        build_untangle_plan(context, all_edges=False)
