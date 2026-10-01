@@ -86,3 +86,10 @@
 # (names or patterns). Scripts in pyproject.toml and __main__ modules are
 # detected on their own.
 # entry_points = []
+
+[layers]
+# Your architecture's layers as package prefixes, from the highest to the
+# lowest. A module belongs to the layer with the longest matching prefix, and
+# an import from a lower layer into a higher one is reported as a finding.
+# Modules in no layer are not checked. Unset or empty: no layer rule.
+# order = ["app.web", "app.services", "app.core"]

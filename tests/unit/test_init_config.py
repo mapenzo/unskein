@@ -14,6 +14,7 @@ from unskein.config import (
     TomlConfig,
     TomlFindings,
     TomlGeneral,
+    TomlLayers,
     load_toml_config,
 )
 from unskein.errors import ErrorKey, UnskeinError
@@ -44,6 +45,7 @@ def test_template_as_generated_changes_nothing(tmp_path: Path) -> None:
         ("ai", TomlAI),
         ("analysis", TomlAnalysis),
         ("findings", TomlFindings),
+        ("layers", TomlLayers),
     ],
 )
 def test_template_documents_every_setting(table: str, schema: type) -> None:

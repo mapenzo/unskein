@@ -1,12 +1,13 @@
 """Configuration dataclasses, ``.unskein.toml`` loading and precedence resolution."""
 
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from unskein.errors import ConfigError, ErrorKey
 
@@ -28,6 +29,8 @@ DEFAULT_PACKAGE_DEPTH = 1
 
 PROJECT_CONFIG_NAME = ".unskein.toml"
 USER_CONFIG_PATH = Path.home() / ".config" / "unskein" / "config.toml"
+
+LAYER_NAME_PATTERN = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 
 
 @dataclass
@@ -109,6 +112,7 @@ class FindingsConfig:
             None picks the depth automatically, starting at ``DEFAULT_PACKAGE_DEPTH``.
         entry_points: Module names or ``fnmatch`` patterns that are entry points
             and never count as orphans.
+        layers: Layer names (package prefixes), highest first; empty means no layer rule.
     """
 
     enabled: bool = True
@@ -120,6 +124,7 @@ class FindingsConfig:
     orchestrator_min_efferent: int = DEFAULT_ORCHESTRATOR_MIN_EFFERENT
     package_depth: int | None = None
     entry_points: tuple[str, ...] = ()
+    layers: tuple[str, ...] = ()
 
 
 @dataclass
@@ -221,6 +226,41 @@ class TomlFindings(_TomlTable):
     entry_points: list[str] | None = None
 
 
+class TomlLayers(_TomlTable):
+    """The ``[layers]`` table: the project's layers, from the highest to the lowest.
+
+    Attributes:
+        order: Package prefixes, highest layer first. A module belongs to the layer
+            whose name is the longest prefix of its own; modules in no layer are not checked.
+    """
+
+    order: list[str] | None = None
+
+    @field_validator("order")
+    @classmethod
+    def _check_order(cls, order: list[str] | None) -> list[str] | None:
+        """Reject layer names that are not dotted module names, and repeated ones.
+
+        The messages never echo the offending value, like every configuration error.
+
+        Args:
+            order: Layer names as written in the file.
+
+        Returns:
+            The same names.
+
+        Raises:
+            ValueError: If a name is not a dotted module name or is listed twice.
+        """
+        if order is None:
+            return None
+        if not all(LAYER_NAME_PATTERN.fullmatch(name) for name in order):
+            raise ValueError("every layer must be a dotted module name, such as app.core")
+        if len(set(order)) != len(order):
+            raise ValueError("a layer is listed more than once")
+        return order
+
+
 class TomlConfig(_TomlTable):
     """A validated, merged ``.unskein.toml`` (all tables optional).
 
@@ -229,12 +269,14 @@ class TomlConfig(_TomlTable):
         ai: The ``[ai]`` table.
         analysis: The ``[analysis]`` table.
         findings: The ``[findings]`` table.
+        layers: The ``[layers]`` table.
     """
 
     general: TomlGeneral = TomlGeneral()
     ai: TomlAI = TomlAI()
     analysis: TomlAnalysis = TomlAnalysis()
     findings: TomlFindings = TomlFindings()
+    layers: TomlLayers = TomlLayers()
 
 
 def _read_toml(path: Path) -> dict:
@@ -348,8 +390,8 @@ def resolve_findings_config(
 ) -> FindingsConfig:
     """Resolve the findings settings with precedence flag > .unskein.toml > default.
 
-    Entry points are the exception: the ones read from ``pyproject.toml`` and the
-    configured ones are combined.
+    Entry points and layers are the exceptions: the ones read from ``pyproject.toml`` and
+    the configured ones are combined; layers come from ``[layers]``.
 
     Args:
         toml: Validated, merged TOML configuration.
@@ -363,7 +405,8 @@ def resolve_findings_config(
     if enabled is not None:
         overrides["enabled"] = enabled
     entry_points = (*script_entry_points, *(toml.findings.entry_points or ()))
-    return FindingsConfig(**overrides, entry_points=entry_points)
+    layers = tuple(toml.layers.order or ())
+    return FindingsConfig(**overrides, entry_points=entry_points, layers=layers)
 
 
 def resolve_ai_config(
