@@ -14,6 +14,7 @@ from unskein.parsers.discovery import detect_encoding, walk_files
 from unskein.parsers.models import (
     FileParseResult,
     ImportEdge,
+    ImportKind,
     ModuleInfo,
     ParsePlan,
     ParseTask,
@@ -28,8 +29,49 @@ from unskein.parsers.models import (
 STATEMENT_LIST_FIELDS = ("body", "handlers", "cases", "orelse", "finalbody")
 
 
-def iter_statements(tree: ast.Module) -> Iterator[ast.AST]:
-    """Yield every statement of a module, nested ones included, in code order.
+FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
+TYPE_CHECKING_NAME = "TYPE_CHECKING"
+
+
+def is_type_checking_test(test: ast.expr) -> bool:
+    """Tell whether an ``if`` condition is ``TYPE_CHECKING`` or ``<module>.TYPE_CHECKING``.
+
+    Recognized by name only: ``from typing import TYPE_CHECKING as flag`` is not.
+
+    Args:
+        test: Condition of an ``if`` statement.
+
+    Returns:
+        True when the condition names ``TYPE_CHECKING``.
+    """
+    if isinstance(test, ast.Name):
+        return test.id == TYPE_CHECKING_NAME
+    return isinstance(test, ast.Attribute) and test.attr == TYPE_CHECKING_NAME
+
+
+def block_kind(node: ast.AST, field_name: str, kind: ImportKind) -> ImportKind:
+    """Return the kind of the statements held in one block of a compound statement.
+
+    The weakest context wins: a function body inside a ``TYPE_CHECKING`` block, or a
+    ``TYPE_CHECKING`` block inside a function, never runs at import time either way.
+
+    Args:
+        node: Compound statement that owns the block.
+        field_name: Field of ``node`` that holds the block (``body``, ``orelse``...).
+        kind: Kind of ``node`` itself.
+
+    Returns:
+        The kind of the block's statements.
+    """
+    if isinstance(node, FUNCTION_NODES):
+        return kind.weaker(ImportKind.LAZY)
+    if field_name == "body" and isinstance(node, ast.If) and is_type_checking_test(node.test):
+        return kind.weaker(ImportKind.TYPE_CHECKING)
+    return kind
+
+
+def iter_statements(tree: ast.Module) -> Iterator[tuple[ast.AST, ImportKind]]:
+    """Yield every statement of a module with its context, nested ones included, in code order.
 
     Skips expressions on purpose: ``ast.walk`` visits millions of expression
     nodes that can never contain an import.
@@ -38,15 +80,17 @@ def iter_statements(tree: ast.Module) -> Iterator[ast.AST]:
         tree: Parsed module.
 
     Yields:
-        Each statement, exception handler and match case, depth-first.
+        Each statement, exception handler and match case, depth-first, paired with
+        the ``ImportKind`` an import placed there would have.
     """
-    stack = list(reversed(tree.body))
+    stack = [(node, ImportKind.MODULE) for node in reversed(tree.body)]
     while stack:
-        node = stack.pop()
-        yield node
+        node, kind = stack.pop()
+        yield node, kind
         for field_name in reversed(STATEMENT_LIST_FIELDS):
             if children := getattr(node, field_name, None):
-                stack.extend(reversed(children))
+                child_kind = block_kind(node, field_name, kind)
+                stack.extend((child, child_kind) for child in reversed(children))
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,7 +235,9 @@ class _ImportCollector:
         """
         self.warnings.append(ParseWarning(code, self.file_path, line, detail))
 
-    def add(self, name: str, symbol: str | None, line: int) -> str | None:
+    def add(
+        self, name: str, symbol: str | None, line: int, *, kind: ImportKind = ImportKind.MODULE
+    ) -> str | None:
         """Record an import edge towards a module.
 
         Internal names that do not exist fall back to the closest existing
@@ -201,12 +247,13 @@ class _ImportCollector:
             name: Dotted name of the imported module.
             symbol: Imported symbol, or None for a whole-module import.
             line: Line of the import statement.
+            kind: Where the statement sits.
 
         Returns:
             The internal target module, or None if external or unresolved.
         """
         if self.index.is_external(name):
-            self.edges.append(ImportEdge(self.source, name, True, symbol, line))
+            self.edges.append(ImportEdge(self.source, name, True, symbol, line, kind))
             return None
         target = self.index.closest_module(name)
         if target is None:
@@ -215,7 +262,7 @@ class _ImportCollector:
         if target != name:
             self.warn(WarningCode.UNRESOLVED_IMPORT, line, f"{name} -> {target}")
         if target != self.source:
-            self.edges.append(ImportEdge(self.source, target, False, symbol, line))
+            self.edges.append(ImportEdge(self.source, target, False, symbol, line, kind))
         return target
 
     def relative_base(self, node: ast.ImportFrom) -> str | None:
@@ -245,16 +292,16 @@ class _ImportCollector:
         Args:
             tree: Parsed module.
         """
-        for node in iter_statements(tree):
+        for node, kind in iter_statements(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    self.add(alias.name, None, node.lineno)
+                    self.add(alias.name, None, node.lineno, kind=kind)
             elif isinstance(node, ast.ImportFrom):
                 base = self.relative_base(node) if node.level else node.module
                 if base:
-                    self.visit_from(base, node)
+                    self.visit_from(base, node, kind=kind)
 
-    def visit_from(self, base: str, node: ast.ImportFrom) -> None:
+    def visit_from(self, base: str, node: ast.ImportFrom, *, kind: ImportKind) -> None:
         """Record the names of a `from base import ...` statement.
 
         A name that is a submodule of base becomes a module import; any other
@@ -264,17 +311,18 @@ class _ImportCollector:
         Args:
             base: Absolute dotted module the names are imported from.
             node: The `from ... import` statement.
+            kind: Where the statement sits.
         """
         for alias in node.names:
             if alias.name == "*":
                 self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
-                self.add(base, None, node.lineno)
+                self.add(base, None, node.lineno, kind=kind)
                 continue
             submodule = f"{base}.{alias.name}"
             if submodule in self.index.modules:
-                self.add(submodule, None, node.lineno)
+                self.add(submodule, None, node.lineno, kind=kind)
                 continue
-            target = self.add(base, alias.name, node.lineno)
+            target = self.add(base, alias.name, node.lineno, kind=kind)
             if self.is_package and target is not None and target != self.source:
                 exported = alias.asname or alias.name
                 self.re_exports.append(ReExport(self.source, target, exported))

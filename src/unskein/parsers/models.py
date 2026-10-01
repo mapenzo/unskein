@@ -52,6 +52,46 @@ class ParseWarning:
     detail: str
 
 
+class ImportKind(StrEnum):
+    """Where an import statement sits, which decides whether it exists at import time.
+
+    Attributes:
+        MODULE: At module level (also in class bodies, ``try``/``except`` and ``if``
+            blocks): it runs when the module is imported.
+        LAZY: Inside a function or method body: it runs only when that function is called.
+        TYPE_CHECKING: Under ``if TYPE_CHECKING:``: it never runs, type checkers only.
+    """
+
+    MODULE = "module"
+    LAZY = "lazy"
+    TYPE_CHECKING = "type_checking"
+
+    def stronger(self, other: Self) -> Self:
+        """Return the kind that runs more often.
+
+        Args:
+            other: Kind to compare with.
+
+        Returns:
+            ``self`` or ``other``, whichever is closer to ``MODULE``.
+        """
+        return self if KIND_STRENGTH[self] >= KIND_STRENGTH[other] else other
+
+    def weaker(self, other: Self) -> Self:
+        """Return the kind that runs less often.
+
+        Args:
+            other: Kind to compare with.
+
+        Returns:
+            ``self`` or ``other``, whichever is closer to ``TYPE_CHECKING``.
+        """
+        return self if KIND_STRENGTH[self] <= KIND_STRENGTH[other] else other
+
+
+KIND_STRENGTH = {ImportKind.MODULE: 2, ImportKind.LAZY: 1, ImportKind.TYPE_CHECKING: 0}
+
+
 @dataclass(slots=True)
 class ImportEdge:
     """One import from a project module to another module.
@@ -64,6 +104,7 @@ class ImportEdge:
             comparing its first segment with the project's top-level packages.
         symbol_name: Imported symbol, or None when the whole module is imported.
         line_number: Line of the import statement in the source file.
+        kind: Where the statement sits; see ``ImportKind``.
     """
 
     source: str
@@ -71,6 +112,7 @@ class ImportEdge:
     is_external: bool
     symbol_name: str | None = None
     line_number: int | None = None
+    kind: ImportKind = ImportKind.MODULE
 
 
 @dataclass(slots=True)
