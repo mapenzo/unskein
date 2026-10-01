@@ -1,6 +1,6 @@
 [project]
 name = "unskein"
-version = "0.2.0"
+version = "0.3.0"
 description = "AI-assisted static analysis CLI that untangles module dependencies, coupling and cycles in Python projects."
 readme = "README.md"
 license = "MIT"
