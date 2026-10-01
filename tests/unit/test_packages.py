@@ -7,6 +7,7 @@ from unskein.graph.packages import (
     PackageMetrics,
     package_of,
     summarize_packages,
+    summarize_project_packages,
 )
 
 
@@ -19,8 +20,10 @@ from unskein.graph.packages import (
         ("core", 1, ("core",), "core"),
         ("core.db", 2, ("core.db",), "core.db"),
         ("manage", 1, (), ROOT_PACKAGE),
-        ("core.db", 2, (), ROOT_PACKAGE),
-        ("a.b", 5, (), ROOT_PACKAGE),
+        ("core.db", 2, (), "core"),
+        ("a.b", 5, (), "a"),
+        ("a.b", 5, ("a.b",), "a.b"),
+        ("core.db", 1, ("core.db",), "core"),
     ],
 )
 def test_package_of_names_the_package_or_the_root(
@@ -98,3 +101,36 @@ def test_order_is_by_coupling_then_name_and_by_imports_then_names() -> None:
 
     assert [p.name for p in packages] == ["a", "b", "c"]
     assert edges == [PackageEdge("c", "a", 2), PackageEdge("b", "a", 1)]
+
+
+def test_automatic_depth_descends_when_everything_is_in_one_package() -> None:
+    graph = nx.DiGraph([("lib.core.a", "lib.util.b"), ("lib", "lib.core.a")])
+
+    packages, edges = summarize_project_packages(graph, None, facades={"lib"})
+
+    assert sorted(p.name for p in packages) == ["lib", "lib.core", "lib.util"]
+    assert edges == [PackageEdge("lib", "lib.core", 1), PackageEdge("lib.core", "lib.util", 1)]
+
+
+def test_automatic_depth_stays_when_there_are_several_packages() -> None:
+    graph = nx.DiGraph([("core.a", "web.b")])
+
+    packages, _ = summarize_project_packages(graph, None)
+
+    assert sorted(p.name for p in packages) == ["core", "web"]
+
+
+def test_automatic_depth_stays_when_the_only_group_is_the_root() -> None:
+    graph = nx.DiGraph([("manage", "settings")])
+
+    packages, _ = summarize_project_packages(graph, None)
+
+    assert [p.name for p in packages] == [ROOT_PACKAGE]
+
+
+def test_explicit_depth_never_descends() -> None:
+    graph = nx.DiGraph([("lib.core.a", "lib.util.b")])
+
+    packages, _ = summarize_project_packages(graph, 1)
+
+    assert [p.name for p in packages] == ["lib"]

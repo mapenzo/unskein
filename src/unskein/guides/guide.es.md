@@ -34,12 +34,15 @@ por defecto.
 - **Métricas generales**: número de módulos, dependencias, ciclos, marañas y
   advertencias.
 - **Paquetes**: la misma medida de acoplamiento entre paquetes, que da la visión de
-  conjunto que una tabla de módulos no puede (se muestra con dos o más). Un paquete se
-  nombra por los primeros `package_depth` segmentos del nombre de sus módulos (por defecto 1:
-  `core.db` y `core.http` están en `core`); los módulos sueltos por encima de esa
-  profundidad van a `(root)`. Ca y Ce cuentan otros paquetes, no módulos, y los imports
-  dentro de un mismo paquete no cuentan. Bajo la tabla, las mayores dependencias entre
-  paquetes con su número de imports.
+  conjunto que una tabla de módulos no puede (se muestra con dos o más). Un módulo pertenece
+  al paquete en el que está, nombrado por como máximo los primeros `package_depth` segmentos
+  de su nombre (`core.db` y `core.http` están en `core`); los módulos que no están en ningún
+  paquete, como un archivo suelto de primer nivel, van a `(root)`. Por defecto la profundidad
+  es automática: empieza en 1 y baja un nivel más cuando todo el proyecto es un único paquete
+  de primer nivel; un número en `package_depth` la fija. Ca y Ce cuentan otros paquetes, no
+  módulos, y los imports dentro de un mismo paquete no cuentan. Bajo la tabla, las mayores
+  dependencias entre paquetes con su número de imports. Ambos se muestran, y se pasan a la
+  IA, incluso con `[findings] enabled = false`.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto

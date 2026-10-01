@@ -590,3 +590,21 @@ def test_prompt_with_many_packages_still_fits_the_limit() -> None:
 def test_system_prompt_explains_impact_and_package_dependencies() -> None:
     assert "impact" in SYSTEM_PROMPT
     assert "package_edges" in SYSTEM_PROMPT
+
+
+def test_user_message_carries_no_paths_and_no_source_lines(circular_imports: Path) -> None:
+    result = analyze_fixture(circular_imports)
+    files = sorted(circular_imports.rglob("*.py"))
+    source_lines = [
+        line.strip()
+        for file in files
+        for line in file.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("def ")
+    ]
+
+    user_message = build_messages(build_context(result), Lang.EN)[1]["content"]
+
+    assert source_lines
+    assert str(circular_imports) not in user_message
+    assert all(str(file) not in user_message for file in files)
+    assert all(line not in user_message for line in source_lines)

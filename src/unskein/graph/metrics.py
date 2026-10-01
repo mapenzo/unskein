@@ -10,7 +10,7 @@ from unskein.graph.builder import build_graph
 from unskein.graph.coupling import CouplingMetrics
 from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
-from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_packages
+from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
 from unskein.parsers.models import ParseResult, ParseWarning
 
@@ -191,7 +191,7 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     facades = {m.name for m in result.modules if m.file_path.name == PACKAGE_INIT_FILE}
     high_coupling = find_high_coupling(coupling)
     findings = find_findings(graph, coupling, findings_config, packages=facades)
-    package_metrics, package_edges = summarize_packages(
+    package_metrics, package_edges = summarize_project_packages(
         graph, findings_config.package_depth, facades=facades
     )
     return AnalysisResult(

@@ -6,7 +6,10 @@ from dataclasses import dataclass
 
 import networkx as nx
 
+from unskein.config import DEFAULT_PACKAGE_DEPTH
+
 ROOT_PACKAGE = "(root)"
+AUTO_START_DEPTH = DEFAULT_PACKAGE_DEPTH
 
 
 @dataclass(slots=True)
@@ -50,9 +53,10 @@ class PackageEdge:
 def package_of(module: str, depth: int, facades: Collection[str]) -> str:
     """Return the package a module belongs to at a given depth.
 
-    A module is inside a package only when it is deeper than ``depth`` or is itself
-    a package facade (``__init__``); a plain module at or above that depth has no
-    package to join and goes to ``ROOT_PACKAGE``.
+    A facade (``__init__``) is the package itself, named by its first ``depth``
+    segments. A plain module belongs to the package it sits in, cut to ``depth``
+    segments; only a module with no package above it (a top-level single file)
+    goes to ``ROOT_PACKAGE``.
 
     Args:
         module: Dotted module name.
@@ -63,9 +67,9 @@ def package_of(module: str, depth: int, facades: Collection[str]) -> str:
         The package name, or ``ROOT_PACKAGE``.
     """
     segments = module.split(".")
-    if len(segments) <= depth and module not in facades:
-        return ROOT_PACKAGE
-    return ".".join(segments[:depth])
+    if module in facades:
+        return ".".join(segments[:depth])
+    return ".".join(segments[: min(depth, len(segments) - 1)]) or ROOT_PACKAGE
 
 
 def summarize_packages(
@@ -104,4 +108,29 @@ def summarize_packages(
         PackageEdge(source, target, count) for (source, target), count in import_counts.items()
     ]
     edges.sort(key=lambda edge: (-edge.imports, edge.source, edge.target))
+    return packages, edges
+
+
+def summarize_project_packages(
+    graph: nx.DiGraph, depth: int | None, *, facades: Collection[str] = frozenset()
+) -> tuple[list[PackageMetrics], list[PackageEdge]]:
+    """Summarize packages at a fixed depth, or at an automatically chosen one.
+
+    The automatic depth starts at ``AUTO_START_DEPTH`` and goes one level deeper
+    when the whole project is a single top-level package, where that first
+    summary would say nothing.
+
+    Args:
+        graph: Internal module dependency graph.
+        depth: Dotted segments that name a package; None for automatic.
+        facades: Names of modules that are package ``__init__`` files.
+
+    Returns:
+        The same pair as ``summarize_packages``.
+    """
+    if depth is not None:
+        return summarize_packages(graph, depth, facades=facades)
+    packages, edges = summarize_packages(graph, AUTO_START_DEPTH, facades=facades)
+    if len(packages) == 1 and packages[0].name != ROOT_PACKAGE:
+        return summarize_packages(graph, AUTO_START_DEPTH + 1, facades=facades)
     return packages, edges

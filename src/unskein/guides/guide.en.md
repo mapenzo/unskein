@@ -32,11 +32,15 @@ config file is needed: every setting has a default.
 - **General metrics**: counts of modules, dependencies, cycles, tangles and
   warnings.
 - **Packages**: the same coupling measured between packages, which gives the overview a
-  table of modules cannot (shown when the project has two or more). A package is named by the
-  first `package_depth` segments of its modules' names (default 1: `core.db` and `core.http`
-  are both in `core`); plain modules above that depth go to `(root)`. Ca and Ce count other
-  packages, not modules, and imports inside one package do not count. Below the table, the
-  largest dependencies between packages with their number of imports.
+  table of modules cannot (shown when the project has two or more). A module belongs to the
+  package it sits in, named by at most the first `package_depth` segments of its name (`core.db`
+  and `core.http` are both in `core`); modules that are in no package, such as a top-level
+  single file, go to `(root)`. By default the depth is automatic: it starts at 1 and goes one
+  level deeper when the whole project is a single top-level package; a number in
+  `package_depth` fixes it. Ca and Ce count other packages, not modules, and imports inside
+  one package do not count. Below the table, the largest dependencies between packages with
+  their number of imports. Both are shown, and given to the AI, even with
+  `[findings] enabled = false`.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.

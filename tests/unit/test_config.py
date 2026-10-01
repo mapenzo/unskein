@@ -274,8 +274,8 @@ def test_unknown_findings_key_is_a_config_error(tmp_path: Path) -> None:
     assert raised.value.key == ErrorKey.UNKNOWN_KEY
 
 
-def test_package_depth_defaults_to_one() -> None:
-    assert FindingsConfig().package_depth == 1
+def test_package_depth_defaults_to_automatic() -> None:
+    assert FindingsConfig().package_depth is None
 
 
 def test_package_depth_comes_from_the_toml(tmp_path: Path) -> None:

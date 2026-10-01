@@ -19,10 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[project.scripts]` and `[project.gui-scripts]` in `pyproject.toml`, and the
   `entry_points` setting. The section is shown also with `--no-ai`, the AI receives the
   findings as facts already computed, and they never change the exit code.
-- Packages section in the report: modules grouped by the first `package_depth` segments of
-  their names (default 1, set in `[findings]`), with Ca, Ce and instability measured between
-  packages and the largest dependencies between them. It is omitted when the project has
-  fewer than two packages.
+- Packages section in the report: modules grouped by the package they sit in, named by at
+  most the first `package_depth` segments of their names (`[findings]`), with Ca, Ce and
+  instability measured between packages and the largest dependencies between them. Modules
+  in no package, such as a top-level single file, go to `(root)`. The depth is automatic by
+  default: it starts at 1 and goes one level deeper when the whole project is a single
+  top-level package; a number in `package_depth` fixes it. It is omitted when the project
+  has fewer than two packages, and it is shown, and given to the AI, even with
+  `[findings] enabled = false`.
 - Impact column in the most coupled modules table, and `impact N` on bottleneck lines: how
   many modules depend on a module directly or indirectly, shown for the listed modules and
   the bottlenecks. The AI receives the package dependencies and the bottleneck impact as

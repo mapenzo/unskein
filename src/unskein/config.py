@@ -105,7 +105,8 @@ class FindingsConfig:
         bottleneck_min_coupling: Absolute minimum of Ca and of Ce for a bottleneck.
         orchestrator_percentile: Percentile of Ce an orchestrator must reach.
         orchestrator_min_efferent: Absolute minimum of Ce for an orchestrator.
-        package_depth: Dotted segments that name a package in the package summary.
+        package_depth: Dotted segments that name a package in the package summary;
+            None picks the depth automatically, starting at ``DEFAULT_PACKAGE_DEPTH``.
         entry_points: Module names or ``fnmatch`` patterns that are entry points
             and never count as orphans.
     """
@@ -117,7 +118,7 @@ class FindingsConfig:
     bottleneck_min_coupling: int = DEFAULT_BOTTLENECK_MIN_COUPLING
     orchestrator_percentile: int = DEFAULT_ORCHESTRATOR_PERCENTILE
     orchestrator_min_efferent: int = DEFAULT_ORCHESTRATOR_MIN_EFFERENT
-    package_depth: int = DEFAULT_PACKAGE_DEPTH
+    package_depth: int | None = None
     entry_points: tuple[str, ...] = ()
 
 
