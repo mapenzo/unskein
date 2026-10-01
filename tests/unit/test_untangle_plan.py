@@ -268,3 +268,27 @@ def test_type_checking_help_warns_about_runtime_annotation_readers(lang: Lang) -
 @pytest.mark.parametrize("lang", list(Lang))
 def test_lazy_help_mentions_postponed_annotations(lang: Lang) -> None:
     assert "from __future__ import annotations" in t("untangle.step.lazy.help", lang)
+
+
+TEST_FILE_CYCLE = {
+    "app/__init__.py": "",
+    "app/a.py": "from app.test_b import helper\n\nVALUE = helper()\n",
+    "app/test_b.py": CYCLE["app/b.py"],
+}
+
+
+@pytest.mark.parametrize(
+    ("files", "toml", "tangles"),
+    [
+        (CYCLE, "", 1),
+        (CYCLE, '[analysis]\nexclude = ["app/b.py"]\n', 0),
+        (TEST_FILE_CYCLE, "", 0),
+        (TEST_FILE_CYCLE, "[analysis]\ninclude_tests = true\n", 1),
+    ],
+    ids=["no_config", "excluded_by_toml", "tests_left_out", "tests_included_by_toml"],
+)
+def test_untangle_honors_the_project_config(
+    make_project: MakeProject, files: dict[str, str], toml: str, tangles: int
+) -> None:
+    root = make_project({**files, ".unskein.toml": toml})
+    assert len(plan_for(root).tangles) == tangles

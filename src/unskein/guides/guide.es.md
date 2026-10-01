@@ -139,11 +139,18 @@ marañas, ciclos y acoplamiento de los módulos afectados, antes y después.
 
 Los pasos, del más barato al más caro: mover bajo `TYPE_CHECKING` (nombres que solo
 se usan en anotaciones), importar del módulo que lo define (el import pasa por el
-`__init__.py` de un paquete), import perezoso (nombres que solo se usan dentro de
-funciones), mover el símbolo (se importan uno o dos símbolos), extraer un módulo
-compartido y revisar la estructura del paquete (un paquete importando su propio
-submódulo, solo cuando nada más rompe el ciclo). Los cortes salen de una heurística y
-la simulación es optimista: léelo como un plan que hay que revisar.
+`__init__.py` de un paquete que no define él mismo el nombre), import perezoso (nombres
+que solo se usan dentro de funciones, o también en anotaciones si el módulo tiene
+`from __future__ import annotations`), mover el símbolo (se importan uno o dos
+símbolos), extraer un módulo compartido y revisar la estructura del paquete (un paquete
+importando su propio submódulo, solo cuando nada más rompe el ciclo). Con `--all-edges`
+solo se ofrecen los pasos estructurales, porque un import perezoso o bajo
+`TYPE_CHECKING` conserva el acoplamiento. Los cortes salen de una heurística y la
+simulación es optimista: léelo como un plan que hay que revisar.
+
+Como `scan`, `untangle` respeta los ajustes `exclude` e `include_tests` de
+`.unskein.toml`. Si algún archivo no se pudo analizar, el plan dice cuántas advertencias
+del análisis hubo; `unskein scan` las muestra en detalle.
 
 - `--all-edges`: desenreda también el acoplamiento oculto (imports dentro de funciones
   o bajo `TYPE_CHECKING`).

@@ -765,51 +765,69 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
 
 - **Alcance.** Por defecto el grafo es el de imports que se ejecutan al importar (el mismo
   de las marañas del escaneo). Con `--all-edges` se usa el grafo completo e incluye el
-  acoplamiento oculto (imports dentro de funciones o bajo `TYPE_CHECKING`). Se atienden como
-  mucho `--max-tangles` marañas (`DEFAULT_MAX_TANGLES = 5`). `scan.parse_project` comparte el
-  parseo con `scan`.
+  acoplamiento oculto (imports dentro de funciones o bajo `TYPE_CHECKING`). **Todas** las
+  marañas se planifican y se simulan; `--max-tangles` (`DEFAULT_MAX_TANGLES = 5`) solo limita
+  cuántas detalla el informe. `scan.parse_project` comparte el parseo con `scan`, así que los
+  `exclude` y `include_tests` de `.unskein.toml` se respetan igual. Las advertencias del
+  parseo (archivos saltados) se cuentan en `UntanglePlan.warnings` y el informe las señala en
+  una línea, porque un archivo saltado puede esconder una maraña.
 - **Evidencia** (`parsers/usage.py`). `collect_import_evidence(module, pairs, *, kinds,
   encoding)` vuelve a leer **solo los módulos que están dentro de una maraña** y devuelve un
-  `ImportEvidence(file_path, lines, symbols, contexts)`: líneas del import, símbolos usados y
-  `UseContext` de cada uso (`ANNOTATION`, `FUNCTION`, `MODULE`). Un conjunto vacío de
-  contextos significa «desconocido» (`NO_EVIDENCE`) y nunca habilita un paso que lo exija.
-  Releer todo es lo que domina el tiempo: durante la calibración, releer todos los módulos de litellm costaba 8 s; releer solo los de las marañas deja la ejecución completa de `untangle` en litellm en unos 3,4 s.
+  `ImportEvidence(file_path, lines, symbols, contexts, postponed_annotations, bound_names)`:
+  líneas del import, símbolos usados, `UseContext` de cada uso (`ANNOTATION`, `FUNCTION`,
+  `MODULE`), si el módulo tiene `from __future__ import annotations` y los nombres que el
+  import enlaza. Un conjunto vacío de contextos significa «desconocido» (`NO_EVIDENCE`) y
+  nunca habilita un paso que lo exija.
+  Releer todo es lo que domina el tiempo: durante la calibración, releer todos los módulos de litellm costaba 8 s; releer solo los de las marañas deja la ejecución completa de `untangle` en litellm en unos 3,5 s.
 - **Pasos y costes** (`StepKind`, `STEP_COSTS`). `choose_step` elige el aplicable más barato:
 
   | Paso | Coste | Cuándo aplica |
   |---|---|---|
   | `TYPE_CHECKING` | 1 | todos los usos son anotaciones |
-  | `BYPASS_FACADE` | 2 | el destino del import es una fachada de paquete (`target in facades`) |
-  | `LAZY` | 3 | todos los usos están dentro de funciones |
+  | `BYPASS_FACADE` | 2 | el destino es una fachada de paquete, salvo que la fachada defina ella misma todos los nombres importados (ni reexportados ni submódulos: no hay otro sitio de donde importarlos); un import del módulo entero lo admite siempre |
+  | `LAZY` | 3 | todos los usos están dentro de funciones; o en funciones y anotaciones si el módulo tiene `from __future__ import annotations` (sin él, las anotaciones de firmas y de nivel de módulo o clase se evalúan al importar y darían `NameError`) |
   | `MOVE_SYMBOL` | 4 | a lo sumo `MAX_MOVABLE_SYMBOLS = 2` símbolos |
-  | `EXTRACT_SHARED` | 6 | hay símbolos compartidos que extraer |
-  | `PACKAGE_STRUCTURE` | 1000 | revisar la estructura de paquetes |
+  | `EXTRACT_SHARED` | 6 | siempre: es el recurso cuando ningún otro paso aplica |
+  | `PACKAGE_STRUCTURE` | 1000 | una fachada importa a su propio descendiente (único paso posible) |
 
-  Un import que ya es perezoso o está bajo `TYPE_CHECKING` no vuelve a ofrecer esos pasos con
-  `--all-edges`. Una fachada que importa a su propio descendiente solo admite
-  `PACKAGE_STRUCTURE`.
+  `LAZY` y `TYPE_CHECKING` no se ofrecen (se quitan los contextos de la evidencia) cuando:
+  el import ya es perezoso o está bajo `TYPE_CHECKING`; con `--all-edges`, para **toda**
+  arista, porque el objetivo es el acoplamiento de diseño y esos pasos lo conservan; y
+  cuando otro módulo importa por nombre, desde el módulo origen, alguno de los nombres que
+  ese import enlaza (`c` hace `from a import Thing`: mover `a → b` dentro de una función
+  rompería `c`).
 - **Por qué `PACKAGE_STRUCTURE` es prohibitivo y por qué existe `BYPASS_FACADE`.** En networkx,
   14 de 15 cortes eran aristas fachada a hijo propio y con costes planos el algoritmo las
   elegía porque todas cuestan igual. Con coste 1000 solo quedan las inevitables (3). Esas
   aristas se resuelven casi siempre importando desde el módulo que define el símbolo, así que
-  se añadió `BYPASS_FACADE`: 29 de 32 cortes en networkx y 3 de 3 en aiohttp.
+  se añadió `BYPASS_FACADE`: 29 de 32 cortes en networkx y 2 de 3 en aiohttp (el
+  tercero, `aiohttp.http → aiohttp`, importa `__version__`, definido en la propia fachada).
 - **Cortes** (`find_cuts`). Conjunto de aristas de realimentación de coste mínimo:
   Eades–Lin–Smyth ponderado (ordenación de nodos) más una pasada que reañade las aristas
   cortadas que no reabren ningún ciclo. Es una **heurística**, no el óptimo (el problema es
   NP-difícil), pero **determinista**: mismo grafo, mismos cortes. `plan_tangles` lo aplica a
   cada maraña.
-- **Simulación** (`simulate`). Quita los cortes y recalcula marañas y ciclos sobre el grafo
-  del alcance, y el acoplamiento sobre todas las dependencias. Es **optimista**: supone que
-  cada paso se aplica sin crear dependencias nuevas.
+- **Simulación** (`simulate`). Quita todos los cortes y recalcula marañas y ciclos sobre el
+  grafo del alcance. El acoplamiento se recalcula sobre todas las dependencias quitando solo
+  los cortes estructurales (`STRUCTURAL_STEPS`: `BYPASS_FACADE`, `MOVE_SYMBOL`,
+  `EXTRACT_SHARED`, `PACKAGE_STRUCTURE`): un import perezoso o bajo `TYPE_CHECKING` sigue
+  siendo una dependencia y sigue contando en Ca/Ce. Es **optimista**: supone que cada paso
+  se aplica sin crear dependencias nuevas.
 - **Informe** (`render_untangle`). Texto «etiqueta: valor», coste por corte y nota de
   heurística tras la simulación. Límites: `MAX_CUTS_SHOWN = 30`, `MAX_CHANGES_SHOWN = 15`,
   `MAX_MEMBERS_SHOWN = 10`, `MAX_SYMBOLS_SHOWN = 3`; sugiere `--all-edges` si no se usó.
 - **Calibración medida.** Con costes planos, 14 de 15 cortes de networkx eran aristas
   fachada a hijo propio (de ahí el coste de `PACKAGE_STRUCTURE` y `BYPASS_FACADE`). Resultado
   final de esta rama, sin `--all-edges`: networkx 32 cortes (29 `BYPASS_FACADE` y 3
-  `PACKAGE_STRUCTURE`), rich 28, aiohttp 3, botocore 2 y litellm 228; todos con 0 marañas y
-  0 ciclos tras la simulación. Los cortes cuestan menos de 35 ms; el tiempo lo domina la
-  relectura de evidencia.
+  `PACKAGE_STRUCTURE`), rich 31 (23 `MOVE_SYMBOL`, 6 `TYPE_CHECKING`, 2 `LAZY`), aiohttp 3
+  (2 `BYPASS_FACADE`, 1 `MOVE_SYMBOL`), botocore 2 (1 `LAZY`, 1 `MOVE_SYMBOL`) y litellm 228
+  (140 `BYPASS_FACADE`, 73 `LAZY`, 13 `MOVE_SYMBOL`, 1 `EXTRACT_SHARED`, 1 `TYPE_CHECKING`;
+  3,5 s). Con `--all-edges` (solo pasos estructurales): rich 58 cortes en 2 marañas
+  (54 `MOVE_SYMBOL`, 4 `EXTRACT_SHARED`), aiohttp 28 (22 `MOVE_SYMBOL`, 4 `EXTRACT_SHARED`,
+  2 `BYPASS_FACADE`) y pydantic 57 en 2 marañas (47 `MOVE_SYMBOL`, 10 `EXTRACT_SHARED`).
+  Todos con 0 marañas y 0 ciclos tras la simulación, y el mismo resultado con cualquier
+  `PYTHONHASHSEED`. Los cortes cuestan menos de 35 ms; el tiempo lo domina la relectura de
+  evidencia.
 
 ---
 
