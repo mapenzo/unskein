@@ -105,6 +105,11 @@ class ImportEdge:
         symbol_name: Imported symbol, or None when the whole module is imported.
         line_number: Line of the import statement in the source file.
         kind: Where the statement sits; see ``ImportKind``.
+        accessed: Dotted attribute chains the module reads through the name this
+            import binds, sorted (``algorithms.shortest_path`` for ``nx.algorithms.shortest_path``);
+            only filled for imports of a package whose use was analyzed.
+        escapes: Whether that name is also used by itself (passed, assigned, rebound),
+            so its attribute accesses do not tell everything the module depends on.
     """
 
     source: str
@@ -113,6 +118,8 @@ class ImportEdge:
     symbol_name: str | None = None
     line_number: int | None = None
     kind: ImportKind = ImportKind.MODULE
+    accessed: tuple[str, ...] = ()
+    escapes: bool = False
 
 
 @dataclass(slots=True)
