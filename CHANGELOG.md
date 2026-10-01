@@ -28,6 +28,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.unskein.toml` of the analyzed folder and `~/.config/unskein/config.toml`
   (`unskein init --user`). `unskein init` points to `unskein config save`, and the
   guide explains where each config file is read from.
+- `import pkg as p` followed by `p.name` (also `import pkg` and `from pkg import sub`
+  when `sub` is a package) now counts as a dependency on the module that defines `name`
+  instead of on the package's `__init__.py`. Uses that cannot be followed (the name is
+  passed around, reassigned or never used) still point at the package. Measured on copies
+  of installed packages: in networkx, modules depending on the package's `__init__.py`
+  drop from 253 to 5 (of 288); in litellm, from 618 to 454 (of 2469); in pydantic, from
+  9 to 1. Import-time tangles change little (networkx 278 to 273 modules), and in litellm
+  the largest one grows from 493 to 601 modules because dependencies that used to stop at
+  the facade now reach the modules that define each name, which shows dependencies that
+  were hidden behind the facade. Analysis time in litellm goes from 1.4 s to 1.6 s.
+- `from x import *` inside a package `__init__.py` is followed too: it re-exports `x`'s
+  literal `__all__`, or its public module-level names. Outside a package `__init__.py`,
+  or from a module that is not part of the project, it still warns.
 
 ### Fixed
 

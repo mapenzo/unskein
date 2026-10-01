@@ -179,6 +179,23 @@ Decisiones:
 - Resolución recursiva simple en v0.1, sin memoización — optimizar solo si el
   perfilado en proyectos grandes muestra que es necesario.
 
+**Accesos por atributo.** Un `import pkg as p`, `import pkg` o `from pkg import sub`
+(con `sub` paquete) liga un nombre a una fachada. En los módulos que importan algún
+paquete, el parser recorre el árbol (`parsers/usage.py`, `collect_name_usage`) y guarda en
+la arista las cadenas de atributos leídas a través del nombre (`ImportEdge.accessed`,
+ordenadas) y si el nombre se usa suelto, se reasigna o se escribe a través de él (`p.x = ...`,
+`del p.x`) (`ImportEdge.escapes`). Solo se analizan los nombres ligados por un único
+import (un nombre ligado por dos imports no se analiza); `import a.b` (sin alias) liga `a`, no
+`a.b`, y no se analiza. `resolve_indirection` expande la arista (`expand_package_access`):
+cada cadena baja por el prefijo más largo que sean submódulos del proyecto y el atributo
+siguiente se sigue por los re-exports hasta el módulo que lo define
+(`resolve_access`). Una arista por módulo destino, con el `kind` de la sentencia; si el
+destino es el propio módulo, no hay arista. Conservador: con `escapes`, sin ningún
+atributo leído o sin resolución, se mantiene la arista a la fachada. Fuera de alcance:
+sombreado del nombre por parámetros o variables locales, definiciones `def`/`class` que
+reutilicen el nombre, `__getattr__` dinámico y el `__all__` propio de la fachada (no se
+consulta en el acceso por atributo; el `__all__` literal de la fuente de un star sí).
+
 ---
 
 ## 2.5. Discovery de archivos: excludes, symlinks, encoding
@@ -331,6 +348,13 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   nombre, la resolución se detiene en el módulo intermedio. Si un facade expone
   el mismo símbolo más de una vez (típico: `try: from ._fast import X` /
   `except ImportError: from ._slow import X`), **gana el primero en el código**.
+  Un `from x import *` dentro de una fachada, con `x` módulo del proyecto, genera
+  `ReExport(paquete, x, STAR_EXPORT)`; `star_exports` (sobre `module_exports` de `parsers/exports.py`) calcula los nombres que trae
+  (`__all__` literal, o nombres públicos de `x` más los de sus star-imports
+  anidados si `x` no declara `__all__`) y `build_reexport_index(re_exports,
+  star_names)` los indexa. Un star nunca aporta un nombre que la fachada liga ella
+  misma (definiciones, imports explícitos) y, entre varias fuentes, **gana el
+  primero en el código**.
   Los imports se recorren en profundidad y en orden de código, así que los avisos
   de un archivo también salen en ese orden.
 - **Errores por archivo** → warning, el archivo se omite y el análisis sigue:
@@ -351,10 +375,13 @@ discutirlo primero):
   si los atributos se usan tarde y solo falla con `from a import nombre`; no se modela
   (es el criterio de pylint). `TYPE_CHECKING` se reconoce por nombre, no por semántica:
   `from typing import TYPE_CHECKING as flag` no se detecta.
-- **Star-imports (`from x import *`) no resuelven re-exports** — sin ejecutar
-  el código o inspeccionar `__all__`, no se puede saber con certeza qué
-  símbolos exporta un `*`. Se genera un warning explícito, nunca falla
-  silenciosamente.
+- **Star-imports (`from x import *`)**: dentro de una fachada (`__init__.py`)
+  y de un módulo `x` del proyecto se siguen: re-exportan el `__all__` literal de
+  `x` o, si no lo tiene, sus nombres públicos de nivel de módulo (más los de los
+  star-imports anidados de fachadas sin `__all__`). Fuera de una fachada, o de un
+  módulo externo, siguen sin resolverse y generan el aviso `STAR_IMPORT`. Un
+  `__all__` dinámico (no literal) no se sigue: se usan los nombres públicos.
+  Nunca falla silenciosamente.
 - **Imports dinámicos vía `importlib.import_module()` con strings son
   invisibles** — limitación conocida y común en análisis estático puro.
 
@@ -681,11 +708,11 @@ aplicados) y construye el grafo real.
   `ceil(p/100·n)`-ésimo menor valor): sin interpolación, siempre es una
   puntuación real y explicable. Empates incluidos, puntuación 0 nunca;
   orden por puntuación descendente y luego nombre.
-- **Fachadas con `import paquete as alias`**: el uso `alias.func()` no se
-  puede resolver estáticamente, así que el paquete raíz acumula un Ca muy
-  alto (en networkx, 253 de 288 módulos). Es un dato real — todo depende de
-  la fachada —, pero el reporte/IA deben interpretarlo como tal, no como un
-  "god module" clásico.
+- **Fachadas con `import paquete as alias`**: `alias.func()` se resuelve hasta el módulo
+  que define `func` (ver §2, «Accesos por atributo»). Antes, el paquete raíz acumulaba un
+  Ca muy alto (en networkx, 253 de 288 módulos) por dependencias que en realidad iban a
+  los módulos que definen cada símbolo. Los usos que no se pueden resolver siguen
+  apuntando a la fachada, y ahí sí es un dato real.
 
 ### Impacto transitivo y paquetes (`graph/impact.py`, `graph/packages.py`)
 

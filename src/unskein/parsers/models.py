@@ -11,7 +11,8 @@ class WarningCode(StrEnum):
     """Kinds of non-fatal problems found while parsing and resolving a project.
 
     Attributes:
-        STAR_IMPORT: ``from x import *``; the exported names cannot be known.
+        STAR_IMPORT: ``from x import *`` outside a package facade (or of a module outside
+            the project); the names it brings in are not followed.
         RELATIVE_BEYOND_TOP: A relative import climbs above the top-level package.
         UNRESOLVED_IMPORT: An internal import names a module that does not exist.
         FILE_TOO_LARGE: A file exceeds ``max_file_size_bytes`` and was not read.
@@ -105,6 +106,11 @@ class ImportEdge:
         symbol_name: Imported symbol, or None when the whole module is imported.
         line_number: Line of the import statement in the source file.
         kind: Where the statement sits; see ``ImportKind``.
+        accessed: Dotted attribute chains the module reads through the name this
+            import binds, sorted (``algorithms.shortest_path`` for ``nx.algorithms.shortest_path``);
+            only filled for imports of a package whose use was analyzed.
+        escapes: Whether that name is also used by itself (passed, assigned, rebound),
+            so its attribute accesses do not tell everything the module depends on.
     """
 
     source: str
@@ -113,6 +119,8 @@ class ImportEdge:
     symbol_name: str | None = None
     line_number: int | None = None
     kind: ImportKind = ImportKind.MODULE
+    accessed: tuple[str, ...] = ()
+    escapes: bool = False
 
 
 @dataclass(slots=True)
@@ -123,11 +131,21 @@ class ModuleInfo:
         name: Dotted module name, e.g. "app.services.user".
         file_path: Source file the module was parsed from.
         imports: Imports found in the module.
+        public_names: Names the module exposes to ``from module import *``, sorted.
+        declares_all: Whether those names come from a literal ``__all__``.
+        bound_names: Every name the module binds at module level, sorted.
     """
 
     name: str
     file_path: Path
     imports: list[ImportEdge] = field(default_factory=list)
+    public_names: tuple[str, ...] = ()
+    declares_all: bool = False
+    bound_names: tuple[str, ...] = ()
+
+
+# Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.
+STAR_EXPORT = "*"
 
 
 @dataclass(slots=True)
