@@ -805,7 +805,12 @@ grafo; ningún otro segmento se adivina. Luego se eliminan de cada problema los 
 
 La API key nunca aparece en logs, `repr`, reporte ni errores. `WARNING` solo lleva
 el tipo de fallo y la clase de la excepción; el mensaje del proveedor solo va a
-`DEBUG`, con la key sustituida por `***`.
+`DEBUG`, con la key sustituida por `***`. Sin key de unskein, LiteLLM lee la variable
+del proveedor (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, credenciales de AWS…), así que
+también se sustituyen los valores de las variables cuyo nombre termina en `_API_KEY`,
+`_SECRET_ACCESS_KEY`, `_ACCESS_KEY_ID` o `_SESSION_TOKEN` (`secrets_to_redact`), si
+tienen al menos 8 caracteres: uno más corto es un marcador, y sustituirlo destrozaría
+palabras normales del mensaje.
 
 ### Degradación
 

@@ -309,6 +309,46 @@ def test_an_empty_api_key_does_not_mangle_the_logged_message(
     assert "provider says nothing" in unskein_logs.text
 
 
+@pytest.mark.parametrize(
+    "variable",
+    [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "AZURE_API_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SESSION_TOKEN",
+        "SOME_FUTURE_PROVIDER_API_KEY",
+    ],
+)
+def test_a_key_from_a_provider_variable_is_redacted_too(
+    fake_llm: Any, unskein_logs: Any, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv(variable, SECRET)
+    fake_llm.error = load_litellm().AuthenticationError(
+        f"provider says {SECRET}", model="m", llm_provider="p"
+    )
+
+    make_client().generate_report(MESSAGES)
+
+    assert "provider says ***" in unskein_logs.text
+    assert SECRET not in unskein_logs.text
+
+
+def test_short_or_unrelated_variables_are_not_redacted(
+    fake_llm: Any, unskein_logs: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.setenv("HOME_DIRECTORY_NAME", "provider")
+    fake_llm.error = load_litellm().AuthenticationError(
+        "provider says abc", model="m", llm_provider="p"
+    )
+
+    make_client().generate_report(MESSAGES)
+
+    assert "provider says abc" in unskein_logs.text
+
+
 @pytest.mark.parametrize("content", [GOOD_REPORT, "not json"])
 def test_the_api_key_never_reaches_logs_or_the_outcome_without_an_exception(
     fake_llm: Any, unskein_logs: Any, content: str

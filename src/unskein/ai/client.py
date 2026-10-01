@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
@@ -23,6 +24,11 @@ DEFAULT_TEMPERATURE = 0.2
 REASONING_TEMPERATURE = 1.0
 ENV_LOCAL_COST_MAP = "LITELLM_LOCAL_MODEL_COST_MAP"
 REDACTED = "***"
+# Variables that hold provider credentials LiteLLM may read when unskein passes no key:
+# OPENAI_API_KEY, ANTHROPIC_API_KEY... and AWS's access key, secret and session token.
+SECRET_VARIABLE = re.compile(r".+_(API_KEY|SECRET_ACCESS_KEY|ACCESS_KEY_ID|SESSION_TOKEN)")
+# Shorter values are placeholders, and replacing them would mangle ordinary words.
+MIN_SECRET_LENGTH = 8
 
 
 @dataclass(frozen=True)
@@ -254,19 +260,43 @@ class AIClient:
         return AIOutcome(report=report)
 
     def _redact(self, text: str) -> str:
-        """Hide the API key in a provider message before it is logged.
+        """Hide every key the call may have used in a provider message before it is logged.
 
         Args:
-            text: Message that may repeat the key.
+            text: Message that may repeat a key.
 
         Returns:
-            The text with every occurrence of the key replaced.
+            The text with every occurrence of each key replaced.
         """
-        # Only the exact key string is replaced: a provider that echoes a masked or
+        # Only exact key strings are replaced: a provider that echoes a masked or
         # transformed key (truncated, base64, URL-encoded) is not covered.
-        if not self.config.api_key:
-            return text
-        return text.replace(self.config.api_key, REDACTED)
+        for secret in secrets_to_redact(self.config.api_key, os.environ):
+            text = text.replace(secret, REDACTED)
+        return text
+
+
+def secrets_to_redact(api_key: str | None, env: Mapping[str, str]) -> list[str]:
+    """List the keys a LiteLLM call may have used, longest first.
+
+    Without an unskein key, LiteLLM reads the provider's own variable, so those
+    values must be hidden too.
+
+    Args:
+        api_key: Key given to unskein, if any.
+        env: Environment variables.
+
+    Returns:
+        The unskein key and every credential-like variable value long enough to be
+        a real secret, longest first so no key is left half replaced.
+    """
+    found = {
+        value
+        for name, value in env.items()
+        if SECRET_VARIABLE.fullmatch(name) and len(value) >= MIN_SECRET_LENGTH
+    }
+    if api_key:
+        found.add(api_key)
+    return sorted(found, key=lambda secret: (-len(secret), secret))
 
 
 def _log_usage(response: Any) -> None:

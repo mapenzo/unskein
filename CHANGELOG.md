@@ -58,6 +58,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   temperature 0.2. For `litellm_proxy/` models unskein now asks the proxy's
   `/model/info` whether the alias is a reasoning model, and falls back to LiteLLM's own
   model map when the proxy cannot say.
+- With `--verbose`, the provider's error message hid only the key given to unskein
+  (`UNSKEIN_API_KEY`, `[ai] api_key`, `--api-key`). A key LiteLLM read from the
+  provider's own variable (`ANTHROPIC_API_KEY`, AWS credentials...) could show in clear.
+  Those values are now hidden too.
 
 ## [0.1.1] - 2026-09-30
 
