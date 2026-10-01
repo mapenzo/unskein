@@ -31,7 +31,7 @@ por defecto.
 
 - **Resumen**: módulos, dependencias internas y ciclos, el módulo más acoplado
   y, si las hay, las marañas.
-- **Métricas generales**: número de módulos, dependencias, ciclos, marañas y
+- **Métricas generales**: número de módulos, dependencias, ciclos, marañas, marañas ocultas y
   advertencias.
 - **Paquetes**: la misma medida de acoplamiento entre paquetes, que da la visión de
   conjunto que una tabla de módulos no puede (se muestra con dos o más). Un módulo pertenece
@@ -53,11 +53,15 @@ por defecto.
     él) a 1 (inestable, depende de otros).
   - **Impacto**: cuántos módulos dependen de este, directa o indirectamente: hasta dónde
     puede llegar un cambio. Se muestra para los módulos listados y para los cuellos de botella.
-- **Ciclos de dependencia**: módulos que acaban importándose a sí mismos.
+- **Ciclos de dependencia**: módulos que acaban importándose a sí mismos al importar
+  el código (imports a nivel de módulo).
   - Primero van las **marañas**: grupos donde cada módulo alcanza a todos los
     demás. Su tamaño es exacto aunque la lista de ciclos se corte.
   - Después, los **ciclos** como bucles de ejemplo, como máximo 100; el
     informe avisa cuando la búsqueda se detuvo en ese límite.
+  - **Acoplamiento oculto** lista los grupos que dependen entre sí solo si se cuentan
+    los imports dentro de funciones o bajo `TYPE_CHECKING`. No fallan al importar, pero
+    siguen siendo acoplamiento de diseño y cuentan en el resto de números del informe.
 - **Hallazgos**: reglas calculadas a partir del grafo, también con `--no-ai`. Cada
   tipo tiene una explicación y una recomendación, y luego sus módulos con los
   números que lo justifican (como máximo 10 por tipo):

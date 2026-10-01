@@ -29,7 +29,7 @@ config file is needed: every setting has a default.
 
 - **Summary**: modules, internal dependencies and cycles, the most coupled
   module and, if any, the tangles.
-- **General metrics**: counts of modules, dependencies, cycles, tangles and
+- **General metrics**: counts of modules, dependencies, cycles, tangles, hidden tangles and
   warnings.
 - **Packages**: the same coupling measured between packages, which gives the overview a
   table of modules cannot (shown when the project has two or more). A module belongs to the
@@ -50,11 +50,15 @@ config file is needed: every setting has a default.
     to 1 (unstable, it depends on others).
   - **Impact**: how many modules depend on this one, directly or indirectly: what a change
     to it can reach. Shown for the modules listed and for bottlenecks.
-- **Dependency cycles**: modules that end up importing themselves.
+- **Dependency cycles**: modules that end up importing themselves when the code is
+  imported (imports at module level).
   - **Tangles** come first: groups where every module reaches every other one.
     Their size is exact, even when the cycle list is cut short.
   - **Cycles** are then listed as example loops, at most 100; the report says
     when the search stopped at that limit.
+  - **Hidden coupling** lists groups that depend on each other only once imports inside
+    functions or under `TYPE_CHECKING` are counted. They do not fail at import time, but
+    they are still design coupling, and they count in every other number of the report.
 - **Findings**: rules computed from the graph, shown also with `--no-ai`. Each kind has
   one explanation and one recommendation, then its modules with the numbers behind
   them (at most 10 per kind):

@@ -35,6 +35,7 @@ class ImportEdge:
     is_external: bool
     symbol_name: str | None = None   # None si es import de módulo completo
     line_number: int | None = None
+    kind: ImportKind = ImportKind.MODULE   # dónde está la sentencia (MODULE, LAZY, TYPE_CHECKING)
 
 @dataclass
 class ModuleInfo:
@@ -302,7 +303,8 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   (`ProjectIndex`), luego llama `parse_file(path, name, index, config)` por
   archivo — función de módulo pura y picklable, unidad de trabajo del futuro
   `ProcessPoolExecutor`. `iter_statements` (recorrido en profundidad, en orden de
-  código, solo por listas de sentencias) captura:
+  código, solo por listas de sentencias, y con el contexto de cada una: `ImportKind`)
+  captura:
 
   | Caso | `target` | `symbol_name` |
   |---|---|---|
@@ -315,6 +317,13 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   Import interno inexistente → ancestro existente más cercano + warning (o se
   omite con warning si no hay ninguno, p. ej. namespace packages). Relativo
   más allá del paquete raíz → warning, se omite. Auto-import → sin arista.
+
+  **Tipo de import (`ImportKind`)**: `MODULE` (nivel de módulo, también en clases,
+  `try/except` e `if`), `LAZY` (cuerpo de una función o método) y `TYPE_CHECKING`
+  (cuerpo de un `if TYPE_CHECKING:`, también `typing.TYPE_CHECKING`; se reconoce por
+  nombre). Manda el contexto más débil: un import perezoso dentro de un bloque
+  `TYPE_CHECKING`, o un bloque `TYPE_CHECKING` dentro de una función, es `TYPE_CHECKING`.
+  El `else` de un `if TYPE_CHECKING` y el cuerpo de `if not TYPE_CHECKING` son `MODULE`.
 - **Detección de re-exports**: solo en `__init__.py`, cada `ImportFrom`
   interno de un *símbolo* (no de un submódulo) genera
   `ReExport(paquete, módulo_origen, asname or name)`. Con alias, la cadena se
@@ -337,10 +346,11 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
 
 Limitaciones conocidas, documentadas explícitamente (no bugs a "arreglar" sin
 discutirlo primero):
-- El recorrido (`iter_statements`) no distingue nivel de anidamiento — un import dentro de una
-  función se trata igual que uno a nivel de módulo. Aceptable para v0.1;
-  un `NodeVisitor` completo permitiría marcar imports condicionales
-  (`TYPE_CHECKING`, `try/except ImportError`) en v0.2.
+- La posición de la sentencia aproxima si un import se ejecuta al importar
+  (`ImportKind`). Un ciclo de `import a`/`import b` a nivel de módulo suele funcionar
+  si los atributos se usan tarde y solo falla con `from a import nombre`; no se modela
+  (es el criterio de pylint). `TYPE_CHECKING` se reconoce por nombre, no por semántica:
+  `from typing import TYPE_CHECKING as flag` no se detecta.
 - **Star-imports (`from x import *`) no resuelven re-exports** — sin ejecutar
   el código o inspeccionar `__all__`, no se puede saber con certeza qué
   símbolos exporta un `*`. Se genera un warning explícito, nunca falla
@@ -657,6 +667,14 @@ aplicados) y construye el grafo real.
   real del problema aunque la lista de ciclos se corte en 100: en networkx,
   "100+ ciclos" es en realidad **una maraña de 279 de 288 módulos**.
   Miembros ordenados; marañas de mayor a menor tamaño.
+- **Dos niveles de grafo**: `build_graph` guarda en cada arista `kind`, el
+  `ImportKind` más fuerte de sus sentencias (`weight` sigue contando todas).
+  `cycles` y `tangles` se calculan solo sobre las aristas `MODULE`
+  (`import_time_graph`): lo que existe al importar. Ca/Ce, hallazgos, capas, impacto y
+  paquetes cuentan todas. `hidden_tangles` (`find_hidden_tangles`) son las marañas del
+  grafo completo que no lo son al importar, incluidas las que un import perezoso o de
+  tipos agranda: acoplamiento de diseño que no rompe al importar. En pydantic, httpx y
+  huggingface_hub, todas las marañas reportadas antes eran de este tipo.
 - **"God modules" / alto acoplamiento**: percentil superior (default 90%) de
   `Ca + Ce` combinado, como candidatos que la capa de IA interpretará.
   Umbral por *nearest-rank* sobre todos los módulos (el
@@ -915,7 +933,7 @@ Reglas:
   `MAX_TANGLE_MEMBERS_SHOWN` = 10 miembros y "…y N más"), luego los ciclos
   como ejemplos, en bucle cerrado (`a` → `b` → `a`), con aviso si se
   truncaron. El resumen menciona la maraña mayor y la tabla de métricas
-  cuenta las marañas.
+  cuenta las marañas. Tras ellos, la subsección «Acoplamiento oculto» lista las marañas ocultas (hasta `MAX_HIDDEN_TANGLES_SHOWN` = 10).
 - Todo texto sale del catálogo `i18n` (ES/EN); un test exige que cada
   `WarningCode`, cada `ErrorKey` y cada clave tengan ambos idiomas con los
   mismos placeholders.

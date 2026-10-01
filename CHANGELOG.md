@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Hidden coupling: the report lists groups of modules that depend on each other only
+  through imports inside functions or under `TYPE_CHECKING`, with their own summary
+  line and a "Hidden tangles" metric.
 - `unskein config save [SOURCE]`: validates a config file (default `./.unskein.toml`)
   and copies it, comments included, to `~/.config/unskein/config.toml`, creating the
   folder. It never replaces an existing user file without `--force`, writes it readable
@@ -16,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dependency cycles and tangles now count only imports that run when the code is
+  imported (module level). Imports inside functions or under `TYPE_CHECKING` no
+  longer create cycles or tangles in the report, the AI context or the summary; they
+  still count for coupling, findings, layers and impact. Projects that reported tangles
+  made only of such imports now report them as hidden coupling.
 - The "no AI model configured" notice names both places a model can be set: the
   `.unskein.toml` of the analyzed folder and `~/.config/unskein/config.toml`
   (`unskein init --user`). `unskein init` points to `unskein config save`, and the
