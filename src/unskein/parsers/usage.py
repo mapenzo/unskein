@@ -3,13 +3,14 @@
 import ast
 import re
 import warnings
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
 from unskein.parsers.discovery import detect_encoding
-from unskein.parsers.models import ImportKind, ModuleInfo
+from unskein.parsers.indirection import walk_submodules
+from unskein.parsers.models import ImportKind, ModuleInfo, ParseResult
 
 
 @dataclass(slots=True)
@@ -413,3 +414,180 @@ def collect_import_evidence(
             bound_names=tuple(sorted(used)),
         )
     return evidence
+
+
+def _ancestors_and_self(module: str) -> list[str]:
+    """List a dotted module and every package above it.
+
+    Args:
+        module: Dotted module name, e.g. ``a.b.c``.
+
+    Returns:
+        ``["a", "a.b", "a.b.c"]`` for ``a.b.c``.
+    """
+    parts = module.split(".")
+    return [".".join(parts[: end + 1]) for end in range(len(parts))]
+
+
+class _ReadThroughCollector:
+    """Accumulate which wanted names other modules read from each module.
+
+    Args:
+        wanted: Names of interest per module.
+        modules: Names of the project modules.
+    """
+
+    def __init__(self, wanted: Mapping[str, Collection[str]], modules: frozenset[str]):
+        self.wanted = {module: frozenset(names) for module, names in wanted.items()}
+        self.modules = modules
+        self.below: dict[str, list[str]] = {}
+        for module in self.wanted:
+            for ancestor in _ancestors_and_self(module):
+                self.below.setdefault(ancestor, []).append(module)
+        self.found: dict[str, set[str]] = {}
+
+    def add_all(self, module: str) -> None:
+        """Count every wanted name of a module as read.
+
+        Args:
+            module: Module whose names may all be read; ignored when nothing is wanted from it.
+        """
+        if module in self.wanted:
+            self.found.setdefault(module, set()).update(self.wanted[module])
+
+    def add_symbol(self, module: str, symbol: str) -> None:
+        """Count a name imported from a module.
+
+        Args:
+            module: Module the name is imported from.
+            symbol: Imported name.
+        """
+        if symbol in self.wanted.get(module, ()):
+            self.found.setdefault(module, set()).add(symbol)
+
+    def add_chains(self, module: str, chains: Collection[str]) -> None:
+        """Count the wanted names read through a module by attribute chains.
+
+        Each chain is walked down the project's submodules; the attribute after the last
+        submodule is a name read from that submodule. A chain that ends at a submodule
+        uses that module by itself (``getattr(pkg.a, name)``), so every name counts.
+
+        Args:
+            module: Module the chains are read through.
+            chains: Dotted attribute chains, e.g. ``sub.Thing``.
+        """
+        for chain in chains:
+            reached, symbol = walk_submodules(module, chain, self.modules)
+            if symbol is None:
+                self.add_all(reached)
+            else:
+                self.add_symbol(reached, symbol)
+
+
+def _alias_refers_to(node: ast.Import | ast.ImportFrom, module: str) -> tuple[str, str] | None:
+    """Find the name an import statement binds for a module and the module that name refers to.
+
+    ``import a.b`` binds ``a``, which refers to the package ``a``, not to ``a.b``.
+
+    Args:
+        node: The import statement.
+        module: Absolute module the statement imports as a whole.
+
+    Returns:
+        ``(bound name, module it refers to)``, or None when no alias of the statement
+        imports that module (a star import, or a target that fell back to an ancestor).
+    """
+    for alias in node.names:
+        if isinstance(node, ast.Import):
+            if alias.name != module:
+                continue
+            if alias.asname:
+                return alias.asname, module
+            top = module.split(".")[0]
+            return top, top
+        if alias.name != "*" and (module == alias.name or module.endswith(f".{alias.name}")):
+            return alias.asname or alias.name, module
+    return None
+
+
+def _whole_module_reads(
+    tree: ast.Module | None, imports: Collection[tuple[int, str]], collector: _ReadThroughCollector
+) -> None:
+    """Record what a module reads through the whole modules it imports.
+
+    Args:
+        tree: The importing module parsed again, or None when it cannot be read any more.
+        imports: ``(line, imported module)`` of its whole-module imports without usage data.
+        collector: Where the reads are recorded.
+    """
+    if tree is None:
+        for _, module in imports:
+            collector.add_all(module)
+        return
+    by_line: dict[int, list[str]] = {}
+    for line, module in imports:
+        by_line.setdefault(line, []).append(module)
+    refers: dict[str, set[str]] = {}
+    matched: set[tuple[int, str]] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        for module in by_line.get(node.lineno, ()):
+            binding = _alias_refers_to(node, module)
+            if binding is not None:
+                refers.setdefault(binding[0], set()).add(binding[1])
+                matched.add((node.lineno, module))
+    # Star imports, targets that fell back to an ancestor, or a file changed since the scan.
+    for line, module in imports:
+        if (line, module) not in matched:
+            collector.add_all(module)
+    usages = collect_name_usage(tree, refers)
+    for name, modules in refers.items():
+        for module in modules:
+            if usages[name].escapes:
+                collector.add_all(module)
+            collector.add_chains(module, usages[name].chains)
+
+
+def collect_names_read_from(
+    parsed: ParseResult, wanted: Mapping[str, Collection[str]], *, encoding: str | None
+) -> dict[str, frozenset[str]]:
+    """Find which of some names other modules read from each module at runtime.
+
+    A name counts when it is imported by name from the module, read as an attribute of
+    it or of a package above it, or possibly taken by a star import or a use of the
+    module by itself. Imports under ``TYPE_CHECKING`` never run, so they do not count.
+    Modules whose use of a whole-module import was not analyzed by the parser are parsed
+    again; one that cannot be read any more counts as reading every name.
+
+    Args:
+        parsed: Parse result with imports as written (before re-export resolution).
+        wanted: Names of interest per module.
+        encoding: Fallback encoding when a file declares none.
+
+    Returns:
+        The wanted names read from each module that has any.
+    """
+    collector = _ReadThroughCollector(wanted, frozenset(module.name for module in parsed.modules))
+    for module in parsed.modules:
+        pending: list[tuple[int, str]] = []
+        for edge in module.imports:
+            if (
+                edge.is_external
+                or edge.kind is ImportKind.TYPE_CHECKING
+                or edge.target not in collector.below
+            ):
+                continue
+            if edge.symbol_name is not None:
+                collector.add_symbol(edge.target, edge.symbol_name)
+            elif edge.accessed or edge.escapes:
+                if edge.escapes:
+                    collector.add_all(edge.target)
+                collector.add_chains(edge.target, edge.accessed)
+            elif edge.line_number is not None:
+                pending.append((edge.line_number, edge.target))
+            else:
+                collector.add_all(edge.target)
+        if pending:
+            _whole_module_reads(_parse_source(module.file_path, encoding), pending, collector)
+    return {module: frozenset(names) for module, names in collector.found.items()}

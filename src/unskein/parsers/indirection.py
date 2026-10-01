@@ -145,6 +145,27 @@ def resolve_target(
     return resolve_target(index[(module, symbol)], symbol, index, path)
 
 
+def walk_submodules(package: str, chain: str, modules: frozenset[str]) -> tuple[str, str | None]:
+    """Follow an attribute chain down the project submodules it names.
+
+    Args:
+        package: Module the chain is read through.
+        chain: Dotted attributes, e.g. ``algorithms.shortest_path``.
+        modules: Names of the project modules.
+
+    Returns:
+        The deepest submodule reached and the attribute read from it, or None when the
+        chain ends at a module.
+    """
+    parts = chain.split(".")
+    module = package
+    position = 0
+    while position < len(parts) and f"{module}.{parts[position]}" in modules:
+        module = f"{module}.{parts[position]}"
+        position += 1
+    return module, parts[position] if position < len(parts) else None
+
+
 def resolve_access(
     package: str, chain: str, *, modules: frozenset[str], index: ReExportIndex
 ) -> tuple[str, str | None, list[ParseWarning]]:
@@ -164,15 +185,9 @@ def resolve_access(
         The defining module, the symbol (None when the chain ends at a module) and the
         warnings produced while resolving.
     """
-    parts = chain.split(".")
-    module = package
-    position = 0
-    while position < len(parts) and f"{module}.{parts[position]}" in modules:
-        module = f"{module}.{parts[position]}"
-        position += 1
-    if position == len(parts):
+    module, symbol = walk_submodules(package, chain, modules)
+    if symbol is None:
         return module, None, []
-    symbol = parts[position]
     target, warnings = resolve_target(module, symbol, index)
     return target, symbol, warnings
 

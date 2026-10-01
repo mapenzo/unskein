@@ -767,7 +767,7 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   de las marañas del escaneo). Con `--all-edges` se usa el grafo completo e incluye el
   acoplamiento oculto (imports dentro de funciones o bajo `TYPE_CHECKING`). **Todas** las
   marañas se planifican y se simulan; `--max-tangles` (`DEFAULT_MAX_TANGLES = 5`) solo limita
-  cuántas detalla el informe. `scan.parse_project` comparte el parseo con `scan`, así que los
+  cuántas detalla el informe. `scan.parse_sources` y `scan.resolve_parsed` comparten el parseo con `scan`, así que los
   `exclude` y `include_tests` de `.unskein.toml` se respetan igual. Las advertencias del
   parseo (archivos saltados) se cuentan en `UntanglePlan.warnings` y el informe las señala en
   una línea, porque un archivo saltado puede esconder una maraña.
@@ -793,9 +793,25 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   `LAZY` y `TYPE_CHECKING` no se ofrecen (se quitan los contextos de la evidencia) cuando:
   el import ya es perezoso o está bajo `TYPE_CHECKING`; con `--all-edges`, para **toda**
   arista, porque el objetivo es el acoplamiento de diseño y esos pasos lo conservan; y
-  cuando otro módulo importa por nombre, desde el módulo origen, alguno de los nombres que
-  ese import enlaza (`c` hace `from a import Thing`: mover `a → b` dentro de una función
-  rompería `c`).
+  cuando otro módulo lee en ejecución, a través del módulo origen, alguno de los nombres
+  que ese import enlaza: mover `a → b` dentro de una función rompería a `c` si hace
+  `from a import Thing`, `from pkg import a` + `a.Thing`, `import pkg.a` + `pkg.a.Thing`,
+  `from a import *` o usa `a` suelto (`getattr(a, …)`). `collect_names_read_from` mira los
+  imports **tal como se escriben** (`scan.parse_sources`, antes de resolver re-exports, que
+  apuntarían `c` al módulo que define el nombre y ocultarían el paso por `a`); los imports
+  bajo `TYPE_CHECKING` no cuentan. Los accesos por atributo que el parser no registró (import
+  de un módulo entero que no es paquete, o de un paquete enlazado más de una vez o sin usos
+  registrados) se buscan releyendo solo esos importadores; un
+  importador ilegible cuenta como si leyera todos los nombres. Cada cadena se recorre por los
+  submódulos del proyecto (`walk_submodules`, compartido con `resolve_access`) y el nombre
+  enlazado se atribuye al módulo al que apunta (`import pkg.a` enlaza `pkg`, no `pkg.a`).
+  Una cadena que termina en el propio submódulo (`getattr(pkg.a, n)`) lo usa suelto y cuenta
+  todos sus nombres. Límites: un paquete antecesor usado suelto (`getattr(pkg, n)`) no se
+  sigue hasta sus submódulos; un submódulo que la fachada expone con otro nombre
+  (`from pkg import a as alpha` en `__init__.py`) o que llega por `from pkg import *` no se
+  sigue hasta él; y una cadena literal igual al nombre (`provider="ollama"`) cuenta como uso
+  suelto, el mismo criterio conservador de la fase 0b (en litellm, 2 pasos `LAZY` pasan a
+  `MOVE_SYMBOL` por esto).
 - **Por qué `PACKAGE_STRUCTURE` es prohibitivo y por qué existe `BYPASS_FACADE`.** En networkx,
   14 de 15 cortes eran aristas fachada a hijo propio y con costes planos el algoritmo las
   elegía porque todas cuestan igual. Con coste 1000 solo quedan las inevitables (3). Esas
@@ -844,7 +860,9 @@ analyze → build_context → build_messages → AIClient.generate_report → gr
 ### Contexto acotado (`AIContext`)
 
 Solo nombres de módulo y métricas (nunca código fuente ni rutas): las mayores
-marañas (5, con hasta 20 miembros), los ciclos más cortos (10, con hasta 8 miembros
+marañas (5, con hasta 20 miembros), las mayores marañas ocultas (`hidden_tangles`, mismo
+límite: acoplamiento que solo existe por imports perezosos o bajo `TYPE_CHECKING`), los
+ciclos más cortos (10, con hasta 8 miembros
 cada uno y su longitud real en `CycleSummary.length`), los 15 módulos con mayor
 `Ca + Ce` y el recuento de warnings por código. Cada lista truncada lleva su total al
 lado, para que el LLM sepa que hay más. Los ciclos se resumen porque `find_cycles`
@@ -861,7 +879,8 @@ puede reducir más; en ese caso se envía en su tamaño mínimo.
 `build_messages(context, lang)` devuelve `[system, user]`. El system lleva una
 rúbrica de severidad anclada en los datos (`high`: maraña o ciclo; `medium`: módulo
 en el top de `Ca + Ce` volátil del que otros dependen — inestabilidad ≥
-`UNSTABLE_THRESHOLD` (0.7) y `Ca > 0` — o con `Ce` muy por encima del resto; `low`: el
+`UNSTABLE_THRESHOLD` (0.7) y `Ca > 0` —, con `Ce` muy por encima del resto, o una maraña
+oculta, que no falla al importar pero sigue acoplando; `low`: el
 resto; nunca se señala un módulo solo por ser estable, porque inestabilidad baja con
 muchos dependientes es sano), la regla de
 copiar los nombres de módulo literalmente y la instrucción de idioma. El user lleva

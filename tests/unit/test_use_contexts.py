@@ -6,7 +6,7 @@ import pathspec
 import pytest
 
 from unskein.parsers.indirection import resolve_indirection
-from unskein.parsers.models import ImportKind, ModuleInfo
+from unskein.parsers.models import ImportEdge, ImportKind, ModuleInfo, ParseResult
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.parsers.usage import (
     NO_EVIDENCE,
@@ -14,6 +14,7 @@ from unskein.parsers.usage import (
     UseContext,
     bound_names_by_line,
     collect_import_evidence,
+    collect_names_read_from,
     collect_use_contexts,
 )
 
@@ -144,3 +145,18 @@ def test_evidence_tells_whether_annotations_are_postponed(
         parsed_module(root, "app.a"), [("app.a", "app.b")], kinds={ImportKind.MODULE}, encoding=None
     ).values()
     assert evidence.postponed_annotations is expected
+
+
+def test_an_unreadable_importer_reads_every_wanted_name(tmp_path: Path) -> None:
+    importer = ModuleInfo("p.c", tmp_path / "gone.py", [ImportEdge("p.c", "p.a", False, None, 1)])
+    parsed = ParseResult([importer], "python")
+    found = collect_names_read_from(parsed, {"p.a": {"Thing", "Other"}}, encoding=None)
+    assert found == {"p.a": frozenset({"Thing", "Other"})}
+
+
+def test_names_read_from_ignore_modules_nothing_is_wanted_from(tmp_path: Path) -> None:
+    importer = ModuleInfo(
+        "p.c", tmp_path / "gone.py", [ImportEdge("p.c", "p.z", False, "Thing", 1)]
+    )
+    parsed = ParseResult([importer], "python")
+    assert collect_names_read_from(parsed, {"p.a": {"Thing"}}, encoding=None) == {}

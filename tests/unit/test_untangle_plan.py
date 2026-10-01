@@ -223,6 +223,97 @@ def test_no_lazy_step_for_a_name_other_modules_import_from_the_source(
     assert (cut.source, cut.target, cut.step) == ("reexp.a", "reexp.b", expected)
 
 
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        (
+            {"reexp/c.py": "from reexp import a\n\n\ndef f():\n    return a.Thing\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        ({"reexp/c.py": "import reexp.a\n\nY = reexp.a.Thing\n"}, StepKind.MOVE_SYMBOL),
+        ({"reexp/c.py": "import reexp.a as m\n\nY = m.Thing\n"}, StepKind.MOVE_SYMBOL),
+        ({"reexp/c.py": "from reexp.a import *\n"}, StepKind.MOVE_SYMBOL),
+        ({"reexp/c.py": "from reexp import a\n\nY = getattr(a, 'Thing')\n"}, StepKind.MOVE_SYMBOL),
+        (
+            {
+                "reexp/__init__.py": "from reexp.a import Thing\n",
+                "reexp/c.py": "import reexp as r\n\nY = r.Thing\n",
+            },
+            StepKind.MOVE_SYMBOL,
+        ),
+        ({"reexp/c.py": "from reexp import a\n\nY = a.make\n"}, StepKind.LAZY),
+        (
+            {"reexp/c.py": "import reexp.a\n\nY = reexp.a.make\nZ = getattr(reexp, 'b')\n"},
+            StepKind.LAZY,
+        ),
+        (
+            {
+                "reexp/__init__.py": "from reexp.b import Thing\n",
+                "reexp/c.py": "import reexp as r\n\nY = r.Thing\n",
+            },
+            StepKind.LAZY,
+        ),
+        (
+            {"reexp/c.py": "import reexp.a\n\nY = getattr(reexp.a, 'Thing')\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        (
+            {
+                "reexp/__init__.py": "from reexp import a\n",
+                "reexp/c.py": "import reexp\n\nY = getattr(reexp.a, 'Thing')\n",
+            },
+            StepKind.MOVE_SYMBOL,
+        ),
+        ({"reexp/c.py": "from . import a\n\nY = a.Thing\n"}, StepKind.MOVE_SYMBOL),
+        (
+            {"reexp/c.py": "import os; from reexp import a\n\nY = a.Thing, os.sep\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        (
+            {"reexp/c.py": "from reexp import b as m\nfrom reexp import a as m\n\nY = m.Thing\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        ({"reexp/c.py": "import reexp.a.nope\n\nY = reexp.a.Thing\n"}, StepKind.MOVE_SYMBOL),
+        (
+            {"reexp/c.py": "def f():\n    from reexp import a\n\n    return a.Thing\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        (
+            {
+                "reexp/c.py": "from typing import TYPE_CHECKING\n\n"
+                "if TYPE_CHECKING:\n    from reexp.a import Thing\n"
+            },
+            StepKind.LAZY,
+        ),
+    ],
+    ids=[
+        "attribute_of_a_from_import",
+        "attribute_of_a_dotted_import",
+        "attribute_of_an_aliased_import",
+        "star_import",
+        "module_used_by_itself",
+        "attribute_of_a_package_re_export",
+        "other_attribute_only",
+        "package_name_used_by_itself",
+        "same_name_read_from_the_package",
+        "module_reached_through_a_dotted_import_used_by_itself",
+        "module_reached_through_the_package_used_by_itself",
+        "relative_from_import",
+        "two_statements_on_one_line",
+        "rebound_alias",
+        "fallback_ancestor_target",
+        "reader_inside_a_function",
+        "type_only_import",
+    ],
+)
+def test_no_lazy_step_for_a_name_other_modules_read_through_the_source(
+    make_project: MakeProject, files: dict[str, str], expected: StepKind
+) -> None:
+    [tangle] = plan_for(make_project({**RE_IMPORTED, **files})).tangles
+    [cut] = tangle.cuts
+    assert (cut.source, cut.target, cut.step) == ("reexp.a", "reexp.b", expected)
+
+
 BROKEN_FILE_CYCLE = {
     "r/__init__.py": "",
     "r/a.py": "from r.b import x\n\ny = 1\n",
@@ -268,6 +359,13 @@ def test_type_checking_help_warns_about_runtime_annotation_readers(lang: Lang) -
 @pytest.mark.parametrize("lang", list(Lang))
 def test_lazy_help_mentions_postponed_annotations(lang: Lang) -> None:
     assert "from __future__ import annotations" in t("untangle.step.lazy.help", lang)
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_lazy_help_warns_about_runtime_annotation_readers(lang: Lang) -> None:
+    help_text = t("untangle.step.lazy.help", lang)
+    for reader in ("pydantic", "FastAPI", "typing.get_type_hints"):
+        assert reader in help_text
 
 
 TEST_FILE_CYCLE = {

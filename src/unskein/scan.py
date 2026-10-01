@@ -151,8 +151,8 @@ def prepare_scan(
     )
 
 
-def parse_project(context: ScanContext) -> ParseResult:
-    """Discover, parse and resolve the project's Python files.
+def parse_sources(context: ScanContext) -> ParseResult:
+    """Discover and parse the project's Python files, with imports as written.
 
     Projects with at least ``parallel_threshold`` files are parsed in a process
     pool; smaller ones sequentially.
@@ -161,7 +161,7 @@ def parse_project(context: ScanContext) -> ParseResult:
         context: A prepared scan.
 
     Returns:
-        The parse result with re-exports and package access resolved.
+        The parse result before re-exports and package access are resolved.
 
     Raises:
         UnskeinError: If the path is not a directory or holds no Python files.
@@ -176,7 +176,35 @@ def parse_project(context: ScanContext) -> ParseResult:
     if not files:
         raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
     logger.debug("Discovered %d Python files under %s", len(files), root)
-    return adapter.resolve_indirection(parse_all(files, adapter, root, config))
+    return parse_all(files, adapter, root, config)
+
+
+def parse_project(context: ScanContext) -> ParseResult:
+    """Discover, parse and resolve the project's Python files.
+
+    Args:
+        context: A prepared scan.
+
+    Returns:
+        The parse result with re-exports and package access resolved.
+
+    Raises:
+        UnskeinError: If the path is not a directory or holds no Python files.
+    """
+    return resolve_parsed(parse_sources(context), context)
+
+
+def resolve_parsed(parsed: ParseResult, context: ScanContext) -> ParseResult:
+    """Resolve the re-exports and package access of a parse result.
+
+    Args:
+        parsed: Parse result as returned by ``parse_sources``.
+        context: The scan it belongs to.
+
+    Returns:
+        A new parse result with import targets pointing at the defining modules.
+    """
+    return PythonAdapter(context.analysis).resolve_indirection(parsed)
 
 
 def analyze_project(context: ScanContext) -> AnalysisResult:

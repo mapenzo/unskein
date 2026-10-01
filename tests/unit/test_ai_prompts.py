@@ -138,6 +138,22 @@ def test_lists_are_truncated_but_totals_are_kept() -> None:
     assert len(context.top_coupled_modules) == MAX_MODULES_IN_PROMPT
 
 
+def test_context_carries_hidden_tangles_truncated_with_their_total() -> None:
+    result = synthetic_result(module_count=400, cycle_count=0, tangle_count=0)
+    hidden = [[f"h{group}.m{index}" for index in range(30)] for group in range(8)]
+    context = build_context(replace(result, hidden_tangles=hidden))
+    assert context.total_hidden_tangles == 8
+    assert len(context.hidden_tangles) == MAX_TANGLES_IN_PROMPT
+    assert context.hidden_tangles[0].size == 30
+    assert context.hidden_tangles[0].members == hidden[0][:MAX_TANGLE_MEMBERS_IN_PROMPT]
+
+
+def test_system_prompt_rates_hidden_tangles_as_medium() -> None:
+    assert "hidden_tangles" in SYSTEM_PROMPT
+    medium = SYSTEM_PROMPT.split("- medium:")[1].split("- low:")[0]
+    assert "hidden tangle" in medium
+
+
 def test_cycles_come_shortest_first() -> None:
     context = build_context(synthetic_result(module_count=100, cycle_count=40, tangle_count=0))
     lengths = [cycle.length for cycle in context.cycles]
@@ -280,6 +296,8 @@ def long_named_context(name_length: int, count: int) -> AIContext:
         total_dependencies=count,
         tangles=[TangleSummary(size=count, members=names) for _ in range(count)],
         total_tangles=count,
+        hidden_tangles=[TangleSummary(size=count, members=names) for _ in range(count)],
+        total_hidden_tangles=count,
         cycles=[CycleSummary(length=count, members=names) for _ in range(count)],
         total_cycles=count,
         cycles_truncated=False,
@@ -310,6 +328,8 @@ def test_shrink_halves_lists_and_members_but_keeps_at_least_one() -> None:
     assert len(shrunk.top_coupled_modules) == 2
     assert len(shrunk.tangles) == 2 and len(shrunk.tangles[0].members) == 2
     assert len(shrunk.cycles) == 2 and len(shrunk.cycles[0].members) == 2
+    assert len(shrunk.hidden_tangles) == 2 and len(shrunk.hidden_tangles[0].members) == 2
+    assert shrunk.total_hidden_tangles == 5
     single = shrink_context(long_named_context(name_length=5, count=1))
     assert single == long_named_context(name_length=5, count=1)
 

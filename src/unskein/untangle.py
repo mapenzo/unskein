@@ -7,8 +7,12 @@ from pathlib import Path
 from unskein.graph.metrics import PACKAGE_INIT_FILE, analyze, find_tangles, import_time_graph
 from unskein.graph.untangle import Edge, UntanglePlan, plan_tangles, simulate
 from unskein.parsers.models import ImportKind, ParseResult
-from unskein.parsers.usage import ImportEvidence, collect_import_evidence
-from unskein.scan import ScanContext, ScanOptions, parse_project, prepare_scan
+from unskein.parsers.usage import (
+    ImportEvidence,
+    collect_import_evidence,
+    collect_names_read_from,
+)
+from unskein.scan import ScanContext, ScanOptions, parse_sources, prepare_scan, resolve_parsed
 
 DEFAULT_MAX_TANGLES = 5
 
@@ -81,45 +85,51 @@ def facade_own_names(parsed: ParseResult) -> dict[str, frozenset[str]]:
     return facades
 
 
-def names_imported_from(parsed: ParseResult) -> dict[str, frozenset[str]]:
-    """Map each project module to the names other project modules import from it.
-
-    Args:
-        parsed: The resolved parse result.
-
-    Returns:
-        The names imported by name from each module that has any.
-    """
-    found: dict[str, set[str]] = {}
-    for module in parsed.modules:
-        for edge in module.imports:
-            if not edge.is_external and edge.symbol_name is not None:
-                found.setdefault(edge.target, set()).add(edge.symbol_name)
-    return {name: frozenset(names) for name, names in found.items()}
-
-
 def _keep_names_at_module_level(
-    evidence: Mapping[Edge, ImportEvidence], imported_from: Mapping[str, frozenset[str]]
+    evidence: Mapping[Edge, ImportEvidence], read_from: Mapping[str, frozenset[str]]
 ) -> dict[Edge, ImportEvidence]:
-    """Drop the use contexts of imports that bind a name other modules import from the source.
+    """Drop the use contexts of imports that bind a name other modules read from the source.
 
     Moving such an import into a function or under ``TYPE_CHECKING`` removes the name
-    from the source module at runtime, which breaks every module importing it from there.
+    from the source module at runtime, which breaks every module reading it from there.
 
     Args:
         evidence: Evidence per dependency.
-        imported_from: Names other modules import from each module.
+        read_from: Names other modules read from each module at runtime.
 
     Returns:
         The evidence, without contexts where the lazy and type-only steps would break others.
     """
     kept = {}
     for edge, found in evidence.items():
-        if imported_from.get(edge[0], frozenset()).isdisjoint(found.bound_names):
+        if read_from.get(edge[0], frozenset()).isdisjoint(found.bound_names):
             kept[edge] = found
         else:
             kept[edge] = replace(found, contexts=frozenset())
     return kept
+
+
+def _names_read_from_sources(
+    sources: ParseResult, evidence: Mapping[Edge, ImportEvidence], encoding: str | None
+) -> dict[str, frozenset[str]]:
+    """Find which names bound by the candidate imports other modules read at runtime.
+
+    Only imports that still have use contexts could take the lazy or type-only step, so
+    only their names are looked for.
+
+    Args:
+        sources: Parse result with imports as written.
+        evidence: Evidence per dependency.
+        encoding: Fallback encoding when a file declares none.
+
+    Returns:
+        The names read from each importing module that has any.
+    """
+    wanted: dict[str, set[str]] = {}
+    for (source, _), found in evidence.items():
+        if found.contexts:
+            wanted.setdefault(source, set()).update(found.bound_names)
+    return collect_names_read_from(sources, wanted, encoding=encoding)
 
 
 def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePlan:
@@ -137,7 +147,8 @@ def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePla
     Raises:
         UnskeinError: If the path is not a directory or holds no Python files.
     """
-    parsed = parse_project(context)
+    sources = parse_sources(context)
+    parsed = resolve_parsed(sources, context)
     result = analyze(parsed, context.findings)
     scope = result.graph if all_edges else import_time_graph(result.graph)
     tangles = find_tangles(scope)
@@ -158,7 +169,9 @@ def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePla
                     encoding=context.analysis.default_encoding,
                 )
             )
-    evidence = _keep_names_at_module_level(evidence, names_imported_from(parsed))
+    evidence = _keep_names_at_module_level(
+        evidence, _names_read_from_sources(sources, evidence, context.analysis.default_encoding)
+    )
     plans = plan_tangles(scope, tangles, evidence, facades=facades, all_edges=all_edges)
     cuts = [cut for plan in plans for cut in plan.cuts]
     return UntanglePlan(

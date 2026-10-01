@@ -396,10 +396,14 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "untangle.step.lazy.help": {
         Lang.ES: "Los nombres solo se usan dentro de funciones (o también en anotaciones, si el "
         "módulo tiene `from __future__ import annotations`): importarlos ahí rompe el ciclo al "
-        "importar, aunque el acoplamiento sigue (aparecerá como acoplamiento oculto).",
+        "importar, aunque el acoplamiento sigue (aparecerá como acoplamiento oculto). Si una "
+        "anotación usa el nombre, las bibliotecas que leen anotaciones en ejecución (modelos de "
+        "pydantic, firmas de typer o FastAPI, `typing.get_type_hints`) ya no lo encuentran.",
         Lang.EN: "The names are only used inside functions (or in annotations too, when the "
         "module has `from __future__ import annotations`): importing them there breaks the "
-        "import-time cycle, though the coupling stays (it will show as hidden coupling).",
+        "import-time cycle, though the coupling stays (it will show as hidden coupling). If an "
+        "annotation uses the name, libraries that read annotations at runtime (pydantic models, "
+        "typer or FastAPI signatures, `typing.get_type_hints`) no longer find it.",
     },
     "untangle.step.move_symbol": {Lang.ES: "Mover el símbolo", Lang.EN: "Move the symbol"},
     "untangle.step.move_symbol.help": {
