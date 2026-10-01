@@ -111,7 +111,8 @@ class FindingSummary:
 
     Attributes:
         kind: Rule that produced it, e.g. ``"bottleneck"``.
-        modules: The module, or ``[importer, imported]`` for unstable or layer violations.
+        modules: The module, or ``[importer, imported]`` for unstable dependencies and layer
+            violations.
         evidence: Numbers (or, for layer violations, layer names) that triggered the rule.
     """
 

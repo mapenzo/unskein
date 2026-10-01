@@ -7,7 +7,7 @@ import networkx as nx
 import pytest
 
 from unskein.config import FindingsConfig
-from unskein.graph.findings import Finding, FindingKind, find_findings
+from unskein.graph.findings import Finding, FindingKind, find_findings, unmatched_layers
 from unskein.graph.metrics import compute_coupling
 from unskein.graph.percentile import nearest_rank_percentile
 
@@ -321,3 +321,19 @@ def test_layer_violations_are_sorted_by_module_pair_and_listed_last() -> None:
         (("core.a", "web.b"), {"layer_from": "core", "layer_to": "web"}),
         (("core.z", "web.a"), {"layer_from": "core", "layer_to": "web"}),
     ]
+
+
+def test_unmatched_layers_is_empty_when_every_layer_owns_a_module() -> None:
+    assert unmatched_layers(["web.a", "core"], ["web", "core"]) == []
+
+
+def test_unmatched_layers_names_the_misspelled_layer() -> None:
+    assert unmatched_layers(["web.a", "core.b"], ["web", "cor"]) == ["cor"]
+
+
+def test_unmatched_layers_matches_whole_segments_only() -> None:
+    assert unmatched_layers(["webapp.views"], ["web"]) == ["web"]
+
+
+def test_unmatched_layers_keeps_the_declared_order() -> None:
+    assert unmatched_layers(["core"], ["zeta", "core", "alpha"]) == ["zeta", "alpha"]

@@ -631,15 +631,6 @@ aplicados) y construye el grafo real.
   informe: a lo sumo 10 módulos por tipo; en el contexto de la IA, 5 por tipo con el total
   real, como hechos ya calculados. Los hallazgos **no** cambian el código de salida.
 
-  Regla de capas (`_layer_violations`, `_layer_of`): `[layers] order` lista las capas de
-  la más alta a la más baja como prefijos de paquete; el rango es la posición. Un módulo
-  pertenece a la capa de su prefijo más largo que coincida por segmentos completos
-  (`app.web` no abarca `app.webhooks`); sin capa, no se comprueba. Hay violación cuando
-  el importador está en una capa más baja (posterior en la lista) que el importado. Las
-  fachadas quedan excluidas, y se ordenan por par de módulos tras los huérfanos. Sin
-  `[layers]` la regla no existe. Validación: cada nombre cumple `LAYER_NAME_PATTERN`, sin
-  repetidos, y el error nunca repite el valor. Calibración en swo-aura-rag_api: orden
-  declarado (`webapi, application, nexus_ai, core`) 0 violaciones; invertido, 158.
   Calibración medida antes de fijar los defaults:
 
   | Proyecto | Módulos | Cuellos | Orquestadores | Dep. inestables | Huérfanos |
@@ -648,6 +639,18 @@ aplicados) y construye el grafo real.
   | unskein (`src`) | 31 | 0 | 2 (`cli`, `scan`) | 0 | 0 |
 
   Coste medido: 0,05 s con 20.000 nodos y 200.000 aristas.
+
+  Regla de capas (`_layer_violations`, `_layer_of`): `[layers] order` lista las capas de
+  la más alta a la más baja como prefijos de paquete; el rango es la posición. Un módulo
+  pertenece a la capa de su prefijo más largo que coincida por segmentos completos
+  (`app.web` no abarca `app.webhooks`); sin capa, no se comprueba. Hay violación cuando
+  el importador está en una capa más baja (posterior en la lista) que el importado. Las
+  fachadas quedan excluidas, y se ordenan por par de módulos tras los huérfanos. Sin
+  `[layers]` la regla no existe. Validación: cada nombre cumple `LAYER_NAME_PATTERN`, sin
+  repetidos, y el error nunca repite el valor. Una capa declarada que no abarca ningún módulo
+  (`unmatched_layers`) se avisa (WARNING) en `analyze_project`, para que una errata no
+  se lea como cumplimiento. Calibración en swo-aura-rag_api: orden
+  declarado (`webapi, application, nexus_ai, core`) 0 violaciones; invertido, 158.
 - **Marañas** (`find_tangles`, #8): componentes fuertemente conexas de más
   de un módulo (`nx.strongly_connected_components`, lineal y exacto, nunca
   se trunca). Todo ciclo vive dentro de una maraña, así que dan el tamaño

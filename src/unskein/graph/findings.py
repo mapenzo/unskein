@@ -1,6 +1,6 @@
 """Deterministic architecture findings derived from the dependency graph and its metrics."""
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from fnmatch import fnmatchcase
@@ -42,7 +42,8 @@ class Finding:
 
     Attributes:
         kind: Which rule produced it.
-        modules: The module, or ``(importer, imported)`` for an unstable dependency.
+        modules: The module, or ``(importer, imported)`` for an unstable dependency and a
+            layer violation.
         evidence: Numbers (or, for layers, layer names) that triggered the rule, shown so
             it can be checked.
     """
@@ -233,6 +234,21 @@ def _layer_of(module: str, layers_longest_first: list[str]) -> str | None:
         if module == layer or module.startswith(f"{layer}."):
             return layer
     return None
+
+
+def unmatched_layers(modules: Iterable[str], layers: Sequence[str]) -> list[str]:
+    """Return the declared layers that own no module, so a typo is not read as compliance.
+
+    Args:
+        modules: Dotted names of the project's modules.
+        layers: Declared layer names, highest first.
+
+    Returns:
+        The layers no module belongs to, in declared order.
+    """
+    longest_first = sorted(layers, key=len, reverse=True)
+    matched = {_layer_of(module, longest_first) for module in modules}
+    return [layer for layer in layers if layer not in matched]
 
 
 def _limit(values: list[int], percentile: int, minimum: int) -> int:

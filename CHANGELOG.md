@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   up into a higher one. A module belongs to the layer with the longest matching prefix
   (whole name segments); modules in no layer are not checked. Shown also with `--no-ai`,
   given to the AI, and it never changes the exit code. Invalid or repeated layer names
-  are a configuration error.
+  are a configuration error; a declared layer that matches no module is warned about.
 - Findings section in the report: four deterministic rules over the graph (unstable
   dependency, bottleneck, growing orchestrator, orphan module), each with an explanation
   and a recommendation. Thresholds are relative (percentiles of the project) with

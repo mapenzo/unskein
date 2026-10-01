@@ -25,6 +25,7 @@ from unskein.config import (
 )
 from unskein.entry_points import read_script_modules
 from unskein.errors import ErrorKey, UnskeinError
+from unskein.graph.findings import unmatched_layers
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
 from unskein.parsers.discovery import load_exclude_spec
@@ -177,6 +178,9 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
     logger.debug("Discovered %d Python files under %s", len(files), root)
     parsed = parse_all(files, adapter, root, config)
     result = analyze(adapter.resolve_indirection(parsed), context.findings)
+    if context.findings.enabled:
+        for layer in unmatched_layers(result.graph.nodes, context.findings.layers):
+            logger.warning("Layer %s in [layers] matches no module of the project", layer)
     logger.debug(
         "Analyzed %d modules, %d dependencies",
         result.graph.number_of_nodes(),
