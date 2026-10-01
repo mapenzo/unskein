@@ -293,3 +293,53 @@ def test_package_depth_must_be_positive(tmp_path: Path, line: str) -> None:
         load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
 
     assert raised.value.key == ErrorKey.INVALID_VALUE
+
+
+def test_layers_are_empty_when_not_configured() -> None:
+    assert resolve_findings_config(TomlConfig(), None).layers == ()
+
+
+def test_layers_come_from_the_toml_in_order(tmp_path: Path) -> None:
+    write(tmp_path / ".unskein.toml", '[layers]\norder = ["web", "app", "core"]\n')
+    toml = load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert resolve_findings_config(toml, None).layers == ("web", "app", "core")
+
+
+def test_project_layers_replace_the_user_layers(tmp_path: Path) -> None:
+    user = write(tmp_path / "user.toml", '[layers]\norder = ["old"]\n')
+    write(tmp_path / ".unskein.toml", '[layers]\norder = ["web", "core"]\n')
+    toml = load_toml_config(tmp_path, user_config=user)
+
+    assert resolve_findings_config(toml, None).layers == ("web", "core")
+
+
+def test_an_empty_layer_list_means_no_layer_rule(tmp_path: Path) -> None:
+    write(tmp_path / ".unskein.toml", "[layers]\norder = []\n")
+    toml = load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert resolve_findings_config(toml, None).layers == ()
+
+
+@pytest.mark.parametrize(
+    "order", ['["web", "web"]', '[""]', '["core/"]', '["core."]', '["1core"]', '["a..b"]']
+)
+def test_invalid_layers_are_a_config_error_that_does_not_echo_them(
+    tmp_path: Path, order: str
+) -> None:
+    write(tmp_path / ".unskein.toml", f"[layers]\norder = {order}\n")
+
+    with pytest.raises(ConfigError) as raised:
+        load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert raised.value.key == ErrorKey.INVALID_VALUE
+    assert all(bad not in str(raised.value.params) for bad in ("core/", "core.", "1core", "a..b"))
+
+
+def test_unknown_key_in_layers_is_a_config_error(tmp_path: Path) -> None:
+    write(tmp_path / ".unskein.toml", '[layers]\nlevels = ["web"]\n')
+
+    with pytest.raises(ConfigError) as raised:
+        load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert raised.value.key == ErrorKey.UNKNOWN_KEY

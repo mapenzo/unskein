@@ -64,6 +64,8 @@ Findings are architecture problems that fixed rules already computed from the gr
 the numbers that triggered it and its real total per kind. Treat them as facts: interpret them,
 prioritize them and explain their impact, but do not recompute or contradict them, and do not
 just list them again.
+A layer_violation finding names, in layer_from and layer_to, two layers the user declared;
+the importing module sits in the lower layer.
 
 Severity rubric:
 - high: a tangle or a dependency cycle.

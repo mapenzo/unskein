@@ -67,6 +67,8 @@ Architecture health: fair.
 - **Architecture findings**: unstable dependencies, bottlenecks, growing orchestrators
   and orphan modules, each with a recommendation. Computed from the graph, so they
   appear also without AI.
+  An optional layer check (`[layers]` in `.unskein.toml`) reports imports that go up the
+  layers you declare.
 - **Package overview and impact**: coupling measured between packages, and for each
   coupled module how many others depend on it, directly or indirectly.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.

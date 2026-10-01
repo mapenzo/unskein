@@ -157,6 +157,7 @@ para paquetes Python distribuibles).
   import.
 - **Los hallazgos (`graph/findings.py`) son reglas deterministas sobre el grafo**;
   la IA solo los interpreta y nunca cambian el código de salida.
+  Son cinco reglas; la quinta (violación de capas) solo existe con `[layers]`.
 - **`is_external` se calcula comparando el primer segmento del import contra los
   módulos del proyecto**, no contra una lista de stdlib/paquetes conocidos.
 - **Resolución de re-exports (indirección) es parte de v0.1**, no se pospuso.

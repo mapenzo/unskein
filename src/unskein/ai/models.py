@@ -111,13 +111,14 @@ class FindingSummary:
 
     Attributes:
         kind: Rule that produced it, e.g. ``"bottleneck"``.
-        modules: The module, or ``[importer, imported]`` for an unstable dependency.
-        evidence: Metrics that triggered the rule.
+        modules: The module, or ``[importer, imported]`` for unstable dependencies and layer
+            violations.
+        evidence: Numbers (or, for layer violations, layer names) that triggered the rule.
     """
 
     kind: str
     modules: list[str]
-    evidence: dict[str, float]
+    evidence: dict[str, float | str]
 
 
 @dataclass(frozen=True, slots=True)

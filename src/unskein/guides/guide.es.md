@@ -69,6 +69,8 @@ por defecto.
     normal en puntos de entrada y casos de uso.
   - **Módulo huérfano**: no importa ningún módulo del proyecto y nadie lo importa:
     código muerto o un punto de entrada que se ejecuta desde fuera del código.
+  - **Violación de capas**: solo si declaras `[layers]`: un módulo de una capa inferior
+    importa uno de una capa superior.
 
   Los umbrales son relativos al proyecto (percentiles, con un mínimo absoluto) y se
   pueden ajustar en `[findings]`. Los hallazgos nunca cambian el código de salida.
@@ -168,6 +170,18 @@ La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde f
 del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los
 módulos `__main__` se detectan solos). El ajuste `package_depth` cambia cómo se
 nombran los paquetes.
+
+Para comprobar las capas de tu arquitectura, enuméralas de la más alta a la más baja
+como prefijos de paquete:
+
+```toml
+[layers]
+order = ["app.web", "app.services", "app.core"]
+```
+
+Un módulo pertenece a la capa con el prefijo más largo que coincida; un import de una
+capa inferior a una superior se informa como violación de capas. Los módulos que no
+están en ninguna capa no se comprueban, y sin `[layers]` no hay regla de capas.
 
 ## Interpretación con IA
 

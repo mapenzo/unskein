@@ -1,6 +1,6 @@
 """Deterministic architecture findings derived from the dependency graph and its metrics."""
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from fnmatch import fnmatchcase
@@ -14,6 +14,9 @@ from unskein.graph.percentile import nearest_rank_percentile
 MAIN_MODULE_SUFFIX = "__main__"
 INSTABILITY_DECIMALS = 2
 
+# Evidence values are numbers, except for layer violations, which name the two layers.
+Evidence = dict[str, float | str]
+
 
 class FindingKind(StrEnum):
     """Kinds of finding, in the order the report lists them.
@@ -23,12 +26,14 @@ class FindingKind(StrEnum):
         BOTTLENECK: A module many depend on that also depends on many.
         ORCHESTRATOR: A module with far more dependencies than the rest.
         ORPHAN: A module that imports no project module and is imported by none.
+        LAYER_VIOLATION: A module of a lower declared layer imports one of a higher layer.
     """
 
     UNSTABLE_DEPENDENCY = "unstable_dependency"
     BOTTLENECK = "bottleneck"
     ORCHESTRATOR = "orchestrator"
     ORPHAN = "orphan"
+    LAYER_VIOLATION = "layer_violation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,13 +42,15 @@ class Finding:
 
     Attributes:
         kind: Which rule produced it.
-        modules: The module, or ``(importer, imported)`` for an unstable dependency.
-        evidence: Metrics that triggered the rule, shown so it can be checked.
+        modules: The module, or ``(importer, imported)`` for an unstable dependency and a
+            layer violation.
+        evidence: Numbers (or, for layers, layer names) that triggered the rule, shown so
+            it can be checked.
     """
 
     kind: FindingKind
     modules: tuple[str, ...]
-    evidence: dict[str, float]
+    evidence: Evidence
 
 
 def find_findings(
@@ -61,7 +68,7 @@ def find_findings(
     Args:
         graph: Internal module dependency graph.
         metrics: Coupling metrics keyed by module name.
-        config: Thresholds and entry points.
+        config: Thresholds, entry points and declared layers.
         packages: Names of modules that are package ``__init__`` files.
 
     Returns:
@@ -75,6 +82,7 @@ def find_findings(
         *_bottlenecks(candidates, config),
         *_orchestrators(candidates, config),
         *_orphans(candidates, config),
+        *_layer_violations(graph, candidates, config),
     ]
 
 
@@ -181,6 +189,68 @@ def _orphans(metrics: Mapping[str, CouplingMetrics], config: FindingsConfig) -> 
     return sorted(found, key=lambda finding: finding.modules)
 
 
+def _layer_violations(
+    graph: nx.DiGraph, metrics: Mapping[str, CouplingMetrics], config: FindingsConfig
+) -> list[Finding]:
+    """Find imports from a lower declared layer into a higher one.
+
+    Args:
+        graph: Internal module dependency graph.
+        metrics: Coupling metrics of the modules under analysis; only their names are used.
+        config: Declared layers, highest first.
+
+    Returns:
+        One finding per offending import, sorted by the pair of modules; none without layers.
+    """
+    if not config.layers:
+        return []
+    rank = {layer: index for index, layer in enumerate(config.layers)}
+    longest_first = sorted(config.layers, key=len, reverse=True)
+    found = []
+    for source, target in graph.edges:
+        if source not in metrics or target not in metrics:
+            continue
+        layer_from = _layer_of(source, longest_first)
+        layer_to = _layer_of(target, longest_first)
+        if layer_from is None or layer_to is None or rank[layer_from] <= rank[layer_to]:
+            continue
+        evidence: Evidence = {"layer_from": layer_from, "layer_to": layer_to}
+        found.append(Finding(FindingKind.LAYER_VIOLATION, (source, target), evidence))
+    return sorted(found, key=lambda finding: finding.modules)
+
+
+def _layer_of(module: str, layers_longest_first: list[str]) -> str | None:
+    """Return the declared layer a module belongs to, matching whole name segments.
+
+    Args:
+        module: Dotted module name.
+        layers_longest_first: Layer names sorted by decreasing length, so the most
+            specific layer wins.
+
+    Returns:
+        The layer name, or None when the module is in no layer.
+    """
+    for layer in layers_longest_first:
+        if module == layer or module.startswith(f"{layer}."):
+            return layer
+    return None
+
+
+def unmatched_layers(modules: Iterable[str], layers: Sequence[str]) -> list[str]:
+    """Return the declared layers that own no module, so a typo is not read as compliance.
+
+    Args:
+        modules: Dotted names of the project's modules.
+        layers: Declared layer names, highest first.
+
+    Returns:
+        The layers no module belongs to, in declared order.
+    """
+    longest_first = sorted(layers, key=len, reverse=True)
+    matched = {_layer_of(module, longest_first) for module in modules}
+    return [layer for layer in layers if layer not in matched]
+
+
 def _limit(values: list[int], percentile: int, minimum: int) -> int:
     """Return the larger of a percentile of the project and an absolute minimum.
 
@@ -195,7 +265,7 @@ def _limit(values: list[int], percentile: int, minimum: int) -> int:
     return max(nearest_rank_percentile(values, percentile), minimum)
 
 
-def _coupling_evidence(metrics: CouplingMetrics) -> dict[str, float]:
+def _coupling_evidence(metrics: CouplingMetrics) -> Evidence:
     """Return the Ca and Ce of a module as finding evidence.
 
     Args:

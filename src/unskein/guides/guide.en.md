@@ -64,6 +64,8 @@ config file is needed: every setting has a default.
     entry points and use cases.
   - **Orphan module**: imports no project module and is imported by none: dead code or an
     entry point run from outside the code.
+  - **Layer violation**: only when you declare `[layers]`: a module of a lower layer
+    imports one of a higher layer.
 
   Thresholds are relative to the project (percentiles, with an absolute minimum) and can
   be tuned in `[findings]`. Findings never change the exit code.
@@ -160,6 +162,18 @@ The `[findings]` table tunes the findings; modules that are run from outside the
 code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`
 modules are detected on their own). The `package_depth` setting changes how
 packages are named.
+
+To check your architecture's layers, list them from the highest to the lowest as
+package prefixes:
+
+```toml
+[layers]
+order = ["app.web", "app.services", "app.core"]
+```
+
+A module belongs to the layer with the longest matching prefix; an import from a lower
+layer into a higher one is reported as a layer violation. Modules in no layer are not
+checked, and without `[layers]` there is no layer rule.
 
 ## AI interpretation
 

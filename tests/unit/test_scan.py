@@ -259,3 +259,20 @@ def test_scan_reports_orphans_except_entry_points(make_project: MakeProject) -> 
     outcome = execute_scan(prepare(ScanOptions(path=root, no_ai=True)))
 
     assert [f.modules for f in outcome.result.findings] == [("stray",)]
+
+
+def test_scan_warns_about_a_declared_layer_that_matches_no_module(
+    make_project: MakeProject, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_project({"web.py": "", ".unskein.toml": '[layers]\norder = ["web", "cor"]\n'})
+    # The CLI tests turn propagation off on this logger; caplog needs it on.
+    logger = logging.getLogger("unskein")
+    monkeypatch.setattr(logger, "handlers", [])
+    monkeypatch.setattr(logger, "propagate", True)
+
+    with caplog.at_level(logging.WARNING, logger="unskein"):
+        execute_scan(prepare(ScanOptions(path=root, no_ai=True)))
+
+    assert [record.getMessage() for record in caplog.records] == [
+        "Layer cor in [layers] matches no module of the project"
+    ]
