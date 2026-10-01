@@ -133,6 +133,7 @@ src/unskein/
 │   └── python_parser.py    # implementación para Python con ast
 ├── graph/
 │   ├── builder.py           # construcción del grafo con NetworkX
+│   ├── coupling.py          # CouplingMetrics (módulo aparte: evita el ciclo metrics ↔ findings)
 │   ├── metrics.py           # Ca, Ce, inestabilidad, ciclos
 │   ├── findings.py          # hallazgos: reglas deterministas sobre el grafo
 │   └── percentile.py        # percentil por rango más cercano (compartido)

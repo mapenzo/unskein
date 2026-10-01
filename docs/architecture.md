@@ -612,6 +612,11 @@ aplicados) y construye el grafo real.
   | Orquestador creciente | `Ce ≥ max(P(Ce), mín)` | P95 · mín 10 |
   | Huérfano | `Ca = 0` y `Ce = 0`, sin puntos de entrada conocidos | — |
 
+  `CouplingMetrics` vive en `graph/coupling.py` y no en `metrics.py`: `findings.py` lo
+  necesita y `metrics.py` importa `findings.py`, así que dejarlo en `metrics.py` creaba
+  un ciclo que unskein detectaba en su propio código (lo vigila
+  `tests/integration/test_self_analysis.py`). `metrics.py` lo reexporta.
+
   `P(x)` es el percentil por rango más cercano (`graph/percentile.py`, compartido con
   `find_high_coupling`): sin interpolación, siempre un valor real. Se combina con un
   mínimo absoluto porque el percentil solo marcaría siempre a alguien (en un proyecto

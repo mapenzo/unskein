@@ -4,15 +4,12 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from fnmatch import fnmatchcase
-from typing import TYPE_CHECKING
 
 import networkx as nx
 
 from unskein.config import FindingsConfig
+from unskein.graph.coupling import CouplingMetrics
 from unskein.graph.percentile import nearest_rank_percentile
-
-if TYPE_CHECKING:
-    from unskein.graph.metrics import CouplingMetrics
 
 MAIN_MODULE_SUFFIX = "__main__"
 INSTABILITY_DECIMALS = 2
@@ -51,7 +48,7 @@ class Finding:
 
 def find_findings(
     graph: nx.DiGraph,
-    metrics: "Mapping[str, CouplingMetrics]",
+    metrics: Mapping[str, CouplingMetrics],
     config: FindingsConfig,
     *,
     packages: Collection[str] = frozenset(),
@@ -82,7 +79,7 @@ def find_findings(
 
 
 def _unstable_dependencies(
-    graph: nx.DiGraph, metrics: "Mapping[str, CouplingMetrics]", config: FindingsConfig
+    graph: nx.DiGraph, metrics: Mapping[str, CouplingMetrics], config: FindingsConfig
 ) -> list[Finding]:
     """Find modules others rely on that import a much more unstable module.
 
@@ -111,7 +108,7 @@ def _unstable_dependencies(
     return sorted(found, key=lambda finding: finding.modules)
 
 
-def _bottlenecks(metrics: "Mapping[str, CouplingMetrics]", config: FindingsConfig) -> list[Finding]:
+def _bottlenecks(metrics: Mapping[str, CouplingMetrics], config: FindingsConfig) -> list[Finding]:
     """Find modules whose Ca and Ce are both high for this project.
 
     Args:
@@ -141,9 +138,7 @@ def _bottlenecks(metrics: "Mapping[str, CouplingMetrics]", config: FindingsConfi
     return sorted(found, key=lambda finding: finding.modules)
 
 
-def _orchestrators(
-    metrics: "Mapping[str, CouplingMetrics]", config: FindingsConfig
-) -> list[Finding]:
+def _orchestrators(metrics: Mapping[str, CouplingMetrics], config: FindingsConfig) -> list[Finding]:
     """Find modules with far more dependencies than the rest of the project.
 
     Args:
@@ -168,7 +163,7 @@ def _orchestrators(
     return sorted(found, key=lambda finding: finding.modules)
 
 
-def _orphans(metrics: "Mapping[str, CouplingMetrics]", config: FindingsConfig) -> list[Finding]:
+def _orphans(metrics: Mapping[str, CouplingMetrics], config: FindingsConfig) -> list[Finding]:
     """Find modules that neither import nor are imported and are no entry point.
 
     Args:
@@ -200,7 +195,7 @@ def _limit(values: list[int], percentile: int, minimum: int) -> int:
     return max(nearest_rank_percentile(values, percentile), minimum)
 
 
-def _coupling_evidence(metrics: "CouplingMetrics") -> dict[str, float]:
+def _coupling_evidence(metrics: CouplingMetrics) -> dict[str, float]:
     """Return the Ca and Ce of a module as finding evidence.
 
     Args:
