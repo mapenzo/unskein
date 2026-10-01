@@ -16,7 +16,8 @@ class StepKind(StrEnum):
         TYPE_CHECKING: The names are only read in annotations; import them under
             ``if TYPE_CHECKING:``.
         BYPASS_FACADE: The dependency goes to a package's ``__init__.py``; import from the
-            module that defines the name instead.
+            module that defines the name instead (not offered when the facade defines every
+            imported name itself).
         LAZY: The names are only read inside functions (or in annotations too, when the
             module postpones them); import them there.
         MOVE_SYMBOL: One or two symbols are imported; move them out of the cycle.
@@ -71,8 +72,26 @@ def _lazy_applies(evidence: ImportEvidence) -> bool:
     }
 
 
+def _bypass_applies(evidence: ImportEvidence, own_names: Collection[str]) -> bool:
+    """Tell whether the imported names can come from somewhere other than the facade.
+
+    Args:
+        evidence: What the dependency imports by name.
+        own_names: Names the facade defines itself (not re-exports nor submodules).
+
+    Returns:
+        False only when names are imported and the facade defines every one of them;
+        a whole-module import (no symbols) can always be bypassed.
+    """
+    return not evidence.symbols or not set(evidence.symbols) <= set(own_names)
+
+
 def _applicable_steps(
-    source: str, target: str, evidence: ImportEvidence, *, facades: Collection[str]
+    source: str,
+    target: str,
+    evidence: ImportEvidence,
+    *,
+    facades: Mapping[str, Collection[str]],
 ) -> set[StepKind]:
     """List every step the evidence allows for one dependency.
 
@@ -80,7 +99,8 @@ def _applicable_steps(
         source: Importing module.
         target: Imported module.
         evidence: What supports each step.
-        facades: Names of the project's package facades (``__init__.py``).
+        facades: The project's package facades (``__init__.py``), each with the names it
+            defines itself.
 
     Returns:
         The applicable steps; ``EXTRACT_SHARED`` always applies.
@@ -93,7 +113,7 @@ def _applicable_steps(
         steps.add(StepKind.TYPE_CHECKING)
     if _lazy_applies(evidence):
         steps.add(StepKind.LAZY)
-    if target in facades:
+    if target in facades and _bypass_applies(evidence, facades[target]):
         steps.add(StepKind.BYPASS_FACADE)
     if 1 <= len(evidence.symbols) <= MAX_MOVABLE_SYMBOLS:
         steps.add(StepKind.MOVE_SYMBOL)
@@ -101,7 +121,11 @@ def _applicable_steps(
 
 
 def choose_step(
-    source: str, target: str, evidence: ImportEvidence, *, facades: Collection[str]
+    source: str,
+    target: str,
+    evidence: ImportEvidence,
+    *,
+    facades: Mapping[str, Collection[str]],
 ) -> StepKind:
     """Pick the cheapest step that removes a dependency.
 
@@ -109,7 +133,8 @@ def choose_step(
         source: Importing module.
         target: Imported module.
         evidence: What supports each step.
-        facades: Names of the project's package facades (``__init__.py``).
+        facades: The project's package facades (``__init__.py``), each with the names it
+            defines itself.
 
     Returns:
         The step with the lowest cost in ``STEP_COSTS``.

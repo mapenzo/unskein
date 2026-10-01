@@ -105,7 +105,7 @@ def test_plan_prefers_the_cheapest_step_in_a_cycle() -> None:
         ("a", "b"): evidence({UseContext.MODULE}, ("X", "Y", "Z")),
         ("b", "a"): evidence({UseContext.ANNOTATION}),
     }
-    [plan] = plan_tangles(scope, [["a", "b"]], found, facades=set())
+    [plan] = plan_tangles(scope, [["a", "b"]], found, facades={})
     assert [(c.source, c.target, c.step) for c in plan.cuts] == [("b", "a", StepKind.TYPE_CHECKING)]
     assert plan.members == ("a", "b") and plan.cost == 1
 
@@ -116,7 +116,7 @@ def test_package_structure_is_only_cut_when_unavoidable() -> None:
         ("pkg", "pkg.mod"): evidence({UseContext.MODULE}),
         ("pkg.mod", "pkg"): evidence({UseContext.MODULE}, ()),
     }
-    [plan] = plan_tangles(scope, [["pkg", "pkg.mod"]], found, facades={"pkg"})
+    [plan] = plan_tangles(scope, [["pkg", "pkg.mod"]], found, facades={"pkg": frozenset()})
     assert [(c.source, c.target, c.step) for c in plan.cuts] == [
         ("pkg.mod", "pkg", StepKind.BYPASS_FACADE)
     ]
@@ -130,13 +130,13 @@ def test_an_already_lazy_import_is_not_offered_lazy_again() -> None:
         ("a", "b"): evidence({UseContext.MODULE}, ("X", "Y", "Z")),
         ("b", "a"): evidence({UseContext.FUNCTION}),
     }
-    [plan] = plan_tangles(scope, [["a", "b"]], found, facades=set())
+    [plan] = plan_tangles(scope, [["a", "b"]], found, facades={})
     assert [(c.source, c.step) for c in plan.cuts] == [("b", StepKind.MOVE_SYMBOL)]
 
 
 def test_missing_evidence_falls_back_to_extract_shared() -> None:
     scope = graph_of(("a", "b"), ("b", "a"))
-    [plan] = plan_tangles(scope, [["a", "b"]], {}, facades=set())
+    [plan] = plan_tangles(scope, [["a", "b"]], {}, facades={})
     assert [c.step for c in plan.cuts] == [StepKind.EXTRACT_SHARED]
 
 

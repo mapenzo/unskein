@@ -8,7 +8,13 @@ from unskein.graph.steps import StepKind
 from unskein.graph.untangle import UntanglePlan
 from unskein.i18n import Lang
 from unskein.report.untangle import render_untangle
-from unskein.untangle import UntangleOptions, build_untangle_plan, prepare_untangle
+from unskein.scan import parse_project
+from unskein.untangle import (
+    UntangleOptions,
+    build_untangle_plan,
+    facade_own_names,
+    prepare_untangle,
+)
 
 MakeProject = Callable[[dict[str, str]], Path]
 
@@ -143,3 +149,28 @@ def test_lazy_needs_postponed_annotations_when_a_signature_reads_the_name(
     [tangle] = plan_for(root).tangles
     [cut] = tangle.cuts
     assert (cut.source, cut.target, cut.step) == ("app.x", "app.y", expected)
+
+
+def test_a_name_defined_in_the_facade_is_not_bypassed(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pkg/__init__.py": "CONST = 1\nfrom pkg.a import helper\n",
+            "pkg/a.py": "from pkg import CONST\n\nLIMIT = CONST * 2\n\n\ndef helper():\n"
+            "    return LIMIT\n",
+        }
+    )
+    [tangle] = plan_for(root).tangles
+    [cut] = tangle.cuts
+    assert (cut.source, cut.target, cut.step) == ("pkg.a", "pkg", StepKind.MOVE_SYMBOL)
+
+
+def test_facade_own_names_leave_out_re_exports_and_submodules(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pkg/__init__.py": "from pkg import sub\nfrom pkg.a import helper\nCONST = 1\n",
+            "pkg/a.py": "def helper():\n    return 1\n",
+            "pkg/sub.py": "",
+        }
+    )
+    parsed = parse_project(prepare_untangle(UntangleOptions(path=root), env={}))
+    assert facade_own_names(parsed) == {"pkg": frozenset({"CONST"})}

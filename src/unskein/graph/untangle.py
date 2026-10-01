@@ -199,7 +199,7 @@ def plan_tangles(
     tangles: Sequence[Sequence[str]],
     evidence: Mapping[Edge, ImportEvidence],
     *,
-    facades: Collection[str],
+    facades: Mapping[str, Collection[str]],
 ) -> tuple[TanglePlan, ...]:
     """Plan the cuts of every tangle, each step chosen from its evidence.
 
@@ -207,7 +207,7 @@ def plan_tangles(
         scope: Graph the tangles come from (import-time, or every dependency).
         tangles: Tangles, each with its members sorted.
         evidence: Evidence per dependency; missing entries count as no evidence.
-        facades: Names of the project's package facades.
+        facades: The project's package facades, each with the names it defines itself.
 
     Returns:
         One plan per tangle, in the given order.

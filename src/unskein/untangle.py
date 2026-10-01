@@ -6,7 +6,7 @@ from pathlib import Path
 
 from unskein.graph.metrics import PACKAGE_INIT_FILE, analyze, find_tangles, import_time_graph
 from unskein.graph.untangle import Edge, UntanglePlan, plan_tangles, simulate
-from unskein.parsers.models import ImportKind
+from unskein.parsers.models import ImportKind, ParseResult
 from unskein.parsers.usage import ImportEvidence, collect_import_evidence
 from unskein.scan import ScanContext, ScanOptions, parse_project, prepare_scan
 
@@ -52,6 +52,35 @@ def prepare_untangle(
     return prepare_scan(scan_options, env=env, user_config=user_config)
 
 
+def facade_own_names(parsed: ParseResult) -> dict[str, frozenset[str]]:
+    """Map each package facade to the names it defines itself.
+
+    A facade's own names are those it binds at module level that are neither re-exports
+    of another project module nor its own submodules; importing them cannot bypass it.
+
+    Args:
+        parsed: The resolved parse result.
+
+    Returns:
+        The own names of each ``__init__.py`` module.
+    """
+    modules = {m.name for m in parsed.modules}
+    re_exported: dict[str, set[str]] = {}
+    for re_export in parsed.re_exports:
+        re_exported.setdefault(re_export.exporting_module, set()).add(re_export.symbol_name)
+    facades = {}
+    for module in parsed.modules:
+        if module.file_path.name != PACKAGE_INIT_FILE:
+            continue
+        borrowed = re_exported.get(module.name, set())
+        facades[module.name] = frozenset(
+            name
+            for name in module.bound_names
+            if name not in borrowed and f"{module.name}.{name}" not in modules
+        )
+    return facades
+
+
 def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePlan:
     """Analyze the project and plan the cuts of every tangle.
 
@@ -71,7 +100,7 @@ def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePla
     result = analyze(parsed, context.findings)
     scope = result.graph if all_edges else import_time_graph(result.graph)
     tangles = find_tangles(scope)
-    facades = {m.name for m in parsed.modules if m.file_path.name == PACKAGE_INIT_FILE}
+    facades = facade_own_names(parsed)
     kinds = set(ImportKind) if all_edges else {ImportKind.MODULE}
     pairs_by_source: dict[str, list[Edge]] = {}
     for members in tangles:

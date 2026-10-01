@@ -6,7 +6,7 @@ from unskein.graph.steps import STEP_COSTS, StepKind, choose_step
 from unskein.parsers.usage import NO_EVIDENCE, ImportEvidence, UseContext
 
 A, F, M = UseContext.ANNOTATION, UseContext.FUNCTION, UseContext.MODULE
-FACADES = {"pkg", "pkg.sub"}
+FACADES = {"pkg": frozenset({"CONST", "VERSION"}), "pkg.sub": frozenset()}
 
 
 def evidence(
@@ -79,3 +79,20 @@ def test_costs_rank_the_steps() -> None:
         StepKind.PACKAGE_STRUCTURE,
     ]
     assert STEP_COSTS[StepKind.PACKAGE_STRUCTURE] >= 100 * STEP_COSTS[StepKind.EXTRACT_SHARED]
+
+
+@pytest.mark.parametrize(
+    ("found", "expected"),
+    [
+        (evidence({M}, ("CONST",)), StepKind.MOVE_SYMBOL),
+        (evidence({M}, ("CONST", "VERSION")), StepKind.MOVE_SYMBOL),
+        (evidence({M}, ("CONST", "helper")), StepKind.BYPASS_FACADE),
+        (evidence({M}, ("helper",)), StepKind.BYPASS_FACADE),
+        (NO_EVIDENCE, StepKind.BYPASS_FACADE),
+    ],
+    ids=["own_name", "own_names", "own_and_re_exported", "re_exported", "no_evidence"],
+)
+def test_bypass_is_not_offered_for_names_the_facade_defines(
+    found: ImportEvidence, expected: StepKind
+) -> None:
+    assert choose_step("pkg.a", "pkg", found, facades=FACADES) is expected
