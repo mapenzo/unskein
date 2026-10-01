@@ -228,12 +228,11 @@ on your machine and stay there. API keys never appear in logs or reports.
 
 ## Roadmap
 
-| Version | Scope |
+| Status | Scope |
 |---|---|
-| **v0.1** | Python, module-level graph, coupling metrics, cycles, Markdown report, AI summary and flagged problems |
-| v0.2 | Code suggestions in AI recommendations, JSON output |
-| v0.3 | TypeScript / JavaScript, via tree-sitter |
-| v0.4 | Java |
+| **Available** | Python: module-level graph, coupling metrics, import-time cycles and hidden coupling, architecture findings and layer checks, package overview and impact, untangle plan, Markdown report in English or Spanish, optional AI interpretation |
+| **Coming soon** | Support for other languages |
+| Also planned | Code suggestions in AI recommendations, JSON output |
 | Later | CVE analysis and a full architecture map |
 
 ## Contributing

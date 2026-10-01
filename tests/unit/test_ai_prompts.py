@@ -384,7 +384,7 @@ def test_a_problem_naming_no_known_module_is_dropped() -> None:
     assert [p.affected_modules for p in grounded.problems] == [["a"]]
 
 
-def test_code_snippets_are_cleared_until_v02() -> None:
+def test_code_snippets_are_cleared_until_suggestions_exist() -> None:
     graph = nx.DiGraph([("a", "b")])
     grounded = ground_report(report_with(problem(["a"], snippet="print('x')")), graph).report
     assert grounded.problems[0].code_snippet is None
