@@ -1324,6 +1324,10 @@ automático, hasta que el proyecto tenga más rodaje.
 - Publicación a PyPI vía **Trusted Publishing** (OIDC desde GitHub Actions,
   sin token de PyPI almacenado como secreto — misma filosofía de higiene de
   credenciales que la API key del LLM).
+- Al subir una etiqueta `v*`, el workflow `release.yml` construye, publica a PyPI y, solo
+  si eso funcionó, crea el Release de GitHub con la sección de esa versión del
+  `CHANGELOG.md` como notas (falla si el CHANGELOG no la tiene; no toca un Release que ya
+  existe). Solo ese job tiene `contents: write`.
 - Plantilla estándar OSS con licencia MIT: `README.md`, `CONTRIBUTING.md`,
   `CODE_OF_CONDUCT.md` (Contributor Covenant), `SECURITY.md`,
   `.github/ISSUE_TEMPLATE/` (bug report + feature request),
