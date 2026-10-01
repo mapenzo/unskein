@@ -6,7 +6,7 @@ import pytest
 from unskein.errors import UnskeinError
 from unskein.graph.steps import StepKind
 from unskein.graph.untangle import UntanglePlan
-from unskein.i18n import Lang
+from unskein.i18n import Lang, t
 from unskein.report.untangle import render_untangle
 from unskein.scan import parse_project
 from unskein.untangle import (
@@ -256,3 +256,15 @@ def test_report_without_tangles_still_counts_parse_warnings(make_project: MakePr
 def test_report_without_warnings_has_no_warning_line(make_project: MakeProject) -> None:
     root = make_project(CYCLE)
     assert "Analysis warnings" not in render_untangle(plan_for(root), root, Lang.EN, max_tangles=5)
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_type_checking_help_warns_about_runtime_annotation_readers(lang: Lang) -> None:
+    help_text = t("untangle.step.type_checking.help", lang)
+    for reader in ("pydantic", "FastAPI", "typing.get_type_hints", "functools.singledispatch"):
+        assert reader in help_text
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_lazy_help_mentions_postponed_annotations(lang: Lang) -> None:
+    assert "from __future__ import annotations" in t("untangle.step.lazy.help", lang)

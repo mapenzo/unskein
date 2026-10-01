@@ -371,10 +371,14 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "untangle.step.type_checking.help": {
         Lang.ES: "Los nombres solo se usan en anotaciones: importarlos bajo "
         "`if TYPE_CHECKING:` (con `from __future__ import annotations` o anotaciones entre "
-        "comillas) quita la dependencia al importar.",
+        "comillas) quita la dependencia al importar. Las bibliotecas que leen anotaciones en "
+        "ejecución (modelos de pydantic, firmas de typer o FastAPI, `typing.get_type_hints`, "
+        "`functools.singledispatch`) necesitan el nombre en ejecución: ahí no sirve.",
         Lang.EN: "The names are only used in annotations: importing them under "
         "`if TYPE_CHECKING:` (with `from __future__ import annotations` or quoted "
-        "annotations) removes the import-time dependency.",
+        "annotations) removes the import-time dependency. Libraries that read annotations at "
+        "runtime (pydantic models, typer or FastAPI signatures, `typing.get_type_hints`, "
+        "`functools.singledispatch`) need the name at runtime: it does not work there.",
     },
     "untangle.step.bypass_facade": {
         Lang.ES: "Importar del módulo que lo define",
@@ -390,9 +394,11 @@ _REPORT: dict[str, dict[Lang, str]] = {
     },
     "untangle.step.lazy": {Lang.ES: "Import perezoso", Lang.EN: "Lazy import"},
     "untangle.step.lazy.help": {
-        Lang.ES: "Los nombres solo se usan dentro de funciones: importarlos ahí rompe el "
-        "ciclo al importar, aunque el acoplamiento sigue (aparecerá como acoplamiento oculto).",
-        Lang.EN: "The names are only used inside functions: importing them there breaks the "
+        Lang.ES: "Los nombres solo se usan dentro de funciones (o también en anotaciones, si el "
+        "módulo tiene `from __future__ import annotations`): importarlos ahí rompe el ciclo al "
+        "importar, aunque el acoplamiento sigue (aparecerá como acoplamiento oculto).",
+        Lang.EN: "The names are only used inside functions (or in annotations too, when the "
+        "module has `from __future__ import annotations`): importing them there breaks the "
         "import-time cycle, though the coupling stays (it will show as hidden coupling).",
     },
     "untangle.step.move_symbol": {Lang.ES: "Mover el símbolo", Lang.EN: "Move the symbol"},
