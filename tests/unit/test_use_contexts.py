@@ -31,6 +31,8 @@ CONTEXT_CASES = {
     "lambda_body": ("g = lambda: Engine()\n", {F}),
     "method_annotation": ("class C:\n    def m(self) -> Engine: ...\n", {A}),
     "mixed": ("def f(x: Engine):\n    return Engine()\n", {A, F}),
+    "function_type_param_bound": ("def f[T: Engine](x): ...\n", {M}),
+    "class_type_param_bound": ("class C[T: Engine]: ...\n", {M}),
     "unused": ("x = 1\n", set()),
 }
 

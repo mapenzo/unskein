@@ -2,6 +2,7 @@
 
 import ast
 import re
+import warnings
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -196,6 +197,8 @@ class _ContextCollector(ast.NodeVisitor):
         """
         for decorator in node.decorator_list:
             self.visit(decorator)
+        for type_param in node.type_params:
+            self.visit(type_param)
         self._visit_arguments(node.args)
         if node.returns is not None:
             self._visit_in(node.returns, UseContext.ANNOTATION)
@@ -296,7 +299,8 @@ class ImportEvidence:
         file_path: Source file of the importing module, or None when unknown.
         lines: Lines of the import statements behind the dependency, sorted.
         symbols: Symbols those statements import by name, sorted.
-        contexts: Where the importing module reads the names those statements bind.
+        contexts: Where the importing module reads the names those statements bind. Empty
+            means unknown (file unreadable, names never read, or a star import), never safe.
     """
 
     file_path: Path | None
@@ -320,8 +324,11 @@ def _parse_source(file_path: Path, encoding: str | None) -> ast.Module | None:
     """
     try:
         source = file_path.read_text(encoding=detect_encoding(file_path, encoding))
-        return ast.parse(source, filename=str(file_path))
-    except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError):
+        with warnings.catch_warnings():
+            # The scan already reported these; repeating them on this on-demand path is noise.
+            warnings.simplefilter("ignore", SyntaxWarning)
+            return ast.parse(source, filename=str(file_path))
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError, LookupError):
         return None
 
 
