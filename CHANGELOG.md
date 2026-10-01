@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.unskein.toml` of the analyzed folder and `~/.config/unskein/config.toml`
   (`unskein init --user`). `unskein init` points to `unskein config save`, and the
   guide explains where each config file is read from.
+- `import pkg as p` followed by `p.name` (also `import pkg` and `from pkg import sub`
+  when `sub` is a package) now counts as a dependency on the module that defines `name`
+  instead of on the package's `__init__.py`. Packages no longer look like god modules
+  because everything reaches them through an alias, and cycles that only existed through
+  the facade disappear. Uses that cannot be followed (the name is passed around, reassigned
+  or never used) still point at the package.
 
 ### Fixed
 

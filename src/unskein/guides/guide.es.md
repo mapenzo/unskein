@@ -91,7 +91,9 @@ por defecto.
 
 Los imports a través del `__init__.py` de un paquete se siguen hasta el módulo
 que define el nombre, así que un ciclo escondido tras una fachada también
-aparece.
+aparece. Eso incluye `import pkg as p` seguido de `p.nombre`: la dependencia va al
+módulo que define `nombre`, salvo que no se pueda seguir el uso de `p` (se pasa como
+valor o se reasigna), y entonces se queda en el paquete.
 
 ## Opciones de `scan`
 

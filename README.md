@@ -76,7 +76,8 @@ Architecture health: fair.
   `TYPE_CHECKING` are reported apart as hidden coupling.
 - **Re-exports resolved**: `from app import Engine` is traced through `__init__.py`
   facades to the module that actually defines `Engine`, so cycles hidden behind a
-  package's `__init__.py` still show up.
+  package's `__init__.py` still show up. `import pkg as p` followed by `p.name` is
+  traced the same way.
 - **An AI reading of the numbers** (optional): a short summary and the problems worth
   fixing, in English or Spanish.
 

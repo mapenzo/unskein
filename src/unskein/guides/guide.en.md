@@ -84,7 +84,10 @@ config file is needed: every setting has a default.
   warning never stops the analysis.
 
 Imports through a package's `__init__.py` are followed to the module that
-defines the name, so a cycle hidden behind a facade still shows up.
+defines the name, so a cycle hidden behind a facade still shows up. That includes
+`import pkg as p` followed by `p.name`: the dependency goes to the module that defines
+`name`, unless the way `p` is used cannot be followed (it is passed around or
+reassigned), in which case it stays on the package.
 
 ## `scan` options
 

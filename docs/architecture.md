@@ -179,6 +179,21 @@ Decisiones:
 - Resolución recursiva simple en v0.1, sin memoización — optimizar solo si el
   perfilado en proyectos grandes muestra que es necesario.
 
+**Accesos por atributo.** Un `import pkg as p`, `import pkg` o `from pkg import sub`
+(con `sub` paquete) liga un nombre a una fachada. En los módulos que importan algún
+paquete, el parser recorre el árbol (`parsers/usage.py`, `collect_name_usage`) y guarda en
+la arista las cadenas de atributos leídas a través del nombre (`ImportEdge.accessed`,
+ordenadas) y si el nombre se usa suelto o se reasigna (`ImportEdge.escapes`). Solo se
+analizan los nombres ligados por un único import; `import a.b` (sin alias) liga `a`, no
+`a.b`, y no se analiza. `resolve_indirection` expande la arista (`expand_package_access`):
+cada cadena baja por el prefijo más largo que sean submódulos del proyecto y el atributo
+siguiente se sigue por los re-exports hasta el módulo que lo define
+(`resolve_access`). Una arista por módulo destino, con el `kind` de la sentencia; si el
+destino es el propio módulo, no hay arista. Conservador: con `escapes`, sin ningún
+atributo leído o sin resolución, se mantiene la arista a la fachada. Fuera de alcance:
+sombreado del nombre por parámetros o variables locales, definiciones `def`/`class` que
+reutilicen el nombre, `__getattr__` dinámico y `__all__`.
+
 ---
 
 ## 2.5. Discovery de archivos: excludes, symlinks, encoding
@@ -681,11 +696,11 @@ aplicados) y construye el grafo real.
   `ceil(p/100·n)`-ésimo menor valor): sin interpolación, siempre es una
   puntuación real y explicable. Empates incluidos, puntuación 0 nunca;
   orden por puntuación descendente y luego nombre.
-- **Fachadas con `import paquete as alias`**: el uso `alias.func()` no se
-  puede resolver estáticamente, así que el paquete raíz acumula un Ca muy
-  alto (en networkx, 253 de 288 módulos). Es un dato real — todo depende de
-  la fachada —, pero el reporte/IA deben interpretarlo como tal, no como un
-  "god module" clásico.
+- **Fachadas con `import paquete as alias`**: `alias.func()` se resuelve hasta el módulo
+  que define `func` (ver §2, «Accesos por atributo»). Antes, el paquete raíz acumulaba un
+  Ca muy alto (en networkx, 253 de 288 módulos) por dependencias que en realidad iban a
+  los módulos que definen cada símbolo. Los usos que no se pueden resolver siguen
+  apuntando a la fachada, y ahí sí es un dato real.
 
 ### Impacto transitivo y paquetes (`graph/impact.py`, `graph/packages.py`)
 

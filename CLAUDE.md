@@ -168,7 +168,9 @@ para paquetes Python distribuibles).
   capas e impacto cuentan todas las aristas.
 - **Resolución de re-exports (indirección) es parte de v0.1**, no se pospuso.
   Ver `docs/architecture.md` para el algoritmo completo (incluye límite de
-  profundidad y detección de ciclos de re-export).
+  profundidad y detección de ciclos de re-export). Incluye el acceso por atributo
+  a través de un alias de paquete (`import pkg as p` + `p.f()`), conservador: lo
+  que no se puede seguir se queda en la fachada.
 - **Fallos de IA nunca detienen el comando.** Si falla la config, la llamada, o
   la validación del schema de salida, el reporte se genera igual sin la sección
   de IA, con un aviso claro.
