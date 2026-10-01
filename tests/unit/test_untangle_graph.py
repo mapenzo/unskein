@@ -5,11 +5,12 @@ import textwrap
 from pathlib import Path
 
 import networkx as nx
+import pytest
 
 from unskein.graph.steps import StepKind
-from unskein.graph.untangle import TanglePlan, find_cuts, plan_tangles, simulate
+from unskein.graph.untangle import Cut, TanglePlan, find_cuts, plan_tangles, simulate
 from unskein.parsers.models import ImportKind
-from unskein.parsers.usage import ImportEvidence, UseContext
+from unskein.parsers.usage import NO_EVIDENCE, ImportEvidence, UseContext
 
 
 def graph_of(*edges: tuple[str, str]) -> nx.DiGraph:
@@ -160,9 +161,18 @@ def test_tangle_plan_cost_sums_its_steps() -> None:
 def test_simulation_counts_before_and_after_and_coupling_changes() -> None:
     scope = graph_of(("a", "b"), ("b", "a"), ("b", "c"))
     full = graph_of(("a", "b"), ("b", "a"), ("b", "c"), ("c", "a"))
-    result = simulate(scope, full, [("b", "a")])
+    result = simulate(scope, full, [Cut("b", "a", StepKind.MOVE_SYMBOL, NO_EVIDENCE)])
     assert (result.tangles_before, result.tangles_after) == (1, 0)
     assert (result.cycles_before, result.cycles_after) == (1, 0)
     [change] = [c for c in result.changes if c.module == "a"]
     assert (change.before.afferent, change.after.afferent) == (2, 1)
     assert {c.module for c in result.changes} == {"a", "b"}
+
+
+@pytest.mark.parametrize("step", [StepKind.LAZY, StepKind.TYPE_CHECKING])
+def test_lazy_and_type_only_cuts_keep_the_coupling(step: StepKind) -> None:
+    scope = graph_of(("a", "b"), ("b", "a"))
+    result = simulate(scope, scope, [Cut("b", "a", step, NO_EVIDENCE)])
+    assert (result.tangles_before, result.tangles_after) == (1, 0)
+    [change] = [c for c in result.changes if c.module == "b"]
+    assert (change.before.efferent, change.after.efferent) == (1, 1)

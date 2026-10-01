@@ -160,7 +160,7 @@ def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePla
             )
     evidence = _keep_names_at_module_level(evidence, names_imported_from(parsed))
     plans = plan_tangles(scope, tangles, evidence, facades=facades, all_edges=all_edges)
-    cuts = [(cut.source, cut.target) for plan in plans for cut in plan.cuts]
+    cuts = [cut for plan in plans for cut in plan.cuts]
     return UntanglePlan(
         all_edges=all_edges,
         tangles=plans,

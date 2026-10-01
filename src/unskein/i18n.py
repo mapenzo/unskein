@@ -352,10 +352,12 @@ _REPORT: dict[str, dict[Lang, str]] = {
     },
     "untangle.note": {
         Lang.ES: "Los cortes salen de una heurística (Eades–Lin–Smyth) que no garantiza el "
-        "mínimo. La simulación quita las aristas sin más; mover un símbolo traslada su "
-        "dependencia, así que el resultado real puede ser algo peor.",
+        "mínimo. La simulación quita los imports cortados de las marañas; en el acoplamiento, "
+        "los imports perezosos y bajo `TYPE_CHECKING` siguen contando. Mover un símbolo "
+        "traslada su dependencia, así que el resultado real puede ser algo peor.",
         Lang.EN: "The cuts come from a heuristic (Eades–Lin–Smyth) that does not guarantee "
-        "the minimum. The simulation just removes the edges; moving a symbol moves its "
+        "the minimum. The simulation removes the cut imports from the tangles; in the "
+        "coupling, lazy and `TYPE_CHECKING` imports still count. Moving a symbol moves its "
         "dependency, so the real result can be somewhat worse.",
     },
     "untangle.step.type_checking": {

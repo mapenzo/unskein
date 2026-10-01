@@ -34,6 +34,16 @@ class StepKind(StrEnum):
     PACKAGE_STRUCTURE = "package_structure"
 
 
+# Steps that remove the dependency itself; lazy and type-only imports keep it in the design.
+STRUCTURAL_STEPS = frozenset(
+    {
+        StepKind.BYPASS_FACADE,
+        StepKind.MOVE_SYMBOL,
+        StepKind.EXTRACT_SHARED,
+        StepKind.PACKAGE_STRUCTURE,
+    }
+)
+
 # Calibrated on networkx, rich, aiohttp and litellm (docs/architecture.md, `untangle`): a
 # package importing its own submodule is so expensive that it is only cut when no other
 # edge breaks the cycle.

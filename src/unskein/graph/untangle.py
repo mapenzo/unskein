@@ -7,7 +7,7 @@ import networkx as nx
 
 from unskein.graph.coupling import CouplingMetrics
 from unskein.graph.metrics import compute_coupling, find_cycles, find_tangles
-from unskein.graph.steps import STEP_COSTS, StepKind, choose_step
+from unskein.graph.steps import STEP_COSTS, STRUCTURAL_STEPS, StepKind, choose_step
 from unskein.parsers.models import ImportKind
 from unskein.parsers.usage import NO_EVIDENCE, ImportEvidence
 
@@ -236,29 +236,34 @@ def plan_tangles(
     return tuple(plans)
 
 
-def simulate(scope: nx.DiGraph, full: nx.DiGraph, cuts: Collection[Edge]) -> Simulation:
+def simulate(scope: nx.DiGraph, full: nx.DiGraph, cuts: Collection[Cut]) -> Simulation:
     """Measure tangles, cycles and coupling before and after cutting.
 
-    Tangles and cycles are measured on the scope graph; coupling, like the report's, on
-    every dependency. Removing an edge is optimistic: moving a symbol moves its dependency.
+    Tangles and cycles are measured on the scope graph, without every cut. Coupling,
+    like the report's, is measured on every dependency, and only structural cuts leave
+    it: a lazy or type-only import still depends on its target. Removing an edge is
+    optimistic: moving a symbol moves its dependency.
 
     Args:
         scope: Graph the cuts were planned on.
         full: Every dependency of the project.
-        cuts: Edges to remove.
+        cuts: Imports to cut, each with its step.
 
     Returns:
         The simulation.
     """
+    edges = [(cut.source, cut.target) for cut in cuts]
     scope_after = scope.copy()
-    scope_after.remove_edges_from(cuts)
+    scope_after.remove_edges_from(edges)
     full_after = full.copy()
-    full_after.remove_edges_from(cuts)
+    full_after.remove_edges_from(
+        (cut.source, cut.target) for cut in cuts if cut.step in STRUCTURAL_STEPS
+    )
     cycles_before, truncated_before = find_cycles(scope)
     cycles_after, truncated_after = find_cycles(scope_after)
     coupling_before = compute_coupling(full)
     coupling_after = compute_coupling(full_after)
-    touched = sorted({module for edge in cuts for module in edge})
+    touched = sorted({module for edge in edges for module in edge})
     changes = [
         ModuleChange(module, coupling_before[module], coupling_after[module]) for module in touched
     ]
