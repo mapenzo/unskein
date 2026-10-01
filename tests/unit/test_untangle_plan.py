@@ -117,4 +117,4 @@ def test_report_truncates_cuts_beyond_the_limit(
     assert sum(len(tangle.cuts) for tangle in plan.tangles) >= 1
     monkeypatch.setattr("unskein.report.untangle.MAX_CUTS_SHOWN", 0)
     report = render_untangle(plan, root, Lang.EN, max_tangles=5)
-    assert "…and 1 more cuts." in report
+    assert "Cuts not shown: 1." in report

@@ -312,9 +312,9 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.EN: "No tangles, not even counting hidden coupling.",
     },
     "untangle.hidden_hint": {
-        Lang.ES: "Hay {count} grupos de acoplamiento oculto; `unskein untangle --all-edges` "
+        Lang.ES: "Grupos de acoplamiento oculto: {count}; `unskein untangle --all-edges` "
         "también los incluye.",
-        Lang.EN: "There are {count} hidden-coupling groups; `unskein untangle --all-edges` "
+        Lang.EN: "Hidden-coupling groups: {count}; `unskein untangle --all-edges` "
         "includes them too.",
     },
     "untangle.tangle_heading": {
@@ -332,8 +332,8 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "untangle.col.module": {Lang.ES: "Módulo", Lang.EN: "Module"},
     "untangle.col.instability": {Lang.ES: "Inestabilidad", Lang.EN: "Instability"},
     "untangle.cuts_truncated": {
-        Lang.ES: "…y {count} cortes más.",
-        Lang.EN: "…and {count} more cuts.",
+        Lang.ES: "Cortes sin mostrar: {count}.",
+        Lang.EN: "Cuts not shown: {count}.",
     },
     "untangle.tangles_truncated": {
         Lang.ES: "Se muestran {shown} de {total} marañas (las mayores); `--max-tangles` "
