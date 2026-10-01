@@ -12,7 +12,7 @@ from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
-from unskein.parsers.models import ParseResult, ParseWarning
+from unskein.parsers.models import ImportKind, ParseResult, ParseWarning
 
 MAX_CYCLES = 100
 HIGH_COUPLING_PERCENTILE = 90
@@ -29,17 +29,20 @@ class AnalysisResult:
     Attributes:
         graph: Internal module dependency graph.
         coupling_metrics: Metrics per module name.
-        cycles: Dependency cycles found, each as a list of module names.
+        cycles: Dependency cycles that exist at import time (module-level imports
+            only), each as a list of module names.
         high_coupling_modules: Modules in the top coupling percentile.
         parse_warnings: Warnings collected while parsing and resolving.
         cycles_truncated: Whether cycle detection stopped at its limit.
-        tangles: Groups of mutually dependent modules (strongly connected
-            components with more than one module), largest first; never truncated.
+        tangles: Groups of mutually dependent modules at import time (strongly
+            connected components with more than one module), largest first; never truncated.
         findings: Architecture findings, ordered by kind and module.
         findings_enabled: Whether findings were computed; the report omits its section when False.
         impact: Modules that depend on each displayed module, directly or not.
         packages: Coupling per package, most coupled first.
         package_edges: Dependencies between packages, with the most imports first.
+        hidden_tangles: Groups that depend on each other only once lazy and
+            type-only imports are counted, largest first.
     """
 
     graph: nx.DiGraph
@@ -54,6 +57,7 @@ class AnalysisResult:
     impact: dict[str, int] = field(default_factory=dict)
     packages: list[PackageMetrics] = field(default_factory=list)
     package_edges: list[PackageEdge] = field(default_factory=list)
+    hidden_tangles: list[list[str]] = field(default_factory=list)
 
 
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
@@ -130,6 +134,43 @@ def find_tangles(graph: nx.DiGraph) -> list[list[str]]:
     return sorted(tangles, key=lambda members: (-len(members), members[0]))
 
 
+def import_time_graph(graph: nx.DiGraph) -> nx.DiGraph:
+    """Keep only the dependencies that exist when modules are imported.
+
+    Args:
+        graph: Internal module dependency graph, whose edges carry their ``kind``.
+
+    Returns:
+        A copy with every module and only the edges of kind ``MODULE``, in the
+        same order, so traversals stay deterministic.
+    """
+    runtime = nx.DiGraph()
+    runtime.add_nodes_from(graph.nodes)
+    runtime.add_edges_from(
+        (source, target, data)
+        for source, target, data in graph.edges(data=True)
+        if data["kind"] is ImportKind.MODULE
+    )
+    return runtime
+
+
+def find_hidden_tangles(graph: nx.DiGraph, import_tangles: list[list[str]]) -> list[list[str]]:
+    """Find tangles that appear only when lazy and type-only imports are counted.
+
+    A tangle of the complete graph that is also a tangle at import time is not
+    hidden; one that is larger than any of those (an import-time tangle grown by
+    a lazy import) is.
+
+    Args:
+        graph: Internal module dependency graph, whose edges carry their ``kind``.
+        import_tangles: Tangles at import time, as ``find_tangles`` returns them.
+
+    Returns:
+        The hidden tangles with their members sorted, largest first.
+    """
+    return [tangle for tangle in find_tangles(graph) if tangle not in import_tangles]
+
+
 def find_high_coupling(
     metrics: dict[str, CouplingMetrics], percentile: int = HIGH_COUPLING_PERCENTILE
 ) -> list[str]:
@@ -181,13 +222,16 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         findings_config: Findings thresholds; None means the defaults.
 
     Returns:
-        The consolidated deterministic analysis.
+        The consolidated deterministic analysis. Cycles and tangles are computed
+        at import time (module-level imports only); the rest counts every import.
     """
     if findings_config is None:
         findings_config = FindingsConfig()
     graph = build_graph(result)
     coupling = compute_coupling(graph)
-    cycles, cycles_truncated = find_cycles(graph)
+    import_graph = import_time_graph(graph)
+    cycles, cycles_truncated = find_cycles(import_graph)
+    tangles = find_tangles(import_graph)
     facades = {m.name for m in result.modules if m.file_path.name == PACKAGE_INIT_FILE}
     high_coupling = find_high_coupling(coupling)
     findings = find_findings(graph, coupling, findings_config, packages=facades)
@@ -201,10 +245,11 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         high_coupling_modules=high_coupling,
         parse_warnings=list(result.warnings),
         cycles_truncated=cycles_truncated,
-        tangles=find_tangles(graph),
+        tangles=tangles,
         findings=findings,
         findings_enabled=findings_config.enabled,
         impact=impact_radius(graph, _impact_targets(high_coupling, findings)),
         packages=package_metrics,
         package_edges=package_edges,
+        hidden_tangles=find_hidden_tangles(graph, tangles),
     )

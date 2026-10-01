@@ -17,11 +17,13 @@ from unskein.graph.metrics import (
     analyze,
     compute_coupling,
     find_cycles,
+    find_hidden_tangles,
     find_high_coupling,
     find_tangles,
+    import_time_graph,
 )
 from unskein.graph.packages import PackageEdge
-from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult
+from unskein.parsers.models import ImportEdge, ImportKind, ModuleInfo, ParseResult
 from unskein.pipeline import should_parallelize
 
 
@@ -326,3 +328,53 @@ def test_impact_is_bounded_by_the_displayed_modules() -> None:
     result = analyze(parsed)
 
     assert len(result.impact) <= IMPACT_COUPLED_MODULES + IMPACT_BOTTLENECK_MODULES
+
+
+def kinded_graph(*edges: tuple[str, str, ImportKind]) -> nx.DiGraph:
+    """Build a DiGraph whose edges carry their import kind.
+
+    Args:
+        *edges: ``(source, target, kind)`` triples.
+
+    Returns:
+        The graph, with a ``kind`` attribute on every edge.
+    """
+    graph = nx.DiGraph()
+    for source, target, kind in edges:
+        graph.add_edge(source, target, weight=1, kind=kind)
+    return graph
+
+
+def test_import_time_graph_keeps_every_module_but_only_module_edges() -> None:
+    graph = kinded_graph(
+        ("a", "b", ImportKind.MODULE),
+        ("b", "c", ImportKind.LAZY),
+        ("c", "a", ImportKind.TYPE_CHECKING),
+    )
+    runtime = import_time_graph(graph)
+    assert list(runtime.nodes) == ["a", "b", "c"]
+    assert set(runtime.edges) == {("a", "b")}
+
+
+def test_hidden_tangles_exist_only_when_lazy_or_type_imports_are_counted() -> None:
+    graph = kinded_graph(
+        ("a", "b", ImportKind.MODULE),
+        ("b", "a", ImportKind.TYPE_CHECKING),
+        ("x", "y", ImportKind.MODULE),
+        ("y", "x", ImportKind.MODULE),
+    )
+    import_tangles = find_tangles(import_time_graph(graph))
+    assert import_tangles == [["x", "y"]]
+    assert find_hidden_tangles(graph, import_tangles) == [["a", "b"]]
+
+
+def test_a_tangle_grown_by_a_lazy_import_is_hidden_too() -> None:
+    graph = kinded_graph(
+        ("a", "b", ImportKind.MODULE),
+        ("b", "a", ImportKind.MODULE),
+        ("b", "c", ImportKind.LAZY),
+        ("c", "b", ImportKind.MODULE),
+    )
+    import_tangles = find_tangles(import_time_graph(graph))
+    assert import_tangles == [["a", "b"]]
+    assert find_hidden_tangles(graph, import_tangles) == [["a", "b", "c"]]
