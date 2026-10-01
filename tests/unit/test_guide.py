@@ -5,8 +5,9 @@ import typer
 
 from unskein import __version__
 from unskein.cli import app
+from unskein.graph.findings import FindingKind
 from unskein.guide import usage_guide
-from unskein.i18n import Lang
+from unskein.i18n import Lang, t
 
 EXIT_CODES = ("`0`", "`1`", "`2`", "`3`")
 
@@ -69,3 +70,26 @@ def test_both_guides_have_the_same_sections() -> None:
     sections = {lang: usage_guide(lang).count("\n## ") for lang in Lang}
 
     assert sections[Lang.ES] == sections[Lang.EN] > 0
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_guide_explains_every_finding_kind(lang: Lang) -> None:
+    titles = [t(f"finding.{kind}.title", lang) for kind in FindingKind]
+
+    assert all(title in usage_guide(lang) for title in titles)
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_guide_explains_packages_and_impact(lang: Lang) -> None:
+    guide = usage_guide(lang)
+
+    assert f"**{t('report.packages', lang)}**" in guide
+    assert f"**{t('report.impact', lang)}**" in guide
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_guide_explains_how_to_declare_layers(lang: Lang) -> None:
+    guide = usage_guide(lang)
+
+    assert "[layers]" in guide
+    assert "order = [" in guide

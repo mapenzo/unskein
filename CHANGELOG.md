@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-01
+
+### Added
+
+- Layer check: declare your layers in `[layers] order` of `.unskein.toml` (highest first,
+  as package prefixes) and the findings report every import that goes from a lower layer
+  up into a higher one. A module belongs to the layer with the longest matching prefix
+  (whole name segments); modules in no layer are not checked. Shown also with `--no-ai`,
+  given to the AI, and it never changes the exit code. Invalid or repeated layer names
+  are a configuration error; a declared layer that matches no module is warned about.
+- Findings section in the report: four deterministic rules over the graph (unstable
+  dependency, bottleneck, growing orchestrator, orphan module), each with an explanation
+  and a recommendation. Thresholds are relative (percentiles of the project) with
+  absolute minimums, so a small project is not flooded; package `__init__.py` facades are
+  excluded. Tune them in the `[findings]` table of `.unskein.toml`, or switch the
+  section off with `--no-findings` (`--findings` to override a config that disables it).
+  Entry points are never reported as orphans: `__main__`, the targets of
+  `[project.scripts]` and `[project.gui-scripts]` in `pyproject.toml`, and the
+  `entry_points` setting. The section is shown also with `--no-ai`, the AI receives the
+  findings as facts already computed, and they never change the exit code.
+- Packages section in the report: modules grouped by the package they sit in, named by at
+  most the first `package_depth` segments of their names (`[findings]`), with Ca, Ce and
+  instability measured between packages and the largest dependencies between them. Modules
+  in no package, such as a top-level single file, go to `(root)`. The depth is automatic by
+  default: it starts at 1 and goes one level deeper when the whole project is a single
+  top-level package; a number in `package_depth` fixes it. It is omitted when the project
+  has fewer than two packages, and it is shown, and given to the AI, even with
+  `[findings] enabled = false`.
+- Impact column in the most coupled modules table, and `impact N` on bottleneck lines: how
+  many modules depend on a module directly or indirectly, shown for the listed modules and
+  the bottlenecks. The AI receives the package dependencies and the bottleneck impact as
+  facts already computed.
+
+### Changed
+
+- The most coupled modules table now says what it lists (the top 10% of modules by
+  Ca + Ce) and what Ca, Ce and instability mean. The note under a cut table reads
+  "Showing the 15 most coupled of the 31 modules in the top 10% by Ca + Ce" instead of
+  "Showing 15 of 31", which looked like an unfinished scan.
+- The usage guide (`unskein guide`) explains how to set up the AI step: what the model,
+  key and endpoint settings are, a recipe per provider (Ollama, OpenAI, Claude, Gemini,
+  Azure OpenAI, AWS Bedrock, Mistral, Groq, DeepSeek, LiteLLM Proxy, OpenAI-compatible
+  servers), how to check the setup and what each AI error means. The README,
+  `.env.example` and the `unskein init` template point to it, and say that unskein reads
+  environment variables, not `.env` files.
+
+### Fixed
+
+- Reasoning models behind a LiteLLM Proxy alias that does not name the real model (for
+  example "GPT 5.6 Luna") failed with `BadRequestError`, because they were sent
+  temperature 0.2. For `litellm_proxy/` models unskein now asks the proxy's
+  `/model/info` whether the alias is a reasoning model, and falls back to LiteLLM's own
+  model map when the proxy cannot say.
+- With `--verbose`, the provider's error message hid only the key given to unskein
+  (`UNSKEIN_API_KEY`, `[ai] api_key`, `--api-key`). A key LiteLLM read from the
+  provider's own variable (`ANTHROPIC_API_KEY`, AWS credentials...) could show in clear.
+  Those values are now hidden too.
+
 ## [0.1.1] - 2026-09-30
 
 ### Added
@@ -128,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   supports it, a 60 s limit for direct calls) and never lets LiteLLM download its price
   map or send telemetry.
 
-[Unreleased]: https://github.com/mapenzo/unskein/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/mapenzo/unskein/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mapenzo/unskein/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/mapenzo/unskein/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/mapenzo/unskein/releases/tag/v0.1.0

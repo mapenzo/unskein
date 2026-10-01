@@ -6,14 +6,21 @@ from enum import StrEnum
 from pathlib import Path
 
 from unskein.ai.models import AIFailure, AIReport, Problem, Severity
-from unskein.graph.metrics import AnalysisResult
+from unskein.graph.findings import Finding, FindingKind
+from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
 
 SEVERITY_ORDER: dict[Severity, int] = {"low": 0, "medium": 1, "high": 2}
 MAX_MODULES_IN_TABLE = 15
+TOP_COUPLED_SHARE = 100 - HIGH_COUPLING_PERCENTILE
 MAX_WARNING_EXAMPLES = 5
 MAX_TANGLE_MEMBERS_SHOWN = 10
+MAX_FINDINGS_PER_KIND = 10
+MAX_PACKAGES_IN_TABLE = 15
+MAX_PACKAGE_EDGES_SHOWN = 10
+MIN_PACKAGES_SHOWN = 2
+NOT_MEASURED = "—"
 
 
 class AIStatus(StrEnum):
@@ -92,9 +99,14 @@ def render_report(context: ReportContext, lang: Lang) -> str:
         _summary(context, lang),
         _metrics(context.result, lang),
         _cycles(context.result, lang),
-        _coupled(context.result, lang),
-        _ai(context, lang),
     ]
+    packages = _packages(context.result, lang)
+    if packages:
+        sections.append(packages)
+    sections.append(_coupled(context.result, lang))
+    if context.result.findings_enabled:
+        sections.append(_findings(context.result, lang))
+    sections.append(_ai(context, lang))
     if context.result.parse_warnings:
         sections.append(_warnings(context.result.parse_warnings, context.root, lang))
     return "\n\n".join("\n".join(lines) for lines in sections) + "\n"
@@ -139,6 +151,9 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         lines.append(top_line)
     if result.tangles:
         lines.append(_tangle_summary(result.tangles, lang))
+    if result.findings:
+        key = "one" if len(result.findings) == 1 else "other"
+        lines.append(t(f"report.summary_findings.{key}", lang, count=len(result.findings)))
     if context.ai_report:
         health = t(f"report.health.{context.ai_report.architecture_health}", lang)
         lines += ["", context.ai_report.summary, "", t("report.health", lang, health=health)]
@@ -231,6 +246,54 @@ def _tangle_line(members: list[str], lang: Lang) -> str:
     return f"- **{t('report.tangle_size', lang, size=len(members))}**: {shown}{more}"
 
 
+def _packages(result: AnalysisResult, lang: Lang) -> list[str]:
+    """Build the package overview, or nothing when there is no package structure to show.
+
+    Args:
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        Markdown lines of the section; empty with fewer than ``MIN_PACKAGES_SHOWN`` packages.
+    """
+    if len(result.packages) < MIN_PACKAGES_SHOWN:
+        return []
+    lines = [
+        f"## {t('report.packages', lang)}",
+        "",
+        t("report.packages_intro", lang),
+        "",
+        f"| {t('report.package', lang)} | {t('report.package_modules', lang)} | Ca | Ce "
+        f"| {t('report.instability', lang)} |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for package in result.packages[:MAX_PACKAGES_IN_TABLE]:
+        lines.append(
+            f"| `{package.name}` | {package.modules} | {package.afferent} "
+            f"| {package.efferent} | {package.instability:.2f} |"
+        )
+    if len(result.packages) > MAX_PACKAGES_IN_TABLE:
+        lines += [
+            "",
+            t(
+                "report.packages_showing",
+                lang,
+                shown=MAX_PACKAGES_IN_TABLE,
+                total=len(result.packages),
+            ),
+        ]
+    if result.package_edges:
+        lines += ["", f"### {t('report.package_edges', lang)}", ""]
+        for edge in result.package_edges[:MAX_PACKAGE_EDGES_SHOWN]:
+            key = "one" if edge.imports == 1 else "other"
+            label = t(f"report.package_edge.{key}", lang, imports=edge.imports)
+            lines.append(f"- `{edge.source}` → `{edge.target}` ({label})")
+        hidden = len(result.package_edges) - MAX_PACKAGE_EDGES_SHOWN
+        if hidden > 0:
+            lines.append(f"- {t('report.more', lang, count=hidden)}")
+    return lines
+
+
 def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
     """Build the table of the most coupled modules, capped at ``MAX_MODULES_IN_TABLE``.
 
@@ -246,15 +309,99 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
     if not modules:
         return [*lines, t("report.no_coupled", lang)]
     lines += [
-        f"| {t('report.module', lang)} | Ca | Ce | {t('report.instability', lang)} |",
-        "|---|---:|---:|---:|",
+        t("report.coupled_intro", lang, top=TOP_COUPLED_SHARE),
+        "",
+        f"| {t('report.module', lang)} | Ca | Ce | {t('report.instability', lang)} "
+        f"| {t('report.impact', lang)} |",
+        "|---|---:|---:|---:|---:|",
     ]
     for name in modules[:MAX_MODULES_IN_TABLE]:
         m = result.coupling_metrics[name]
-        lines.append(f"| `{name}` | {m.afferent} | {m.efferent} | {m.instability:.2f} |")
+        lines.append(
+            f"| `{name}` | {m.afferent} | {m.efferent} | {m.instability:.2f} "
+            f"| {result.impact.get(name, NOT_MEASURED)} |"
+        )
     if len(modules) > MAX_MODULES_IN_TABLE:
-        lines += ["", t("report.showing", lang, shown=MAX_MODULES_IN_TABLE, total=len(modules))]
+        showing = t(
+            "report.showing",
+            lang,
+            shown=MAX_MODULES_IN_TABLE,
+            total=len(modules),
+            top=TOP_COUPLED_SHARE,
+        )
+        lines += ["", showing]
     return lines
+
+
+def _findings(result: AnalysisResult, lang: Lang) -> list[str]:
+    """Build the findings section: each rule explained once, then its modules.
+
+    Args:
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        Markdown lines of the section.
+    """
+    lines = [f"## {t('report.findings', lang)}", ""]
+    if not result.findings:
+        return [*lines, t("report.no_findings", lang)]
+    for kind in FindingKind:
+        group = [finding for finding in result.findings if finding.kind is kind]
+        if not group:
+            continue
+        lines += [
+            f"### {t(f'finding.{kind}.title', lang)} ({len(group)})",
+            "",
+            t(f"finding.{kind}.explanation", lang),
+            "",
+            f"*{t('report.recommendation', lang)}:* {t(f'finding.{kind}.recommendation', lang)}",
+            "",
+        ]
+        lines += [
+            _finding_line(finding, result.impact, lang) for finding in group[:MAX_FINDINGS_PER_KIND]
+        ]
+        hidden = len(group) - MAX_FINDINGS_PER_KIND
+        if hidden > 0:
+            lines.append(f"- {t('report.more', lang, count=hidden)}")
+        lines.append("")
+    return lines[:-1]
+
+
+def _finding_line(finding: Finding, impact: dict[str, int], lang: Lang) -> str:
+    """Render one finding as a list item with the numbers behind it.
+
+    Args:
+        finding: The finding to render.
+        impact: Measured impact per module; a bottleneck shows its own when present.
+        lang: Report language.
+
+    Returns:
+        One Markdown list item.
+    """
+    evidence = finding.evidence
+    if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
+        source, target = finding.modules
+        return (
+            f"- `{source}` → `{target}` (Ca {evidence['afferent_from']}, "
+            f"I {evidence['instability_from']:.2f} → {evidence['instability_to']:.2f})"
+        )
+    if finding.kind is FindingKind.LAYER_VIOLATION:
+        source, target = finding.modules
+        layers = t(
+            "finding.layers",
+            lang,
+            layer_from=evidence["layer_from"],
+            layer_to=evidence["layer_to"],
+        )
+        return f"- `{source}` → `{target}` ({layers})"
+    (module,) = finding.modules
+    if finding.kind is FindingKind.ORPHAN:
+        return f"- `{module}`"
+    numbers = f"Ca {evidence['afferent']}, Ce {evidence['efferent']}"
+    if finding.kind is FindingKind.BOTTLENECK and module in impact:
+        numbers += f", {t('finding.impact', lang, impact=impact[module])}"
+    return f"- `{module}` ({numbers})"
 
 
 def _ai(context: ReportContext, lang: Lang) -> list[str]:

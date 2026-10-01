@@ -8,10 +8,13 @@ import pytest
 from unskein.config import (
     PROJECT_CONFIG_NAME,
     AnalysisConfig,
+    FindingsConfig,
     TomlAI,
     TomlAnalysis,
     TomlConfig,
+    TomlFindings,
     TomlGeneral,
+    TomlLayers,
     load_toml_config,
 )
 from unskein.errors import ErrorKey, UnskeinError
@@ -37,7 +40,13 @@ def test_template_as_generated_changes_nothing(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("table", "schema"),
-    [("general", TomlGeneral), ("ai", TomlAI), ("analysis", TomlAnalysis)],
+    [
+        ("general", TomlGeneral),
+        ("ai", TomlAI),
+        ("analysis", TomlAnalysis),
+        ("findings", TomlFindings),
+        ("layers", TomlLayers),
+    ],
 )
 def test_template_documents_every_setting(table: str, schema: type) -> None:
     assert set(uncommented_template()[table]) == set(schema.model_fields)
@@ -54,6 +63,16 @@ def test_template_shows_the_real_analysis_defaults() -> None:
     for field in fields(AnalysisConfig):
         default = getattr(defaults, field.name)
         if field.name in documented and default is not None:
+            assert documented[field.name] == default, field.name
+
+
+def test_template_shows_the_real_findings_defaults() -> None:
+    documented = uncommented_template()["findings"]
+    defaults = FindingsConfig()
+
+    for field in fields(FindingsConfig):
+        default = getattr(defaults, field.name)
+        if field.name in documented and default is not None and field.name != "entry_points":
             assert documented[field.name] == default, field.name
 
 

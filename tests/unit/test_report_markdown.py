@@ -3,15 +3,27 @@ from pathlib import Path
 
 import networkx as nx
 import pathspec
+import pytest
 
 from unskein.ai.models import AIFailure, AIReport, Problem
-from unskein.graph.metrics import AnalysisResult, CouplingMetrics, analyze
+from unskein.graph.findings import Finding, FindingKind
+from unskein.graph.metrics import (
+    IMPACT_BOTTLENECK_MODULES,
+    IMPACT_COUPLED_MODULES,
+    AnalysisResult,
+    CouplingMetrics,
+    analyze,
+)
+from unskein.graph.packages import PackageEdge, PackageMetrics
 from unskein.i18n import Lang
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import ParseWarning, WarningCode
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.report.markdown import (
+    MAX_FINDINGS_PER_KIND,
     MAX_MODULES_IN_TABLE,
+    MAX_PACKAGE_EDGES_SHOWN,
+    MAX_PACKAGES_IN_TABLE,
     MAX_TANGLE_MEMBERS_SHOWN,
     MAX_WARNING_EXAMPLES,
     AIStatus,
@@ -99,6 +111,7 @@ def test_sections_in_order_english(circular_imports: Path) -> None:
         "## General metrics",
         "## Dependency cycles",
         "## Most coupled modules",
+        "## Findings",
         "## Problems flagged (AI)",
     ]
 
@@ -143,7 +156,22 @@ def test_coupled_table_is_truncated_with_a_note(tmp_path: Path) -> None:
     report = render(tmp_path, result)
     assert "| `m00` | 2 | 1 | 0.33 |" in report
     assert f"`m{MAX_MODULES_IN_TABLE:02d}`" not in report
-    assert f"Showing {MAX_MODULES_IN_TABLE} of {len(names)}." in report
+    assert (
+        f"Showing the {MAX_MODULES_IN_TABLE} most coupled of the {len(names)} modules "
+        "in the top 10% by Ca + Ce." in report
+    )
+
+
+def test_coupled_table_explains_which_modules_it_lists(tmp_path: Path) -> None:
+    result = AnalysisResult(
+        graph=nx.DiGraph(),
+        coupling_metrics={"a": CouplingMetrics("a", 2, 1)},
+        cycles=[],
+        high_coupling_modules=["a"],
+    )
+    report = render(tmp_path, result, lang=Lang.ES)
+    assert "El 10 % de los módulos con mayor Ca + Ce" in report
+    assert "Se muestran" not in report
 
 
 def test_ai_status_messages(simple_project: Path) -> None:
@@ -294,3 +322,196 @@ def test_no_dropped_notice_when_nothing_was_dropped(simple_project: Path) -> Non
         ai_status=AIStatus.PRESENT,
     )
     assert "discarded" not in report.lower()
+
+
+def result_with(*findings: Finding, **fields: object) -> AnalysisResult:
+    """Build a minimal analysis carrying the given findings.
+
+    Args:
+        *findings: Findings to attach.
+        **fields: Other ``AnalysisResult`` fields to set.
+
+    Returns:
+        The analysis.
+    """
+    return AnalysisResult(
+        graph=nx.DiGraph(),
+        coupling_metrics={},
+        cycles=[],
+        high_coupling_modules=[],
+        findings=list(findings),
+        **fields,
+    )
+
+
+def test_findings_section_lists_each_kind_with_its_evidence(tmp_path: Path) -> None:
+    result = result_with(
+        Finding(FindingKind.BOTTLENECK, ("core.settings",), {"afferent": 25, "efferent": 9}),
+        Finding(
+            FindingKind.UNSTABLE_DEPENDENCY,
+            ("core.svc", "web.factory"),
+            {"afferent_from": 2, "instability_from": 0.33, "instability_to": 0.83},
+        ),
+        Finding(FindingKind.ORPHAN, ("tools.stray",), {}),
+    )
+
+    report = render(tmp_path, result)
+
+    assert "## Findings" in report
+    assert "### Bottleneck (1)" in report
+    assert "- `core.settings` (Ca 25, Ce 9)" in report
+    assert "- `core.svc` → `web.factory` (Ca 2, I 0.33 → 0.83)" in report
+    assert "- `tools.stray`" in report
+    assert report.index("Unstable dependency") < report.index("Bottleneck") < report.index("Orphan")
+
+
+def test_findings_section_is_in_spanish_when_asked(tmp_path: Path) -> None:
+    result = result_with(Finding(FindingKind.ORPHAN, ("tools.stray",), {}))
+
+    report = render(tmp_path, result, lang=Lang.ES)
+
+    assert "## Hallazgos" in report
+    assert "Recomendación" in report
+
+
+def test_no_findings_says_so(tmp_path: Path) -> None:
+    assert "No findings detected." in render(tmp_path, result_with())
+
+
+def test_disabled_findings_leave_no_section(tmp_path: Path) -> None:
+    report = render(tmp_path / "project", result_with(findings_enabled=False))
+
+    assert "Findings" not in report
+    assert "findings" not in report
+
+
+def test_findings_per_kind_are_capped_with_a_note(tmp_path: Path) -> None:
+    orphans = [
+        Finding(FindingKind.ORPHAN, (f"m{i:02d}",), {}) for i in range(MAX_FINDINGS_PER_KIND + 3)
+    ]
+
+    report = render(tmp_path, result_with(*orphans))
+
+    assert f"### Orphan module ({len(orphans)})" in report
+    assert f"`m{MAX_FINDINGS_PER_KIND:02d}`" not in report
+    assert "…and 3 more" in report
+
+
+def test_summary_counts_the_findings(tmp_path: Path) -> None:
+    one = result_with(Finding(FindingKind.ORPHAN, ("a",), {}))
+    two = result_with(
+        Finding(FindingKind.ORPHAN, ("a",), {}), Finding(FindingKind.ORPHAN, ("b",), {})
+    )
+
+    assert "1 architecture finding." in render(tmp_path, one)
+    assert "2 architecture findings." in render(tmp_path, two)
+
+
+TWO_PACKAGES = [PackageMetrics("core", 5, 3, 0), PackageMetrics("web", 4, 0, 2)]
+
+
+def test_packages_section_lists_packages_and_their_dependencies(tmp_path: Path) -> None:
+    result = result_with(packages=TWO_PACKAGES, package_edges=[PackageEdge("web", "core", 7)])
+
+    report = render(tmp_path, result)
+
+    assert "## Packages" in report
+    assert "| `core` | 5 | 3 | 0 | 0.00 |" in report
+    assert "| `web` | 4 | 0 | 2 | 1.00 |" in report
+    assert "- `web` → `core` (7 imports)" in report
+
+
+def test_packages_section_is_in_spanish_when_asked(tmp_path: Path) -> None:
+    result = result_with(packages=TWO_PACKAGES, package_edges=[PackageEdge("web", "core", 1)])
+
+    report = render(tmp_path, result, lang=Lang.ES)
+
+    assert "## Paquetes" in report
+    assert "- `web` → `core` (1 import)" in report
+
+
+def test_packages_section_comes_before_the_coupled_modules(tmp_path: Path) -> None:
+    result = result_with(packages=TWO_PACKAGES, package_edges=[])
+
+    report = render(tmp_path, result)
+
+    assert report.index("## Packages") < report.index("## Most coupled modules")
+
+
+@pytest.mark.parametrize("packages", [[], [PackageMetrics("only", 3, 0, 0)]])
+def test_fewer_than_two_packages_leave_no_packages_section(
+    tmp_path: Path, packages: list[PackageMetrics]
+) -> None:
+    report = render(tmp_path, result_with(packages=packages))
+
+    assert "## Packages" not in report
+
+
+def test_packages_and_dependencies_are_capped_with_a_note(tmp_path: Path) -> None:
+    packages = [PackageMetrics(f"p{i:02d}", 1, 1, 1) for i in range(MAX_PACKAGES_IN_TABLE + 3)]
+    edges = [
+        PackageEdge(f"p{i:02d}", f"p{i + 1:02d}", 1) for i in range(MAX_PACKAGE_EDGES_SHOWN + 4)
+    ]
+
+    report = render(tmp_path, result_with(packages=packages, package_edges=edges))
+
+    assert f"`p{MAX_PACKAGES_IN_TABLE:02d}` |" not in report
+    assert (
+        f"Showing the {MAX_PACKAGES_IN_TABLE} most coupled of the {len(packages)} packages."
+        in report
+    )
+    assert "…and 4 more" in report
+
+
+def test_coupled_table_has_an_impact_column(tmp_path: Path) -> None:
+    result = AnalysisResult(
+        graph=nx.DiGraph(),
+        coupling_metrics={"a": CouplingMetrics("a", 2, 1), "b": CouplingMetrics("b", 1, 1)},
+        cycles=[],
+        high_coupling_modules=["a", "b"],
+        impact={"a": 7},
+    )
+
+    report = render(tmp_path, result)
+
+    assert "| Module | Ca | Ce | Instability | Impact |" in report
+    assert "| `a` | 2 | 1 | 0.33 | 7 |" in report
+    assert "| `b` | 1 | 1 | 0.50 | — |" in report
+
+
+def test_bottleneck_line_shows_its_impact(tmp_path: Path) -> None:
+    finding = Finding(FindingKind.BOTTLENECK, ("core.settings",), {"afferent": 25, "efferent": 9})
+
+    report = render(tmp_path, result_with(finding, impact={"core.settings": 54}))
+
+    assert "- `core.settings` (Ca 25, Ce 9, impact 54)" in report
+
+
+def test_bottleneck_line_without_a_measured_impact_stays_as_before(tmp_path: Path) -> None:
+    finding = Finding(FindingKind.BOTTLENECK, ("core.settings",), {"afferent": 25, "efferent": 9})
+
+    assert "- `core.settings` (Ca 25, Ce 9)" in render(tmp_path, result_with(finding))
+
+
+def test_report_and_analysis_agree_on_how_many_modules_are_shown() -> None:
+    assert MAX_MODULES_IN_TABLE == IMPACT_COUPLED_MODULES
+    assert MAX_FINDINGS_PER_KIND == IMPACT_BOTTLENECK_MODULES
+
+
+LAYER_VIOLATION = Finding(
+    FindingKind.LAYER_VIOLATION, ("core.db", "web.views"), {"layer_from": "core", "layer_to": "web"}
+)
+
+
+def test_layer_violation_line_names_both_layers(tmp_path: Path) -> None:
+    report = render(tmp_path, result_with(LAYER_VIOLATION))
+
+    assert "### Layer violation (1)" in report
+    assert "- `core.db` → `web.views` (layer core → web)" in report
+
+
+def test_layer_violation_is_in_spanish_when_asked(tmp_path: Path) -> None:
+    report = render(tmp_path, result_with(LAYER_VIOLATION), lang=Lang.ES)
+
+    assert "### Violación de capas (1)" in report
+    assert "- `core.db` → `web.views` (capa core → web)" in report

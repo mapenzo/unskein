@@ -1,37 +1,25 @@
 """Coupling metrics, cycle detection and the consolidated analysis result."""
 
-import math
 from dataclasses import dataclass, field
 from itertools import islice
 
 import networkx as nx
 
+from unskein.config import FindingsConfig
 from unskein.graph.builder import build_graph
+from unskein.graph.coupling import CouplingMetrics
+from unskein.graph.findings import Finding, FindingKind, find_findings
+from unskein.graph.impact import impact_radius
+from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
+from unskein.graph.percentile import nearest_rank_percentile
 from unskein.parsers.models import ParseResult, ParseWarning
 
 MAX_CYCLES = 100
 HIGH_COUPLING_PERCENTILE = 90
-
-
-@dataclass(slots=True)
-class CouplingMetrics:
-    """Afferent/efferent coupling of a single module.
-
-    Attributes:
-        module: Dotted module name.
-        afferent: Ca, number of modules that depend on this one.
-        efferent: Ce, number of modules this one depends on.
-    """
-
-    module: str
-    afferent: int
-    efferent: int
-
-    @property
-    def instability(self) -> float:
-        """Instability ``Ce / (Ca + Ce)`` in ``[0, 1]``; 0.0 for isolated modules."""
-        total = self.afferent + self.efferent
-        return self.efferent / total if total else 0.0
+PACKAGE_INIT_FILE = "__init__.py"
+# Impact costs one graph traversal per module, so only what the report shows is measured.
+IMPACT_COUPLED_MODULES = 15
+IMPACT_BOTTLENECK_MODULES = 10
 
 
 @dataclass
@@ -47,6 +35,11 @@ class AnalysisResult:
         cycles_truncated: Whether cycle detection stopped at its limit.
         tangles: Groups of mutually dependent modules (strongly connected
             components with more than one module), largest first; never truncated.
+        findings: Architecture findings, ordered by kind and module.
+        findings_enabled: Whether findings were computed; the report omits its section when False.
+        impact: Modules that depend on each displayed module, directly or not.
+        packages: Coupling per package, most coupled first.
+        package_edges: Dependencies between packages, with the most imports first.
     """
 
     graph: nx.DiGraph
@@ -56,6 +49,11 @@ class AnalysisResult:
     parse_warnings: list[ParseWarning] = field(default_factory=list)
     cycles_truncated: bool = False
     tangles: list[list[str]] = field(default_factory=list)
+    findings: list[Finding] = field(default_factory=list)
+    findings_enabled: bool = True
+    impact: dict[str, int] = field(default_factory=dict)
+    packages: list[PackageMetrics] = field(default_factory=list)
+    package_edges: list[PackageEdge] = field(default_factory=list)
 
 
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
@@ -153,34 +151,60 @@ def find_high_coupling(
     if not metrics:
         return []
     score = {name: m.afferent + m.efferent for name, m in metrics.items()}
-    ordered = sorted(score.values())
-    rank = max(1, math.ceil(percentile / 100 * len(ordered)))
-    threshold = ordered[rank - 1]
+    threshold = nearest_rank_percentile(list(score.values()), percentile)
     selected = [name for name, s in score.items() if s > 0 and s >= threshold]
     return sorted(selected, key=lambda name: (-score[name], name))
 
 
-def analyze(result: ParseResult) -> AnalysisResult:
-    """Run graph construction, coupling metrics and cycle detection.
+def _impact_targets(high_coupling: list[str], findings: list[Finding]) -> list[str]:
+    """Pick the modules whose impact is worth measuring: the ones the report displays.
+
+    Args:
+        high_coupling: Most coupled modules, most coupled first.
+        findings: Architecture findings, ordered by kind and module.
+
+    Returns:
+        The first coupled modules plus the first bottleneck modules.
+    """
+    bottlenecks = [f.modules[0] for f in findings if f.kind is FindingKind.BOTTLENECK]
+    return [*high_coupling[:IMPACT_COUPLED_MODULES], *bottlenecks[:IMPACT_BOTTLENECK_MODULES]]
+
+
+def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) -> AnalysisResult:
+    """Run the graph, coupling, cycles, findings, impact and package analyses.
 
     Expects re-exports to be resolved already (``resolve_indirection``);
     otherwise dependencies routed through package facades point at the facade.
 
     Args:
         result: Parse result with re-exports already resolved.
+        findings_config: Findings thresholds; None means the defaults.
 
     Returns:
         The consolidated deterministic analysis.
     """
+    if findings_config is None:
+        findings_config = FindingsConfig()
     graph = build_graph(result)
     coupling = compute_coupling(graph)
     cycles, cycles_truncated = find_cycles(graph)
+    facades = {m.name for m in result.modules if m.file_path.name == PACKAGE_INIT_FILE}
+    high_coupling = find_high_coupling(coupling)
+    findings = find_findings(graph, coupling, findings_config, packages=facades)
+    package_metrics, package_edges = summarize_project_packages(
+        graph, findings_config.package_depth, facades=facades
+    )
     return AnalysisResult(
         graph=graph,
         coupling_metrics=coupling,
         cycles=cycles,
-        high_coupling_modules=find_high_coupling(coupling),
+        high_coupling_modules=high_coupling,
         parse_warnings=list(result.warnings),
         cycles_truncated=cycles_truncated,
         tangles=find_tangles(graph),
+        findings=findings,
+        findings_enabled=findings_config.enabled,
+        impact=impact_radius(graph, _impact_targets(high_coupling, findings)),
+        packages=package_metrics,
+        package_edges=package_edges,
     )

@@ -116,6 +116,7 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
 src/unskein/
 ├── cli.py                 # typer: flags, salida, códigos de salida (capa fina)
 ├── scan.py                # orquestación: prepare_scan + execute_scan
+├── entry_points.py        # puntos de entrada de pyproject.toml (scripts)
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
 ├── init_config.py         # `unskein init`: plantilla .unskein.toml comentada
 ├── templates/unskein.toml # plantilla (viaja en el wheel)
@@ -132,9 +133,15 @@ src/unskein/
 │   └── python_parser.py    # implementación para Python con ast
 ├── graph/
 │   ├── builder.py           # construcción del grafo con NetworkX
-│   └── metrics.py           # Ca, Ce, inestabilidad, ciclos
+│   ├── coupling.py          # CouplingMetrics (módulo aparte: evita el ciclo metrics ↔ findings)
+│   ├── metrics.py           # Ca, Ce, inestabilidad, ciclos
+│   ├── findings.py          # hallazgos: reglas deterministas sobre el grafo
+│   ├── impact.py            # radio de impacto transitivo (impact_radius)
+│   ├── packages.py          # resumen por paquetes: Ca/Ce entre paquetes y dependencias
+│   └── percentile.py        # percentil por rango más cercano (compartido)
 ├── ai/
 │   ├── client.py             # wrapper de litellm.completion
+│   ├── proxy.py              # pregunta a un LiteLLM Proxy si su alias es de razonamiento
 │   └── prompts.py            # system prompt + construcción de prompts
 └── report/
     └── markdown.py           # generación del reporte final
@@ -149,6 +156,9 @@ para paquetes Python distribuibles).
   y las métricas de acoplamiento se calculan siempre, sin LLM. La IA solo
   interpreta lo que el grafo ya calculó — nunca decide qué es un módulo o un
   import.
+- **Los hallazgos (`graph/findings.py`) son reglas deterministas sobre el grafo**;
+  la IA solo los interpreta y nunca cambian el código de salida.
+  Son cinco reglas; la quinta (violación de capas) solo existe con `[layers]`.
 - **`is_external` se calcula comparando el primer segmento del import contra los
   módulos del proyecto**, no contra una lista de stdlib/paquetes conocidos.
 - **Resolución de re-exports (indirección) es parte de v0.1**, no se pospuso.

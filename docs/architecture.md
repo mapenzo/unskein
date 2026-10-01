@@ -598,6 +598,59 @@ aplicados) y construye el grafo real.
   (`PYTHONHASHSEED`), así que el grafo se enumera con etiquetas enteras (índice
   del nombre ordenado): la lista y el punto de truncado son idénticos entre
   ejecuciones (coste medido: 0,7 s con 20.000 nodos y 200.000 aristas).
+- **Hallazgos** (`graph/findings.py`, `find_findings(graph, metrics, config)`): reglas
+  deterministas sobre el grafo y las métricas, sin LLM. `analyze(result,
+  findings_config)` las calcula tras los ciclos y las guarda en `AnalysisResult.findings`
+  (`findings_enabled` dice si el informe debe mostrar la sección). Las fachadas
+  `__init__.py` quedan excluidas de todas las reglas. Defaults en `FindingsConfig`
+  (`[findings]` de `.unskein.toml`, sin flags por umbral; solo `--findings/--no-findings`).
+
+  | Regla | Condición | Defaults |
+  |---|---|---|
+  | Dependencia inestable | arista A→B con `I(B) − I(A) ≥ gap` y `Ca(A) ≥ min_afferent` | gap 0,5 · min_afferent 2 |
+  | Cuello de botella | `Ca ≥ max(P(Ca), mín)` y `Ce ≥ max(P(Ce), mín)` | P90 · mín 5 |
+  | Orquestador creciente | `Ce ≥ max(P(Ce), mín)` | P95 · mín 10 |
+  | Huérfano | `Ca = 0` y `Ce = 0`, sin puntos de entrada conocidos | — |
+  | Violación de capas | arista A→B con capa(A) más baja que capa(B); solo con `[layers]` | — |
+
+  `CouplingMetrics` vive en `graph/coupling.py` y no en `metrics.py`: `findings.py` lo
+  necesita y `metrics.py` importa `findings.py`, así que dejarlo en `metrics.py` creaba
+  un ciclo que unskein detectaba en su propio código (lo vigila
+  `tests/integration/test_self_analysis.py`). `metrics.py` lo reexporta.
+
+  `P(x)` es el percentil por rango más cercano (`graph/percentile.py`, compartido con
+  `find_high_coupling`): sin interpolación, siempre un valor real. Se combina con un
+  mínimo absoluto porque el percentil solo marcaría siempre a alguien (en un proyecto
+  pequeño, cualquier módulo sería «el peor»); el mínimo evita inundar de hallazgos un
+  proyecto de pocos módulos. Un módulo puede ser a la vez cuello de botella y
+  orquestador. Puntos de entrada: `entry_points.py` (la capa con E/S, llamada desde
+  `scan.py`) lee `[project.scripts]` y `[project.gui-scripts]` del `pyproject.toml` de la
+  raíz y los pasa, junto a `__main__` y `[findings] entry_points`, en
+  `FindingsConfig.entry_points`; así las reglas siguen siendo puras. Un `pyproject.toml`
+  ausente no es un error; uno ilegible o inválido se avisa (WARNING) y se ignora. En el
+  informe: a lo sumo 10 módulos por tipo; en el contexto de la IA, 5 por tipo con el total
+  real, como hechos ya calculados. Los hallazgos **no** cambian el código de salida.
+
+  Calibración medida antes de fijar los defaults:
+
+  | Proyecto | Módulos | Cuellos | Orquestadores | Dep. inestables | Huérfanos |
+  |---|---:|---:|---:|---:|---:|
+  | swo-aura-rag_api | 281 | 1 (`app_settings`) | 7 | 1 | 1 |
+  | unskein (`src`) | 31 | 0 | 2 (`cli`, `scan`) | 0 | 0 |
+
+  Coste medido: 0,05 s con 20.000 nodos y 200.000 aristas.
+
+  Regla de capas (`_layer_violations`, `_layer_of`): `[layers] order` lista las capas de
+  la más alta a la más baja como prefijos de paquete; el rango es la posición. Un módulo
+  pertenece a la capa de su prefijo más largo que coincida por segmentos completos
+  (`app.web` no abarca `app.webhooks`); sin capa, no se comprueba. Hay violación cuando
+  el importador está en una capa más baja (posterior en la lista) que el importado. Las
+  fachadas quedan excluidas, y se ordenan por par de módulos tras los huérfanos. Sin
+  `[layers]` la regla no existe. Validación: cada nombre cumple `LAYER_NAME_PATTERN`, sin
+  repetidos, y el error nunca repite el valor. Una capa declarada que no abarca ningún módulo
+  (`unmatched_layers`) se avisa (WARNING) en `analyze_project`, para que una errata no
+  se lea como cumplimiento. Calibración en swo-aura-rag_api: orden
+  declarado (`webapi, application, nexus_ai, core`) 0 violaciones; invertido, 158.
 - **Marañas** (`find_tangles`, #8): componentes fuertemente conexas de más
   de un módulo (`nx.strongly_connected_components`, lineal y exacto, nunca
   se trunca). Todo ciclo vive dentro de una maraña, así que dan el tamaño
@@ -616,12 +669,50 @@ aplicados) y construye el grafo real.
   la fachada —, pero el reporte/IA deben interpretarlo como tal, no como un
   "god module" clásico.
 
+### Impacto transitivo y paquetes (`graph/impact.py`, `graph/packages.py`)
+
+- **Radio de impacto** (`impact_radius(graph, modules)`): para cada módulo, cuántos módulos
+  dependen de él directa o indirectamente, es decir sus ancestros en el grafo (`a -> b`
+  significa que `a` importa a `b`). El propio módulo no cuenta, pero los demás miembros de
+  una maraña a la que pertenece sí. Cuesta un recorrido del grafo por módulo, así que
+  `analyze` lo calcula solo para el conjunto que el informe muestra: los 15 primeros de la
+  tabla de acoplamiento más los 10 primeros cuellos de botella (`AnalysisResult.impact`).
+  Coste medido: 0,44 s para 25 módulos en un grafo de 20.000 nodos y 200.000 aristas.
+- **Resumen por paquetes** (`summarize_packages(graph, depth, facades=...)`): `package_of`
+  asigna cada módulo a un paquete. Una fachada `__init__` es el paquete mismo, nombrado por
+  los primeros `depth` segmentos de su nombre. Un módulo normal pertenece al paquete en el
+  que está, recortado a `depth` segmentos (`min(depth, segmentos - 1)`): `core.db` está en
+  `core` con profundidad 1, 2 o 5. Solo un módulo sin paquete encima (un archivo suelto de
+  primer nivel, como `manage`) va a `ROOT_PACKAGE` (`"(root)"`). Ca y Ce cuentan paquetes
+  distintos, no módulos, y los imports dentro de un mismo paquete se ignoran. Los paquetes
+  salen ordenados por `Ca + Ce` descendente y luego por nombre; las dependencias, por número
+  de imports descendente y luego por nombres. Coste medido: 0,013 s con 20.000 nodos y
+  200.000 aristas. Resultado en `AnalysisResult.packages` y `.package_edges`.
+- **Profundidad automática** (`summarize_project_packages(graph, depth, facades=...)`):
+  `package_depth` es `int | None` y por defecto `None`. Con un número se usa tal cual. Con
+  `None` se resume a `AUTO_START_DEPTH` (1) y, si el resultado es un único paquete que no es
+  `ROOT_PACKAGE` (todo el proyecto cuelga de un solo paquete de primer nivel, como `unskein`),
+  se resume una vez más a `AUTO_START_DEPTH + 1` y se devuelve ese. Si no, se queda con el
+  primero. Nunca baja más de un nivel.
+- `package_depth` vive en `[findings]`, pero el resumen por paquetes **no** depende de
+  `enabled`: se calcula también con los hallazgos desactivados. El informe lo muestra solo
+  con dos o más paquetes (a lo sumo 15 paquetes y 10 dependencias); la IA recibe las 10
+  mayores dependencias con su total real y el impacto de los cuellos de botella. Nada de
+  esto cambia el código de salida.
+- Calibración medida:
+
+  | Proyecto | Paquetes | Impacto máximo |
+  |---|---|---|
+  | swo-aura-rag_api | `core` (81 módulos, Ca 5), `nexus_ai`, `application`, `webapi`, `tools`, `docs` | `core.logging.logger` 152, `core.configuration.load_env` 110, `core.configuration.app_settings` 75 |
+  | unskein (`src`) | profundidad automática (un solo paquete de primer nivel, baja a 2): `unskein` (14 módulos), `unskein.graph` (8), `unskein.parsers` (6), `unskein.ai` (4), `unskein.report` (2) | `unskein.config` 16 (0 marañas) |
+
 Output consolidado (`AnalysisResult`): `graph`, `coupling_metrics`, `cycles`,
-`high_coupling_modules`, `parse_warnings`, `cycles_truncated`, `tangles`.
-`analyze()` es composición pura `build_graph → compute_coupling →
-find_cycles → find_tangles → find_high_coupling` y espera un `ParseResult` ya pasado por
-`resolve_indirection`. Este objeto es el punto de unión entre el análisis
-determinista y la interpretación por IA/reporte.
+`high_coupling_modules`, `parse_warnings`, `cycles_truncated`, `tangles`, `findings`,
+`findings_enabled`, `impact`, `packages` y `package_edges`.
+`analyze()` es composición pura `build_graph → compute_coupling → find_cycles →
+find_high_coupling → find_findings → summarize_project_packages → find_tangles →
+impact_radius` y espera un `ParseResult` ya pasado por `resolve_indirection`. Este objeto es
+el punto de unión entre el análisis determinista y la interpretación por IA/reporte.
 
 ---
 
@@ -668,8 +759,17 @@ determinista.
 `AIClient(config)` resuelve un `ModelProfile` **una sola vez**, al construirse, y
 solo si la IA está activa (`--no-ai` nunca importa `litellm`):
 
-- `temperature`: 1.0 si `litellm.supports_reasoning(model)` (los modelos de
-  razonamiento solo aceptan 1.0), 0.2 en los demás.
+- `temperature`: 1.0 para los modelos de razonamiento (solo aceptan 1.0), 0.2 en
+  los demás. Con `litellm_proxy/…` se pregunta antes al proxy (`ai/proxy.py`):
+  un `GET {api_base}/model/info` con la clave virtual como bearer, límite de 10 s,
+  solo con `api_base` http(s), y se usa el `supports_reasoning` del alias. El alias
+  lo elige quien administra el proxy ("GPT 5.6 Luna"), así que LiteLLM no puede
+  deducir de él el modelo real; sin ese dato, un modelo de razonamiento recibía 0.2
+  y fallaba con `BadRequestError`. Si el proxy no responde, no está autorizado,
+  devuelve algo inesperado o no conoce el alias, decide
+  `litellm.supports_reasoning(model)`, como en las llamadas directas. El fallo solo
+  se registra en DEBUG con el tipo de error, nunca el mensaje (podría repetir la
+  clave).
 - `response_format`: la clase `AIReport` si el modelo soporta JSON schema; si no,
   `{"type": "json_object"}`.
 - `timeout`: 60 s en llamadas directas; ninguno con `litellm_proxy/…` (manda el
@@ -705,7 +805,12 @@ grafo; ningún otro segmento se adivina. Luego se eliminan de cada problema los 
 
 La API key nunca aparece en logs, `repr`, reporte ni errores. `WARNING` solo lleva
 el tipo de fallo y la clase de la excepción; el mensaje del proveedor solo va a
-`DEBUG`, con la key sustituida por `***`.
+`DEBUG`, con la key sustituida por `***`. Sin key de unskein, LiteLLM lee la variable
+del proveedor (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, credenciales de AWS…), así que
+también se sustituyen los valores de las variables cuyo nombre termina en `_API_KEY`,
+`_SECRET_ACCESS_KEY`, `_ACCESS_KEY_ID` o `_SESSION_TOKEN` (`secrets_to_redact`), si
+tienen al menos 8 caracteres: uno más corto es un marcador, y sustituirlo destrozaría
+palabras normales del mensaje.
 
 ### Degradación
 

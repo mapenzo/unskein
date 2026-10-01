@@ -1,6 +1,6 @@
 """Structured LLM output models and the bounded context sent to the LLM."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -105,6 +105,37 @@ class CycleSummary:
     members: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class FindingSummary:
+    """A deterministic finding, as shown to the LLM.
+
+    Attributes:
+        kind: Rule that produced it, e.g. ``"bottleneck"``.
+        modules: The module, or ``[importer, imported]`` for unstable dependencies and layer
+            violations.
+        evidence: Numbers (or, for layer violations, layer names) that triggered the rule.
+    """
+
+    kind: str
+    modules: list[str]
+    evidence: dict[str, float | str]
+
+
+@dataclass(frozen=True, slots=True)
+class PackageEdgeSummary:
+    """Dependencies from one package to another, as shown to the LLM.
+
+    Attributes:
+        source: Package that imports.
+        target: Package that is imported.
+        imports: Module-level dependencies from ``source`` to ``target``.
+    """
+
+    source: str
+    target: str
+    imports: int
+
+
 @dataclass(frozen=True)
 class AIContext:
     """Bounded, aggregated view of an analysis sent to the LLM instead of the full graph.
@@ -119,6 +150,10 @@ class AIContext:
         cycles_truncated: Whether the cycle search itself stopped at its limit.
         top_coupled_modules: Most coupled modules by ``Ca + Ce``, truncated.
         warning_counts: Analysis warnings per warning code; no paths or messages.
+        findings: Deterministic findings, capped per kind.
+        finding_counts: Real number of findings per kind, before the cap.
+        package_edges: Largest dependencies between packages, truncated.
+        total_package_edges: Package dependencies before truncation.
     """
 
     total_modules: int
@@ -130,6 +165,10 @@ class AIContext:
     cycles_truncated: bool
     top_coupled_modules: list[ModuleCoupling]
     warning_counts: dict[str, int]
+    findings: list[FindingSummary] = field(default_factory=list)
+    finding_counts: dict[str, int] = field(default_factory=dict)
+    package_edges: list[PackageEdgeSummary] = field(default_factory=list)
+    total_package_edges: int = 0
 
 
 class AIFailure(StrEnum):

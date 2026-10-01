@@ -1,12 +1,13 @@
 """Configuration dataclasses, ``.unskein.toml`` loading and precedence resolution."""
 
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from unskein.errors import ConfigError, ErrorKey
 
@@ -18,8 +19,18 @@ ENV_LANG = "UNSKEIN_LANG"
 DEFAULT_PARALLEL_THRESHOLD = 500
 DEFAULT_MAX_WORKERS_CAP = 8
 
+DEFAULT_STABILITY_GAP = 0.5
+DEFAULT_STABILITY_MIN_AFFERENT = 2
+DEFAULT_BOTTLENECK_PERCENTILE = 90
+DEFAULT_BOTTLENECK_MIN_COUPLING = 5
+DEFAULT_ORCHESTRATOR_PERCENTILE = 95
+DEFAULT_ORCHESTRATOR_MIN_EFFERENT = 10
+DEFAULT_PACKAGE_DEPTH = 1
+
 PROJECT_CONFIG_NAME = ".unskein.toml"
 USER_CONFIG_PATH = Path.home() / ".config" / "unskein" / "config.toml"
+
+LAYER_NAME_PATTERN = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
 
 
 @dataclass
@@ -82,6 +93,38 @@ class AnalysisConfig:
     source_roots: list[str] | None = None
     include_tests: bool = False
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+
+
+@dataclass(frozen=True)
+class FindingsConfig:
+    """Thresholds of the architecture findings.
+
+    Attributes:
+        enabled: Whether findings are computed and shown.
+        stability_gap: Instability jump from a module to one it imports that
+            marks an unstable dependency.
+        stability_min_afferent: Ca a module needs to count as something others rely on.
+        bottleneck_percentile: Percentile of Ca and of Ce a bottleneck must reach.
+        bottleneck_min_coupling: Absolute minimum of Ca and of Ce for a bottleneck.
+        orchestrator_percentile: Percentile of Ce an orchestrator must reach.
+        orchestrator_min_efferent: Absolute minimum of Ce for an orchestrator.
+        package_depth: Dotted segments that name a package in the package summary;
+            None picks the depth automatically, starting at ``DEFAULT_PACKAGE_DEPTH``.
+        entry_points: Module names or ``fnmatch`` patterns that are entry points
+            and never count as orphans.
+        layers: Layer names (package prefixes), highest first; empty means no layer rule.
+    """
+
+    enabled: bool = True
+    stability_gap: float = DEFAULT_STABILITY_GAP
+    stability_min_afferent: int = DEFAULT_STABILITY_MIN_AFFERENT
+    bottleneck_percentile: int = DEFAULT_BOTTLENECK_PERCENTILE
+    bottleneck_min_coupling: int = DEFAULT_BOTTLENECK_MIN_COUPLING
+    orchestrator_percentile: int = DEFAULT_ORCHESTRATOR_PERCENTILE
+    orchestrator_min_efferent: int = DEFAULT_ORCHESTRATOR_MIN_EFFERENT
+    package_depth: int | None = None
+    entry_points: tuple[str, ...] = ()
+    layers: tuple[str, ...] = ()
 
 
 @dataclass
@@ -157,6 +200,67 @@ class TomlAnalysis(_TomlTable):
     include_tests: bool | None = None
 
 
+class TomlFindings(_TomlTable):
+    """The ``[findings]`` table; None means "not set", so defaults still apply.
+
+    Attributes:
+        enabled: See ``FindingsConfig``.
+        stability_gap: See ``FindingsConfig``.
+        stability_min_afferent: See ``FindingsConfig``.
+        bottleneck_percentile: See ``FindingsConfig``.
+        bottleneck_min_coupling: See ``FindingsConfig``.
+        orchestrator_percentile: See ``FindingsConfig``.
+        orchestrator_min_efferent: See ``FindingsConfig``.
+        package_depth: See ``FindingsConfig``.
+        entry_points: Extra entry points, added to the ones read from ``pyproject.toml``.
+    """
+
+    enabled: bool | None = None
+    stability_gap: float | None = Field(default=None, ge=0, le=1)
+    stability_min_afferent: int | None = Field(default=None, ge=0)
+    bottleneck_percentile: int | None = Field(default=None, ge=1, le=100)
+    bottleneck_min_coupling: int | None = Field(default=None, ge=0)
+    orchestrator_percentile: int | None = Field(default=None, ge=1, le=100)
+    orchestrator_min_efferent: int | None = Field(default=None, ge=0)
+    package_depth: int | None = Field(default=None, ge=1)
+    entry_points: list[str] | None = None
+
+
+class TomlLayers(_TomlTable):
+    """The ``[layers]`` table: the project's layers, from the highest to the lowest.
+
+    Attributes:
+        order: Package prefixes, highest layer first. A module belongs to the layer
+            whose name is the longest prefix of its own; modules in no layer are not checked.
+    """
+
+    order: list[str] | None = None
+
+    @field_validator("order")
+    @classmethod
+    def _check_order(cls, order: list[str] | None) -> list[str] | None:
+        """Reject layer names that are not dotted module names, and repeated ones.
+
+        The messages never echo the offending value, like every configuration error.
+
+        Args:
+            order: Layer names as written in the file.
+
+        Returns:
+            The same names.
+
+        Raises:
+            ValueError: If a name is not a dotted module name or is listed twice.
+        """
+        if order is None:
+            return None
+        if not all(LAYER_NAME_PATTERN.fullmatch(name) for name in order):
+            raise ValueError("every layer must be a dotted module name, such as app.core")
+        if len(set(order)) != len(order):
+            raise ValueError("a layer is listed more than once")
+        return order
+
+
 class TomlConfig(_TomlTable):
     """A validated, merged ``.unskein.toml`` (all tables optional).
 
@@ -164,11 +268,15 @@ class TomlConfig(_TomlTable):
         general: The ``[general]`` table.
         ai: The ``[ai]`` table.
         analysis: The ``[analysis]`` table.
+        findings: The ``[findings]`` table.
+        layers: The ``[layers]`` table.
     """
 
     general: TomlGeneral = TomlGeneral()
     ai: TomlAI = TomlAI()
     analysis: TomlAnalysis = TomlAnalysis()
+    findings: TomlFindings = TomlFindings()
+    layers: TomlLayers = TomlLayers()
 
 
 def _read_toml(path: Path) -> dict:
@@ -275,6 +383,30 @@ def resolve_analysis_config(toml: TomlConfig, flags: AnalysisFlags) -> AnalysisC
     overrides = from_toml | {name: value for name, value in from_flags.items() if value is not None}
     exclude = [*(toml.analysis.exclude or []), *flags.exclude]
     return AnalysisConfig(**overrides, exclude=exclude)
+
+
+def resolve_findings_config(
+    toml: TomlConfig, enabled: bool | None, script_entry_points: tuple[str, ...] = ()
+) -> FindingsConfig:
+    """Resolve the findings settings with precedence flag > .unskein.toml > default.
+
+    Entry points and layers are the exceptions: the ones read from ``pyproject.toml`` and
+    the configured ones are combined; layers come from ``[layers]``.
+
+    Args:
+        toml: Validated, merged TOML configuration.
+        enabled: ``--findings`` / ``--no-findings``; None when not given.
+        script_entry_points: Modules that ``pyproject.toml`` declares as scripts.
+
+    Returns:
+        The resolved findings settings.
+    """
+    overrides = toml.findings.model_dump(exclude_none=True, exclude={"entry_points"})
+    if enabled is not None:
+        overrides["enabled"] = enabled
+    entry_points = (*script_entry_points, *(toml.findings.entry_points or ()))
+    layers = tuple(toml.layers.order or ())
+    return FindingsConfig(**overrides, entry_points=entry_points, layers=layers)
 
 
 def resolve_ai_config(

@@ -31,6 +31,16 @@ config file is needed: every setting has a default.
   module and, if any, the tangles.
 - **General metrics**: counts of modules, dependencies, cycles, tangles and
   warnings.
+- **Packages**: the same coupling measured between packages, which gives the overview a
+  table of modules cannot (shown when the project has two or more). A module belongs to the
+  package it sits in, named by at most the first `package_depth` segments of its name (`core.db`
+  and `core.http` are both in `core`); modules that are in no package, such as a top-level
+  single file, go to `(root)`. By default the depth is automatic: it starts at 1 and goes one
+  level deeper when the whole project is a single top-level package; a number in
+  `package_depth` fixes it. Ca and Ce count other packages, not modules, and imports inside
+  one package do not count. Below the table, the largest dependencies between packages with
+  their number of imports. Both are shown, and given to the AI, even with
+  `[findings] enabled = false`.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.
@@ -38,11 +48,27 @@ config file is needed: every setting has a default.
     means it breaks when any of them changes.
   - **Instability** = `Ce / (Ca + Ce)`, from 0 (stable, others depend on it)
     to 1 (unstable, it depends on others).
+  - **Impact**: how many modules depend on this one, directly or indirectly: what a change
+    to it can reach. Shown for the modules listed and for bottlenecks.
 - **Dependency cycles**: modules that end up importing themselves.
   - **Tangles** come first: groups where every module reaches every other one.
     Their size is exact, even when the cycle list is cut short.
   - **Cycles** are then listed as example loops, at most 100; the report says
     when the search stopped at that limit.
+- **Findings**: rules computed from the graph, shown also with `--no-ai`. Each kind has
+  one explanation and one recommendation, then its modules with the numbers behind
+  them (at most 10 per kind):
+  - **Unstable dependency**: a module others rely on imports a much more unstable one.
+  - **Bottleneck**: high Ca and high Ce at once, so changes flow in and out.
+  - **Orchestrator with many dependencies**: far more imports than the rest; normal for
+    entry points and use cases.
+  - **Orphan module**: imports no project module and is imported by none: dead code or an
+    entry point run from outside the code.
+  - **Layer violation**: only when you declare `[layers]`: a module of a lower layer
+    imports one of a higher layer.
+
+  Thresholds are relative to the project (percentiles, with an absolute minimum) and can
+  be tuned in `[findings]`. Findings never change the exit code.
 - **Problems flagged (AI)**: only with a model configured. Each problem has a
   severity (`low`, `medium`, `high`), the modules involved and a
   recommendation. Problems naming modules that do not exist are discarded, and
@@ -68,6 +94,7 @@ unskein scan [PATH] [options]
 | `--exclude PATTERN` | Skip more paths, gitignore syntax (repeatable). |
 | `--min-severity low\|medium\|high` | Lowest AI problem severity to show. |
 | `--include-tests` / `--no-include-tests` | Also analyze test code (off by default). |
+| `--findings` / `--no-findings` | Show or hide the findings section (shown by default). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Follow symlinked folders (off by default). |
 | `--encoding NAME` | Fallback encoding for files that declare none. |
 | `--lang es\|en` | Report language. |
@@ -131,28 +158,101 @@ stops the scan with exit code 1 and names the file and the key.
 If your packages live somewhere other than the root or `src/`, set
 `source_roots` in `[analysis]`.
 
+The `[findings]` table tunes the findings; modules that are run from outside the
+code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`
+modules are detected on their own). The `package_depth` setting changes how
+packages are named.
+
+To check your architecture's layers, list them from the highest to the lowest as
+package prefixes:
+
+```toml
+[layers]
+order = ["app.web", "app.services", "app.core"]
+```
+
+A module belongs to the layer with the longest matching prefix; an import from a lower
+layer into a higher one is reported as a layer violation. Modules in no layer are not
+checked, and without `[layers]` there is no layer rule.
+
 ## AI interpretation
 
-Any model supported by LiteLLM works: a local Ollama model, a cloud provider
-or a LiteLLM Proxy.
+The AI step is optional and goes through LiteLLM, so it works with a local
+model, a cloud provider or a LiteLLM Proxy. Three settings drive it:
+
+| Setting | Environment variable | `.unskein.toml` | What it is |
+|---|---|---|---|
+| Model | `UNSKEIN_AI_MODEL` | `[ai] model` | `provider/model`, as LiteLLM names it. Without it, no AI. |
+| API key | `UNSKEIN_API_KEY` | `[ai] api_key` | Optional: if unset, LiteLLM reads the provider's own variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`...). |
+| Endpoint | `UNSKEIN_AI_API_BASE` | `[ai] api_base` | Only for local servers, Azure and proxies. |
+
+Environment variables win over `.unskein.toml`. Keep keys in environment
+variables: a key written in `.unskein.toml` can end up in git.
+
+unskein reads environment variables, not `.env` files. To use one, load it
+in your shell first (`set -a; source .env; set +a`) or with a tool such as
+direnv. `.env.example` in the repository lists the variables.
+
+### Providers
+
+| Provider | `model` | Key and endpoint |
+|---|---|---|
+| Ollama (local) | `ollama/qwen2.5-coder:7b` | `api_base` `http://localhost:11434`; no key |
+| OpenAI | `openai/<model>` | `OPENAI_API_KEY` |
+| Claude (Anthropic) | `anthropic/<model>` | `ANTHROPIC_API_KEY` |
+| Gemini | `gemini/<model>` | `GEMINI_API_KEY` |
+| Azure OpenAI | `azure/<deployment>` | `AZURE_API_KEY`, `AZURE_API_VERSION`, and `api_base` (your resource URL) |
+| AWS Bedrock | `bedrock/<model id>` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME` |
+| Mistral | `mistral/<model>` | `MISTRAL_API_KEY` |
+| Groq | `groq/<model>` | `GROQ_API_KEY` |
+| DeepSeek | `deepseek/<model>` | `DEEPSEEK_API_KEY` |
+| LiteLLM Proxy | `litellm_proxy/<alias>` | `api_base` (the proxy URL) and your virtual key |
+| OpenAI-compatible server (LM Studio, vLLM) | `openai/<model>` | `api_base` (e.g. `http://localhost:1234/v1`); any non-empty key (e.g. `sk-local`) if the server checks none |
+
+Replace `<model>` with a current model of the provider; the LiteLLM
+documentation lists the names. `UNSKEIN_API_KEY` can replace any of the keys
+above, except the AWS credentials. Some examples:
 
 ```bash
-# Local Ollama
-export UNSKEIN_AI_MODEL="ollama/qwen2.5-coder:7b"
-export UNSKEIN_AI_API_BASE="http://localhost:11434"
+# Claude
+export UNSKEIN_AI_MODEL="anthropic/<model>"
+export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Cloud provider
-export UNSKEIN_AI_MODEL="gpt-4o-mini"
+# Azure OpenAI
+export UNSKEIN_AI_MODEL="azure/my-deployment"
+export UNSKEIN_AI_API_BASE="https://my-resource.openai.azure.com"
+export AZURE_API_KEY="..."
+export AZURE_API_VERSION="2024-10-21"
+
+# LiteLLM Proxy
+export UNSKEIN_AI_MODEL="litellm_proxy/my-alias"
+export UNSKEIN_AI_API_BASE="https://litellm.example.com"
 export UNSKEIN_API_KEY="sk-..."
 ```
+
+Or, for a model without a secret, in `.unskein.toml`:
+
+```toml
+[ai]
+model = "ollama/qwen2.5-coder:7b"
+api_base = "http://localhost:11434"
+```
+
+Reasoning models only accept temperature 1, and unskein picks it from what
+LiteLLM knows about the model. A proxy alias can be any name, so for
+`litellm_proxy/` models unskein first asks the proxy (`/model/info`, with the
+same key) whether the alias is a reasoning model.
+
+To check the setup, run `unskein scan . --verbose`: a line with the tokens
+used means the model answered. If the report has no AI section, it says why.
 
 What leaves your machine: module names and their metrics (coupling, cycles,
 tangles). Never source code. With `--no-ai` or a local model, nothing does.
 unskein has no telemetry of any kind.
 
-If the model fails, times out (60 s for direct calls) or answers in the wrong
-format, the report is still produced without the AI section and says why.
-The answer comes in the report language.
+If the model fails, times out (60 s for direct calls; behind a proxy, the
+proxy decides) or answers in the wrong format, the report is still produced
+without the AI section and says why. The answer comes in the report language.
 
 ## Exit codes
 
@@ -182,6 +282,15 @@ of the run, measured locally and never sent anywhere.
   and `src/`; set `source_roots`.
 - **No AI section**: no model is configured, or `--no-ai` was passed. The
   report says which.
+- **"The model could not be reached (AuthenticationError)"**: the key is
+  missing or wrong. Check `UNSKEIN_API_KEY` or the provider's variable.
+- **"...(NotFoundError)" or "(BadRequestError)"**: the model name is wrong or
+  the provider prefix is missing (`anthropic/`, `azure/`...). `--verbose`
+  shows the provider's message.
+- **"The model did not answer in time"**: try a faster model; for a large
+  local model, a smaller one.
+- **"The model's answer does not follow the expected format"**: common with
+  small local models. Try again or use a larger model.
 - **Wrong language**: pass `--lang`, or set `UNSKEIN_LANG` or
   `[general] lang`.
 - **A bug**: open an issue at https://github.com/mapenzo/unskein/issues with

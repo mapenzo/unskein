@@ -6,7 +6,7 @@ Independent of the CLI so it can be tested directly and reused as a library.
 import logging
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from unskein import config as config_module
@@ -17,11 +17,15 @@ from unskein.config import (
     AIConfig,
     AnalysisConfig,
     AnalysisFlags,
+    FindingsConfig,
     load_toml_config,
     resolve_ai_config,
     resolve_analysis_config,
+    resolve_findings_config,
 )
+from unskein.entry_points import read_script_modules
 from unskein.errors import ErrorKey, UnskeinError
+from unskein.graph.findings import unmatched_layers
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
 from unskein.parsers.discovery import load_exclude_spec
@@ -46,6 +50,7 @@ class ScanOptions:
         follow_symlinks: Whether discovery follows symlinked directories; None
             when not given, so ``.unskein.toml`` decides.
         include_tests: Whether test code is analyzed; None when not given.
+        findings: Whether findings are shown; None when not given, so .unskein.toml decides.
         encoding: Fallback encoding for files whose encoding cannot be detected.
     """
 
@@ -57,6 +62,7 @@ class ScanOptions:
     lang: str | None = None
     follow_symlinks: bool | None = None
     include_tests: bool | None = None
+    findings: bool | None = None
     encoding: str | None = None
 
 
@@ -71,6 +77,7 @@ class ScanContext:
         ai_config: Model settings, or None when the AI cannot or must not run.
         ai_disabled: Whether the user passed ``--no-ai``.
         min_severity: Lowest AI problem severity to report.
+        findings: Resolved findings settings, including the project's entry points.
     """
 
     root: Path
@@ -79,6 +86,7 @@ class ScanContext:
     ai_config: AIConfig | None
     ai_disabled: bool
     min_severity: Severity
+    findings: FindingsConfig = field(default_factory=FindingsConfig)
 
 
 @dataclass(frozen=True)
@@ -139,6 +147,7 @@ def prepare_scan(
         ai_config=ai_config,
         ai_disabled=options.no_ai,
         min_severity=options.min_severity,
+        findings=resolve_findings_config(toml, options.findings, read_script_modules(options.path)),
     )
 
 
@@ -168,7 +177,10 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
         raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
     logger.debug("Discovered %d Python files under %s", len(files), root)
     parsed = parse_all(files, adapter, root, config)
-    result = analyze(adapter.resolve_indirection(parsed))
+    result = analyze(adapter.resolve_indirection(parsed), context.findings)
+    if context.findings.enabled:
+        for layer in unmatched_layers(result.graph.nodes, context.findings.layers):
+            logger.warning("Layer %s in [layers] matches no module of the project", layer)
     logger.debug(
         "Analyzed %d modules, %d dependencies",
         result.graph.number_of_nodes(),

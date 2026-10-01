@@ -105,17 +105,58 @@ def test_load_litellm_disables_remote_lookups(monkeypatch: pytest.MonkeyPatch) -
     ],
 )
 def test_reasoning_models_get_temperature_one(model: str, temperature: float) -> None:
-    assert build_profile(model).temperature == temperature
+    assert build_profile(AIConfig(model=model)).temperature == temperature
 
 
 def test_response_format_follows_schema_support() -> None:
-    assert build_profile("gpt-4o").response_format is AIReport
-    assert build_profile("ollama/qwen2.5-coder:7b").response_format == {"type": "json_object"}
+    assert build_profile(AIConfig(model="gpt-4o")).response_format is AIReport
+    ollama = AIConfig(model="ollama/qwen2.5-coder:7b")
+    assert build_profile(ollama).response_format == {"type": "json_object"}
 
 
 def test_only_direct_calls_get_a_timeout() -> None:
-    assert build_profile("ollama/qwen2.5-coder:7b").timeout_seconds == DIRECT_CALL_TIMEOUT_SECONDS
-    assert build_profile("litellm_proxy/gpt-4o").timeout_seconds is None
+    ollama = AIConfig(model="ollama/qwen2.5-coder:7b")
+    assert build_profile(ollama).timeout_seconds == DIRECT_CALL_TIMEOUT_SECONDS
+    assert build_profile(AIConfig(model="litellm_proxy/gpt-4o")).timeout_seconds is None
+
+
+PROXY_BASE = "https://litellm.example.com"
+
+
+@pytest.mark.parametrize(
+    ("declared", "alias", "temperature"),
+    [
+        (True, "my-opaque-alias", REASONING_TEMPERATURE),
+        (False, "gpt-5", DEFAULT_TEMPERATURE),
+        (None, "gpt-5", REASONING_TEMPERATURE),
+        (None, "my-opaque-alias", DEFAULT_TEMPERATURE),
+    ],
+)
+def test_the_proxy_decides_whether_its_alias_is_a_reasoning_model(
+    monkeypatch: pytest.MonkeyPatch, declared: bool | None, alias: str, temperature: float
+) -> None:
+    asked: list[AIConfig] = []
+
+    def answer(config: AIConfig) -> bool | None:
+        asked.append(config)
+        return declared
+
+    monkeypatch.setattr("unskein.ai.client.proxy_supports_reasoning", answer)
+    config = AIConfig(model=f"litellm_proxy/{alias}", api_base=PROXY_BASE)
+
+    assert build_profile(config).temperature == temperature
+    assert asked == [config]
+
+
+def test_direct_models_never_ask_a_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(config: AIConfig) -> bool | None:
+        raise AssertionError("a direct model asked a proxy")
+
+    monkeypatch.setattr("unskein.ai.client.proxy_supports_reasoning", refuse)
+
+    assert build_profile(AIConfig(model="gpt-4o", api_base=PROXY_BASE)).temperature == (
+        DEFAULT_TEMPERATURE
+    )
 
 
 MESSAGES = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
@@ -266,6 +307,46 @@ def test_an_empty_api_key_does_not_mangle_the_logged_message(
     )
     make_client(api_key="").generate_report(MESSAGES)
     assert "provider says nothing" in unskein_logs.text
+
+
+@pytest.mark.parametrize(
+    "variable",
+    [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "AZURE_API_KEY",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SESSION_TOKEN",
+        "SOME_FUTURE_PROVIDER_API_KEY",
+    ],
+)
+def test_a_key_from_a_provider_variable_is_redacted_too(
+    fake_llm: Any, unskein_logs: Any, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv(variable, SECRET)
+    fake_llm.error = load_litellm().AuthenticationError(
+        f"provider says {SECRET}", model="m", llm_provider="p"
+    )
+
+    make_client().generate_report(MESSAGES)
+
+    assert "provider says ***" in unskein_logs.text
+    assert SECRET not in unskein_logs.text
+
+
+def test_short_or_unrelated_variables_are_not_redacted(
+    fake_llm: Any, unskein_logs: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "abc")
+    monkeypatch.setenv("HOME_DIRECTORY_NAME", "provider")
+    fake_llm.error = load_litellm().AuthenticationError(
+        "provider says abc", model="m", llm_provider="p"
+    )
+
+    make_client().generate_report(MESSAGES)
+
+    assert "provider says abc" in unskein_logs.text
 
 
 @pytest.mark.parametrize("content", [GOOD_REPORT, "not json"])

@@ -1,5 +1,6 @@
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import networkx as nx
@@ -11,13 +12,16 @@ from unskein.ai.models import (
     AIReport,
     CycleSummary,
     ModuleCoupling,
+    PackageEdgeSummary,
     Problem,
     TangleSummary,
 )
 from unskein.ai.prompts import (
     MAX_CYCLE_MEMBERS_IN_PROMPT,
     MAX_CYCLES_IN_PROMPT,
+    MAX_FINDINGS_PER_KIND_IN_PROMPT,
     MAX_MODULES_IN_PROMPT,
+    MAX_PACKAGE_EDGES_IN_PROMPT,
     MAX_PROMPT_CHARS,
     MAX_TANGLE_MEMBERS_IN_PROMPT,
     MAX_TANGLES_IN_PROMPT,
@@ -28,7 +32,9 @@ from unskein.ai.prompts import (
     ground_report,
     shrink_context,
 )
+from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
+from unskein.graph.packages import PackageEdge
 from unskein.i18n import Lang
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.python_parser import PythonAdapter
@@ -438,3 +444,185 @@ def test_normalized_duplicates_are_listed_once() -> None:
     graph = nx.DiGraph([("a", "b")])
     grounding = ground_report(report_with(problem(["a", "`a`", "a."])), graph)
     assert grounding.report.problems[0].affected_modules == ["a"]
+
+
+def with_findings(result: AnalysisResult, *findings: Finding) -> AnalysisResult:
+    """Return a copy of an analysis that carries the given findings.
+
+    Args:
+        result: Analysis to copy.
+        *findings: Findings to attach.
+
+    Returns:
+        The analysis with those findings.
+    """
+    return replace(result, findings=list(findings))
+
+
+def test_context_carries_findings_capped_per_kind_with_real_totals() -> None:
+    orphans = [
+        Finding(FindingKind.ORPHAN, (f"m{i:02d}",), {})
+        for i in range(MAX_FINDINGS_PER_KIND_IN_PROMPT + 4)
+    ]
+    bottleneck = Finding(
+        FindingKind.BOTTLENECK, ("core.settings",), {"afferent": 25, "efferent": 9}
+    )
+    result = with_findings(synthetic_result(3, 0, 0), bottleneck, *orphans)
+
+    context = build_context(result)
+
+    assert context.finding_counts == {"bottleneck": 1, "orphan": len(orphans)}
+    assert [f.kind for f in context.findings].count("orphan") == MAX_FINDINGS_PER_KIND_IN_PROMPT
+    assert context.findings[0].modules == ["core.settings"]
+    assert context.findings[0].evidence == {"afferent": 25, "efferent": 9}
+
+
+def test_context_without_findings_has_empty_findings() -> None:
+    context = build_context(synthetic_result(3, 0, 0))
+
+    assert (context.findings, context.finding_counts) == ([], {})
+
+
+def test_disabled_findings_add_nothing_to_the_context() -> None:
+    result = replace(
+        with_findings(synthetic_result(3, 0, 0), Finding(FindingKind.ORPHAN, ("a",), {})),
+        findings_enabled=False,
+    )
+
+    assert build_context(result).findings == []
+
+
+def test_shrinking_halves_the_findings_but_keeps_their_totals() -> None:
+    orphans = [
+        Finding(FindingKind.ORPHAN, (f"m{i:02d}",), {})
+        for i in range(MAX_FINDINGS_PER_KIND_IN_PROMPT)
+    ]
+    context = build_context(with_findings(synthetic_result(3, 0, 0), *orphans))
+
+    shrunk = shrink_context(context)
+
+    assert 1 <= len(shrunk.findings) < len(context.findings)
+    assert shrunk.finding_counts == context.finding_counts
+
+
+def test_prompt_with_many_findings_still_fits_the_limit() -> None:
+    findings = [
+        Finding(kind, (f"pkg.very.long.module.name.number{i:03d}",), {"afferent": i, "efferent": i})
+        for kind in FindingKind
+        for i in range(200)
+    ]
+    context = build_context(with_findings(synthetic_result(500, 0, 0), *findings))
+
+    messages = build_messages(context, Lang.EN)
+
+    assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
+
+
+def test_system_prompt_declares_findings_as_computed_facts() -> None:
+    assert "Findings are architecture problems that fixed rules already computed" in SYSTEM_PROMPT
+    assert "do not recompute or contradict them" in SYSTEM_PROMPT
+
+
+def test_context_carries_the_largest_package_dependencies_with_the_real_total() -> None:
+    edges = [
+        PackageEdge(f"p{i:02d}", "core", 100 - i) for i in range(MAX_PACKAGE_EDGES_IN_PROMPT + 5)
+    ]
+    result = replace(synthetic_result(3, 0, 0), package_edges=edges)
+
+    context = build_context(result)
+
+    assert len(context.package_edges) == MAX_PACKAGE_EDGES_IN_PROMPT
+    assert context.total_package_edges == len(edges)
+    assert context.package_edges[0] == PackageEdgeSummary("p00", "core", 100)
+
+
+def test_context_without_packages_has_empty_package_fields() -> None:
+    context = build_context(synthetic_result(3, 0, 0))
+
+    assert (context.package_edges, context.total_package_edges) == ([], 0)
+
+
+def test_bottleneck_evidence_carries_its_measured_impact() -> None:
+    bottleneck = Finding(
+        FindingKind.BOTTLENECK, ("core.settings",), {"afferent": 25, "efferent": 9}
+    )
+    result = replace(
+        with_findings(synthetic_result(3, 0, 0), bottleneck), impact={"core.settings": 54}
+    )
+
+    summary = build_context(result).findings[0]
+
+    assert summary.evidence == {"afferent": 25, "efferent": 9, "impact": 54}
+
+
+def test_other_findings_and_unmeasured_bottlenecks_get_no_impact() -> None:
+    orphan = Finding(FindingKind.ORPHAN, ("lonely",), {})
+    bottleneck = Finding(FindingKind.BOTTLENECK, ("hub",), {"afferent": 6, "efferent": 6})
+    result = replace(
+        with_findings(synthetic_result(3, 0, 0), orphan, bottleneck), impact={"lonely": 9}
+    )
+
+    evidence = {f.modules[0]: f.evidence for f in build_context(result).findings}
+
+    assert "impact" not in evidence["lonely"]
+    assert "impact" not in evidence["hub"]
+
+
+def test_shrinking_halves_the_package_dependencies_but_keeps_their_total() -> None:
+    edges = [PackageEdge(f"p{i}", "core", 10 - i) for i in range(MAX_PACKAGE_EDGES_IN_PROMPT)]
+    context = build_context(replace(synthetic_result(3, 0, 0), package_edges=edges))
+
+    shrunk = shrink_context(context)
+
+    assert len(shrunk.package_edges) == MAX_PACKAGE_EDGES_IN_PROMPT // 2
+    assert shrunk.total_package_edges == context.total_package_edges
+
+
+def test_prompt_with_many_packages_still_fits_the_limit() -> None:
+    edges = [PackageEdge(f"very.long.package.name.number{i:03d}", "core", 1) for i in range(500)]
+    context = build_context(replace(synthetic_result(500, 0, 0), package_edges=edges))
+
+    messages = build_messages(context, Lang.EN)
+
+    assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
+
+
+def test_system_prompt_explains_impact_and_package_dependencies() -> None:
+    assert "impact" in SYSTEM_PROMPT
+    assert "package_edges" in SYSTEM_PROMPT
+
+
+def test_user_message_carries_no_paths_and_no_source_lines(circular_imports: Path) -> None:
+    result = analyze_fixture(circular_imports)
+    files = sorted(circular_imports.rglob("*.py"))
+    source_lines = [
+        line.strip()
+        for file in files
+        for line in file.read_text(encoding="utf-8").splitlines()
+        if line.strip().startswith("def ")
+    ]
+
+    user_message = build_messages(build_context(result), Lang.EN)[1]["content"]
+
+    assert source_lines
+    assert str(circular_imports) not in user_message
+    assert all(str(file) not in user_message for file in files)
+    assert all(line not in user_message for line in source_lines)
+
+
+def test_layer_violations_reach_the_ai_with_their_layer_names() -> None:
+    violation = Finding(
+        FindingKind.LAYER_VIOLATION,
+        ("core.db", "web.views"),
+        {"layer_from": "core", "layer_to": "web"},
+    )
+
+    summary = build_context(with_findings(synthetic_result(3, 0, 0), violation)).findings[0]
+
+    assert (summary.kind, summary.modules) == ("layer_violation", ["core.db", "web.views"])
+    assert summary.evidence == {"layer_from": "core", "layer_to": "web"}
+
+
+def test_system_prompt_explains_layer_violations() -> None:
+    assert "layer_violation" in SYSTEM_PROMPT
+    assert "lower layer" in SYSTEM_PROMPT

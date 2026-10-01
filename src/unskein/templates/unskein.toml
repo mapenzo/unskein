@@ -18,7 +18,9 @@
 # Endpoint for local servers or a LiteLLM Proxy. Env var: UNSKEIN_AI_API_BASE.
 # api_base = "http://localhost:11434"
 
-# Prefer the UNSKEIN_API_KEY env var: a key written here can end up in git.
+# Prefer the UNSKEIN_API_KEY env var, or the provider's own one such as
+# ANTHROPIC_API_KEY: a key written here can end up in git. Provider recipes:
+# unskein guide.
 # api_key = ""
 
 [analysis]
@@ -56,3 +58,40 @@
 
 # Files handed to the workers at a time.
 # queue_maxsize = 200
+
+[findings]
+# Architecture findings in the report: unstable dependencies, bottlenecks,
+# orchestrators and orphans. Also set by --findings / --no-findings.
+# enabled = true
+
+# An unstable dependency: a module that at least this many modules import
+# (stability_min_afferent) imports one whose instability is this much higher.
+# stability_gap = 0.5
+# stability_min_afferent = 2
+
+# A bottleneck: Ca and Ce both at this percentile of the project and at
+# least the minimum, so small projects are not flooded with findings.
+# bottleneck_percentile = 90
+# bottleneck_min_coupling = 5
+
+# An orchestrator: Ce at this percentile of the project and at least the minimum.
+# orchestrator_percentile = 95
+# orchestrator_min_efferent = 10
+
+# How many dotted segments name a package in the "Packages" section of the
+# report. Unset means automatic: start at 1 and go one level deeper when the
+# whole project is a single top-level package. A number fixes the depth: 1
+# groups core.db and core.http under "core", 2 keeps them apart.
+# package_depth = 1
+
+# Modules that are run from outside the code and so never count as orphans
+# (names or patterns). Scripts in pyproject.toml and __main__ modules are
+# detected on their own.
+# entry_points = []
+
+[layers]
+# Your architecture's layers as package prefixes, from the highest to the
+# lowest. A module belongs to the layer with the longest matching prefix, and
+# an import from a lower layer into a higher one is reported as a finding.
+# Modules in no layer are not checked. Unset or empty: no layer rule.
+# order = ["app.web", "app.services", "app.core"]
