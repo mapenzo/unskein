@@ -3,9 +3,11 @@ from pathlib import Path
 
 import pytest
 
+from unskein.errors import UnskeinError
 from unskein.graph.steps import StepKind
+from unskein.graph.untangle import UntanglePlan
 from unskein.i18n import Lang
-from unskein.report.untangle import MAX_CUTS_SHOWN, render_untangle
+from unskein.report.untangle import render_untangle
 from unskein.untangle import UntangleOptions, build_untangle_plan, prepare_untangle
 
 MakeProject = Callable[[dict[str, str]], Path]
@@ -28,7 +30,7 @@ TYPE_ONLY = {
 }
 
 
-def plan_for(root: Path, *, all_edges: bool = False):
+def plan_for(root: Path, *, all_edges: bool = False) -> UntanglePlan:
     """Prepare and build the untangle plan of a project.
 
     Args:
@@ -69,7 +71,7 @@ def test_report_lists_cuts_with_step_and_evidence(make_project: MakeProject) -> 
     assert "`app.b` → `app.a`" in report
     assert "Lazy import" in report
     assert "`app/b.py:1`" in report and "`VALUE`" in report
-    assert "from 1 tangles and 1 cycles to 0 tangles and 0 cycles" in report
+    assert "tangles 1 → 0, cycles 1 → 0" in report
     assert "## What each step means" in report
 
 
@@ -96,12 +98,23 @@ def test_report_limits_tangles_and_cuts(make_project: MakeProject) -> None:
     report = render_untangle(plan_for(root), root, Lang.EN, max_tangles=2)
     assert report.count("## Tangle ") == 2
     assert "Showing 2 of 3 tangles" in report
-    assert MAX_CUTS_SHOWN >= 10
 
 
 def test_parse_project_failure_is_a_usage_error(tmp_path: Path) -> None:
-    from unskein.errors import UnskeinError
-
     context = prepare_untangle(UntangleOptions(path=tmp_path / "missing"), env={})
     with pytest.raises(UnskeinError):
         build_untangle_plan(context, all_edges=False)
+
+
+def test_report_truncates_cuts_beyond_the_limit(
+    make_project: MakeProject, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = {"app/__init__.py": ""}
+    for name, other in (("a", "b"), ("b", "c"), ("c", "a")):
+        files[f"app/{name}.py"] = f"from app.{other} import x\nx = 1\n"
+    root = make_project(files)
+    plan = plan_for(root)
+    assert sum(len(tangle.cuts) for tangle in plan.tangles) >= 1
+    monkeypatch.setattr("unskein.report.untangle.MAX_CUTS_SHOWN", 0)
+    report = render_untangle(plan, root, Lang.EN, max_tangles=5)
+    assert "…and 1 more cuts." in report

@@ -34,6 +34,8 @@ def render_untangle(plan: UntanglePlan, root: Path, lang: Lang, *, max_tangles: 
             lines += ["", t("untangle.hidden_hint", lang, count=plan.hidden_tangles)]
         return "\n".join(lines) + "\n"
     lines += _summary(plan, lang)
+    if plan.hidden_tangles and not plan.all_edges:
+        lines += ["", t("untangle.hidden_hint", lang, count=plan.hidden_tangles)]
     shown = plan.tangles[:max_tangles]
     for index, tangle in enumerate(shown, start=1):
         lines += ["", *_tangle(tangle, index, root, lang)]
@@ -43,7 +45,7 @@ def render_untangle(plan: UntanglePlan, root: Path, lang: Lang, *, max_tangles: 
             t("untangle.tangles_truncated", lang, shown=len(shown), total=len(plan.tangles)),
         ]
     lines += ["", *_changes(plan.simulation.changes, lang)]
-    lines += ["", *_steps_legend(plan, lang), "", t("untangle.note", lang)]
+    lines += ["", *_steps_legend(plan, lang)]
     return "\n".join(lines) + "\n"
 
 
@@ -84,6 +86,8 @@ def _summary(plan: UntanglePlan, lang: Lang) -> list[str]:
             tangles_after=simulation.tangles_after,
             cycles_after=_count(simulation.cycles_after, simulation.cycles_after_truncated),
         ),
+        "",
+        t("untangle.note", lang),
     ]
 
 
@@ -109,8 +113,8 @@ def _tangle(tangle: TanglePlan, index: int, root: Path, lang: Lang) -> list[str]
         t("untangle.tangle_line", lang, cuts=len(tangle.cuts), cost=tangle.cost, members=members),
         "",
         f"| {t('untangle.col.import', lang)} | {t('untangle.col.step', lang)} "
-        f"| {t('untangle.col.evidence', lang)} |",
-        "|---|---|---|",
+        f"| {t('untangle.col.cost', lang)} | {t('untangle.col.evidence', lang)} |",
+        "|---|---|---|---|",
     ]
     lines += [_cut_row(cut, root, lang) for cut in tangle.cuts[:MAX_CUTS_SHOWN]]
     if len(tangle.cuts) > MAX_CUTS_SHOWN:
@@ -130,7 +134,8 @@ def _cut_row(cut: Cut, root: Path, lang: Lang) -> str:
         One Markdown table row.
     """
     step = t(f"untangle.step.{cut.step}", lang)
-    return f"| `{cut.source}` → `{cut.target}` | {step} | {_evidence(cut, root)} |"
+    cost = STEP_COSTS[cut.step]
+    return f"| `{cut.source}` → `{cut.target}` | {step} | {cost} | {_evidence(cut, root)} |"
 
 
 def _evidence(cut: Cut, root: Path) -> str:

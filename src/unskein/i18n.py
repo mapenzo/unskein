@@ -294,15 +294,14 @@ _REPORT: dict[str, dict[Lang, str]] = {
         "(lazy and `TYPE_CHECKING` imports).",
     },
     "untangle.summary": {
-        Lang.ES: "{tangles} marañas; cortar {cuts} imports (coste total {cost}) las deshace todas.",
-        Lang.EN: "{tangles} tangles; cutting {cuts} imports (total cost {cost}) "
-        "undoes all of them.",
+        Lang.ES: "Marañas: {tangles} · imports a cortar: {cuts} · coste total: {cost}.",
+        Lang.EN: "Tangles: {tangles} · imports to cut: {cuts} · total cost: {cost}.",
     },
     "untangle.simulation": {
-        Lang.ES: "Simulación: de {tangles_before} marañas y {cycles_before} ciclos a "
-        "{tangles_after} marañas y {cycles_after} ciclos.",
-        Lang.EN: "Simulation: from {tangles_before} tangles and {cycles_before} cycles to "
-        "{tangles_after} tangles and {cycles_after} cycles.",
+        Lang.ES: "Simulación tras los cortes: marañas {tangles_before} → {tangles_after}, "
+        "ciclos {cycles_before} → {cycles_after}.",
+        Lang.EN: "Simulation after the cuts: tangles {tangles_before} → {tangles_after}, "
+        "cycles {cycles_before} → {cycles_after}.",
     },
     "untangle.none": {
         Lang.ES: "No hay marañas al importar: no hay nada que desenredar.",
@@ -323,10 +322,11 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.EN: "Tangle {index}: {size} modules",
     },
     "untangle.tangle_line": {
-        Lang.ES: "Cortar {cuts} imports, coste {cost}. Miembros: {members}",
-        Lang.EN: "Cut {cuts} imports, cost {cost}. Members: {members}",
+        Lang.ES: "Imports a cortar: {cuts} · coste: {cost} · miembros: {members}",
+        Lang.EN: "Imports to cut: {cuts} · cost: {cost} · members: {members}",
     },
     "untangle.col.import": {Lang.ES: "Import", Lang.EN: "Import"},
+    "untangle.col.cost": {Lang.ES: "Coste", Lang.EN: "Cost"},
     "untangle.col.step": {Lang.ES: "Paso", Lang.EN: "Step"},
     "untangle.col.evidence": {Lang.ES: "Evidencia", Lang.EN: "Evidence"},
     "untangle.col.module": {Lang.ES: "Módulo", Lang.EN: "Module"},
