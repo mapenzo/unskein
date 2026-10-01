@@ -56,9 +56,10 @@ config file is needed: every setting has a default.
     Their size is exact, even when the cycle list is cut short.
   - **Cycles** are then listed as example loops, at most 100; the report says
     when the search stopped at that limit.
-  - **Hidden coupling** lists groups that depend on each other only once imports inside
-    functions or under `TYPE_CHECKING` are counted. They do not fail at import time, but
-    they are still design coupling, and they count in every other number of the report.
+  - **Hidden coupling** lists groups that depend on each other, or groups larger than a
+    tangle above, only once imports inside functions or under `TYPE_CHECKING` are counted.
+    Those imports do not fail at import time, but they are still design coupling, and
+    they count in every other number of the report.
 - **Findings**: rules computed from the graph, shown also with `--no-ai`. Each kind has
   one explanation and one recommendation, then its modules with the numbers behind
   them (at most 10 per kind):

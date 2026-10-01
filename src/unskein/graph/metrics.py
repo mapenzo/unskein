@@ -168,7 +168,8 @@ def find_hidden_tangles(graph: nx.DiGraph, import_tangles: list[list[str]]) -> l
     Returns:
         The hidden tangles with their members sorted, largest first.
     """
-    return [tangle for tangle in find_tangles(graph) if tangle not in import_tangles]
+    import_time = {tuple(tangle) for tangle in import_tangles}
+    return [tangle for tangle in find_tangles(graph) if tuple(tangle) not in import_time]
 
 
 def find_high_coupling(

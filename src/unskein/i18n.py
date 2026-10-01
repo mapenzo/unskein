@@ -177,12 +177,13 @@ _REPORT: dict[str, dict[Lang, str]] = {
     },
     "report.hidden_heading": {Lang.ES: "Acoplamiento oculto", Lang.EN: "Hidden coupling"},
     "report.hidden_explanation": {
-        Lang.ES: "Grupos de módulos que dependen entre sí cuando se cuentan los imports dentro "
-        "de funciones o bajo `TYPE_CHECKING`. No fallan al importar, pero siguen siendo "
+        Lang.ES: "Grupos de módulos que dependen entre sí, o grupos mayores que una maraña de "
+        "las anteriores, cuando se cuentan los imports dentro de funciones o bajo "
+        "`TYPE_CHECKING`. Esos imports no fallan al importar, pero siguen siendo "
         "acoplamiento de diseño.",
-        Lang.EN: "Groups of modules that depend on each other once imports inside functions "
-        "or under `TYPE_CHECKING` are counted. They do not fail at import time, but they "
-        "are still design coupling.",
+        Lang.EN: "Groups of modules that depend on each other, or groups larger than a tangle "
+        "above, once imports inside functions or under `TYPE_CHECKING` are counted. Those "
+        "imports do not fail at import time, but they are still design coupling.",
     },
     "report.cycles_truncated": {
         Lang.ES: "Mostrando los primeros {shown} ciclos: la búsqueda se detuvo en ese "

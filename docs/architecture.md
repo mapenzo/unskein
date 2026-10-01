@@ -933,7 +933,8 @@ Reglas:
   `MAX_TANGLE_MEMBERS_SHOWN` = 10 miembros y "…y N más"), luego los ciclos
   como ejemplos, en bucle cerrado (`a` → `b` → `a`), con aviso si se
   truncaron. El resumen menciona la maraña mayor y la tabla de métricas
-  cuenta las marañas. Tras ellos, la subsección «Acoplamiento oculto» lista las marañas ocultas (hasta `MAX_HIDDEN_TANGLES_SHOWN` = 10).
+  cuenta las marañas. Tras ellos, la subsección «Acoplamiento oculto» lista las
+  marañas ocultas (hasta `MAX_HIDDEN_TANGLES_SHOWN` = 10).
 - Todo texto sale del catálogo `i18n` (ES/EN); un test exige que cada
   `WarningCode`, cada `ErrorKey` y cada clave tengan ambos idiomas con los
   mismos placeholders.

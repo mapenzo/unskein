@@ -59,9 +59,10 @@ por defecto.
     demás. Su tamaño es exacto aunque la lista de ciclos se corte.
   - Después, los **ciclos** como bucles de ejemplo, como máximo 100; el
     informe avisa cuando la búsqueda se detuvo en ese límite.
-  - **Acoplamiento oculto** lista los grupos que dependen entre sí solo si se cuentan
-    los imports dentro de funciones o bajo `TYPE_CHECKING`. No fallan al importar, pero
-    siguen siendo acoplamiento de diseño y cuentan en el resto de números del informe.
+  - **Acoplamiento oculto** lista los grupos que dependen entre sí, o los grupos mayores
+    que una maraña de las anteriores, solo si se cuentan los imports dentro de funciones
+    o bajo `TYPE_CHECKING`. Esos imports no fallan al importar, pero siguen siendo
+    acoplamiento de diseño y cuentan en el resto de números del informe.
 - **Hallazgos**: reglas calculadas a partir del grafo, también con `--no-ai`. Cada
   tipo tiene una explicación y una recomendación, y luego sus módulos con los
   números que lo justifican (como máximo 10 por tipo):

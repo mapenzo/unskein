@@ -4,6 +4,7 @@ from pathlib import Path
 import pathspec
 import pytest
 
+from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import ImportEdge, ImportKind
 from unskein.parsers.python_parser import PythonAdapter
 
@@ -44,6 +45,10 @@ KIND_CASES = {
     "else_of_type_checking": (
         "if TYPE_CHECKING:\n    pass\nelse:\n    from pkg import dep\n",
         ImportKind.MODULE,
+    ),
+    "elif_type_checking": (
+        "if FLAG:\n    pass\nelif TYPE_CHECKING:\n    from pkg import dep\n",
+        ImportKind.TYPE_CHECKING,
     ),
     "body_of_not_type_checking": (
         "if not TYPE_CHECKING:\n    from pkg import dep\n",
@@ -86,3 +91,19 @@ def test_stronger_and_weaker_rank_by_how_much_the_import_runs() -> None:
     assert ImportKind.MODULE.weaker(ImportKind.LAZY) is ImportKind.LAZY
     assert ImportKind.LAZY.weaker(ImportKind.TYPE_CHECKING) is ImportKind.TYPE_CHECKING
     assert ImportKind.LAZY.weaker(ImportKind.MODULE) is ImportKind.LAZY
+
+
+def test_lazy_import_through_a_reexport_stays_lazy(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "from app.impl import X\n",
+            "app/impl.py": "X = 1\n",
+            "app/user.py": "def run():\n    from app import X\n",
+        }
+    )
+    adapter = PythonAdapter()
+    files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
+    resolved = resolve_indirection(adapter.parse(files, root))
+    user = next(m for m in resolved.modules if m.name == "app.user")
+    internal = [(e.target, e.kind) for e in user.imports if not e.is_external]
+    assert internal == [("app.impl", ImportKind.LAZY)]

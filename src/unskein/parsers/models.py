@@ -75,7 +75,7 @@ class ImportKind(StrEnum):
         Returns:
             ``self`` or ``other``, whichever is closer to ``MODULE``.
         """
-        return self if KIND_STRENGTH[self] >= KIND_STRENGTH[other] else other
+        return self if _KIND_STRENGTH[self] >= _KIND_STRENGTH[other] else other
 
     def weaker(self, other: Self) -> Self:
         """Return the kind that runs less often.
@@ -86,10 +86,10 @@ class ImportKind(StrEnum):
         Returns:
             ``self`` or ``other``, whichever is closer to ``TYPE_CHECKING``.
         """
-        return self if KIND_STRENGTH[self] <= KIND_STRENGTH[other] else other
+        return self if _KIND_STRENGTH[self] <= _KIND_STRENGTH[other] else other
 
 
-KIND_STRENGTH = {ImportKind.MODULE: 2, ImportKind.LAZY: 1, ImportKind.TYPE_CHECKING: 0}
+_KIND_STRENGTH = {ImportKind.MODULE: 2, ImportKind.LAZY: 1, ImportKind.TYPE_CHECKING: 0}
 
 
 @dataclass(slots=True)

@@ -555,6 +555,24 @@ def test_hidden_coupling_is_reported_apart_from_import_cycles(
     assert "### Tangles" not in report
 
 
+GROWN_TANGLE_PROJECT = {
+    "app/__init__.py": "",
+    "app/a.py": "from app import b\n",
+    "app/b.py": "from app import a\n\ndef run():\n    from app import c\n",
+    "app/c.py": "from app import a\n",
+}
+
+
+def test_hidden_coupling_lists_a_tangle_grown_by_a_lazy_import(
+    make_project: Callable[[dict[str, str]], Path],
+) -> None:
+    root = make_project(GROWN_TANGLE_PROJECT)
+    report = render(root, analyzed(root))
+    assert "- **2 modules**: `app.a`, `app.b`" in report
+    assert "- **3 modules**: `app.a`, `app.b`, `app.c`" in report
+    assert "or groups larger than a tangle above" in report
+
+
 def test_hidden_coupling_in_spanish(make_project: Callable[[dict[str, str]], Path]) -> None:
     root = make_project(HIDDEN_PROJECT)
     report = render(root, analyzed(root), Lang.ES)

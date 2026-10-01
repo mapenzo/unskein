@@ -626,3 +626,8 @@ def test_layer_violations_reach_the_ai_with_their_layer_names() -> None:
 def test_system_prompt_explains_layer_violations() -> None:
     assert "layer_violation" in SYSTEM_PROMPT
     assert "lower layer" in SYSTEM_PROMPT
+
+
+def test_system_prompt_says_cycles_and_tangles_are_import_time() -> None:
+    assert "at import time" in SYSTEM_PROMPT
+    assert "TYPE_CHECKING" in SYSTEM_PROMPT
