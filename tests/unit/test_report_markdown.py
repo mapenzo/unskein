@@ -496,3 +496,22 @@ def test_bottleneck_line_without_a_measured_impact_stays_as_before(tmp_path: Pat
 def test_report_and_analysis_agree_on_how_many_modules_are_shown() -> None:
     assert MAX_MODULES_IN_TABLE == IMPACT_COUPLED_MODULES
     assert MAX_FINDINGS_PER_KIND == IMPACT_BOTTLENECK_MODULES
+
+
+LAYER_VIOLATION = Finding(
+    FindingKind.LAYER_VIOLATION, ("core.db", "web.views"), {"layer_from": "core", "layer_to": "web"}
+)
+
+
+def test_layer_violation_line_names_both_layers(tmp_path: Path) -> None:
+    report = render(tmp_path, result_with(LAYER_VIOLATION))
+
+    assert "### Layer violation (1)" in report
+    assert "- `core.db` → `web.views` (layer core → web)" in report
+
+
+def test_layer_violation_is_in_spanish_when_asked(tmp_path: Path) -> None:
+    report = render(tmp_path, result_with(LAYER_VIOLATION), lang=Lang.ES)
+
+    assert "### Violación de capas (1)" in report
+    assert "- `core.db` → `web.views` (capa core → web)" in report

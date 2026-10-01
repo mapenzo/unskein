@@ -386,6 +386,15 @@ def _finding_line(finding: Finding, impact: dict[str, int], lang: Lang) -> str:
             f"- `{source}` → `{target}` (Ca {evidence['afferent_from']}, "
             f"I {evidence['instability_from']:.2f} → {evidence['instability_to']:.2f})"
         )
+    if finding.kind is FindingKind.LAYER_VIOLATION:
+        source, target = finding.modules
+        layers = t(
+            "finding.layers",
+            lang,
+            layer_from=evidence["layer_from"],
+            layer_to=evidence["layer_to"],
+        )
+        return f"- `{source}` → `{target}` ({layers})"
     (module,) = finding.modules
     if finding.kind is FindingKind.ORPHAN:
         return f"- `{module}`"

@@ -238,3 +238,86 @@ def test_findings_do_not_depend_on_the_hash_seed() -> None:
     }
 
     assert len(outputs) == 1
+
+
+def layer_findings(graph: nx.DiGraph, layers: tuple[str, ...], **overrides: object) -> list:
+    """Return the layer violations found with the given layers.
+
+    Args:
+        graph: Module dependency graph.
+        layers: Layer names, highest first.
+        **overrides: Other ``FindingsConfig`` fields to change.
+
+    Returns:
+        ``(modules, evidence)`` of every layer-violation finding, in order.
+    """
+    found = findings_of(graph, layers=layers, **overrides)
+    return [(f.modules, f.evidence) for f in found if f.kind is FindingKind.LAYER_VIOLATION]
+
+
+def test_lower_layer_importing_a_higher_one_is_a_violation() -> None:
+    graph = nx.DiGraph([("core.db", "web.views")])
+
+    assert layer_findings(graph, ("web", "core")) == [
+        (("core.db", "web.views"), {"layer_from": "core", "layer_to": "web"})
+    ]
+
+
+def test_downward_and_same_layer_imports_are_fine() -> None:
+    graph = nx.DiGraph([("web.views", "core.db"), ("core.a", "core.b")])
+
+    assert layer_findings(graph, ("web", "core")) == []
+
+
+def test_modules_in_no_layer_are_not_checked() -> None:
+    graph = nx.DiGraph([("tools.x", "web.views"), ("core.db", "tools.y")])
+
+    assert layer_findings(graph, ("web", "core")) == []
+
+
+def test_the_longest_matching_layer_wins() -> None:
+    graph = nx.DiGraph([("core.db", "core.api.handlers"), ("core.api.handlers", "core.db")])
+
+    assert layer_findings(graph, ("web", "core.api", "core")) == [
+        (("core.db", "core.api.handlers"), {"layer_from": "core", "layer_to": "core.api"})
+    ]
+
+
+def test_a_layer_matches_whole_segments_and_the_module_named_like_it() -> None:
+    graph = nx.DiGraph([("core.db", "webapp.views"), ("core", "web")])
+
+    assert layer_findings(graph, ("web", "core")) == [
+        (("core", "web"), {"layer_from": "core", "layer_to": "web"})
+    ]
+
+
+def test_without_layers_there_is_no_layer_rule() -> None:
+    assert layer_findings(nx.DiGraph([("core.db", "web.views")]), ()) == []
+
+
+def test_disabled_findings_check_no_layers() -> None:
+    graph = nx.DiGraph([("core.db", "web.views")])
+
+    assert layer_findings(graph, ("web", "core"), enabled=False) == []
+
+
+def test_package_facades_are_not_checked_against_layers() -> None:
+    graph = nx.DiGraph([("core", "web.views")])
+    config = FindingsConfig(layers=("web", "core"))
+
+    found = find_findings(graph, compute_coupling(graph), config, packages={"core"})
+
+    assert FindingKind.LAYER_VIOLATION not in [f.kind for f in found]
+
+
+def test_layer_violations_are_sorted_by_module_pair_and_listed_last() -> None:
+    graph = nx.DiGraph([("core.z", "web.a"), ("core.a", "web.b")])
+    graph.add_node("lonely")
+
+    found = findings_of(graph, layers=("web", "core"))
+
+    assert [f.kind for f in found][-2:] == [FindingKind.LAYER_VIOLATION] * 2
+    assert layer_findings(graph, ("web", "core")) == [
+        (("core.a", "web.b"), {"layer_from": "core", "layer_to": "web"}),
+        (("core.z", "web.a"), {"layer_from": "core", "layer_to": "web"}),
+    ]

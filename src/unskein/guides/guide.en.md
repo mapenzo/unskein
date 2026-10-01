@@ -64,6 +64,8 @@ config file is needed: every setting has a default.
     entry points and use cases.
   - **Orphan module**: imports no project module and is imported by none: dead code or an
     entry point run from outside the code.
+  - **Layer violation**: only when you declare `[layers]`: a module of a lower layer
+    imports one of a higher layer.
 
   Thresholds are relative to the project (percentiles, with an absolute minimum) and can
   be tuned in `[findings]`. Findings never change the exit code.

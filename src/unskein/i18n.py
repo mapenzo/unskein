@@ -323,6 +323,28 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "(script, scheduled task); delete or document it, and if it is an entry point, "
         "declare it in `entry_points`.",
     },
+    "finding.layer_violation.title": {
+        Lang.ES: "Violación de capas",
+        Lang.EN: "Layer violation",
+    },
+    "finding.layer_violation.explanation": {
+        Lang.ES: "Un módulo de una capa inferior importa uno de una capa superior, según el "
+        "orden declarado en `[layers]`: la capa baja ya no puede cambiar ni reutilizarse "
+        "sin la alta.",
+        Lang.EN: "A module of a lower layer imports one of a higher layer, according to the "
+        "order declared in `[layers]`: the lower layer can no longer change or be reused "
+        "without the higher one.",
+    },
+    "finding.layer_violation.recommendation": {
+        Lang.ES: "Invertir la dependencia: mover lo que necesita la capa baja a una capa "
+        "inferior o pasarlo por una abstracción, para que las capas solo dependan hacia abajo.",
+        Lang.EN: "Invert the dependency: move what the lower layer needs into a lower layer "
+        "or pass it through an abstraction, so layers only depend downwards.",
+    },
+    "finding.layers": {
+        Lang.ES: "capa {layer_from} → {layer_to}",
+        Lang.EN: "layer {layer_from} → {layer_to}",
+    },
 }
 
 _CLI: dict[str, dict[Lang, str]] = {

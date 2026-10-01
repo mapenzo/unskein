@@ -69,6 +69,8 @@ por defecto.
     normal en puntos de entrada y casos de uso.
   - **Módulo huérfano**: no importa ningún módulo del proyecto y nadie lo importa:
     código muerto o un punto de entrada que se ejecuta desde fuera del código.
+  - **Violación de capas**: solo si declaras `[layers]`: un módulo de una capa inferior
+    importa uno de una capa superior.
 
   Los umbrales son relativos al proyecto (percentiles, con un mínimo absoluto) y se
   pueden ajustar en `[findings]`. Los hallazgos nunca cambian el código de salida.
