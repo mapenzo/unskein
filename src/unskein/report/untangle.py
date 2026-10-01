@@ -28,6 +28,8 @@ def render_untangle(plan: UntanglePlan, root: Path, lang: Lang, *, max_tangles: 
     """
     scope = "untangle.scope.all" if plan.all_edges else "untangle.scope.import"
     lines = [f"# {t('untangle.title', lang, project=root.resolve().name)}", "", t(scope, lang), ""]
+    if plan.warnings:
+        lines += [t("untangle.warnings", lang, count=plan.warnings), ""]
     if not plan.tangles:
         lines.append(t("untangle.none_all" if plan.all_edges else "untangle.none", lang))
         if plan.hidden_tangles and not plan.all_edges:

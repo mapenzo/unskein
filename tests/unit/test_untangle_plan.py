@@ -221,3 +221,38 @@ def test_no_lazy_step_for_a_name_other_modules_import_from_the_source(
     [tangle] = plan_for(root).tangles
     [cut] = tangle.cuts
     assert (cut.source, cut.target, cut.step) == ("reexp.a", "reexp.b", expected)
+
+
+BROKEN_FILE_CYCLE = {
+    "r/__init__.py": "",
+    "r/a.py": "from r.b import x\n\ny = 1\n",
+    "r/b.py": "from r.a import y\n\nx = 2\n",
+    "r/c.py": "def broken(:\n",
+    "r/d.py": "from r.a import y\n",
+}
+
+
+@pytest.mark.parametrize(
+    ("lang", "expected"),
+    [
+        (Lang.EN, "Analysis warnings: 1 (details with `unskein scan`)."),
+        (Lang.ES, "Advertencias del análisis: 1 (detalle con `unskein scan`)."),
+    ],
+)
+def test_report_counts_parse_warnings(make_project: MakeProject, lang: Lang, expected: str) -> None:
+    root = make_project(BROKEN_FILE_CYCLE)
+    plan = plan_for(root)
+    assert plan.warnings == 1
+    assert expected in render_untangle(plan, root, lang, max_tangles=5)
+
+
+def test_report_without_tangles_still_counts_parse_warnings(make_project: MakeProject) -> None:
+    root = make_project({"r/__init__.py": "", "r/a.py": "x = 1\n", "r/c.py": "def broken(:\n"})
+    report = render_untangle(plan_for(root), root, Lang.EN, max_tangles=5)
+    assert "No import-time tangles" in report
+    assert "Analysis warnings: 1 (details with `unskein scan`)." in report
+
+
+def test_report_without_warnings_has_no_warning_line(make_project: MakeProject) -> None:
+    root = make_project(CYCLE)
+    assert "Analysis warnings" not in render_untangle(plan_for(root), root, Lang.EN, max_tangles=5)

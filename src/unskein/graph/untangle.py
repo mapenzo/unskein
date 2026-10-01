@@ -189,12 +189,15 @@ class UntanglePlan:
         simulation: Tangles, cycles and coupling before and after every cut.
         hidden_tangles: Hidden-coupling groups of the project (shown as a hint when
             only import-time tangles were planned).
+        warnings: Problems found while parsing (skipped files or imports), which the plan
+            cannot account for.
     """
 
     all_edges: bool
     tangles: tuple[TanglePlan, ...]
     simulation: Simulation
     hidden_tangles: int
+    warnings: int
 
 
 def plan_tangles(

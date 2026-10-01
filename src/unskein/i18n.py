@@ -315,6 +315,10 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.ES: "No hay marañas, ni siquiera contando el acoplamiento oculto.",
         Lang.EN: "No tangles, not even counting hidden coupling.",
     },
+    "untangle.warnings": {
+        Lang.ES: "Advertencias del análisis: {count} (detalle con `unskein scan`).",
+        Lang.EN: "Analysis warnings: {count} (details with `unskein scan`).",
+    },
     "untangle.hidden_hint": {
         Lang.ES: "Grupos de acoplamiento oculto: {count}; `unskein untangle --all-edges` "
         "también los incluye.",

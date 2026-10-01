@@ -166,4 +166,5 @@ def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePla
         tangles=plans,
         simulation=simulate(scope, result.graph, cuts),
         hidden_tangles=len(result.hidden_tangles),
+        warnings=len(parsed.warnings),
     )

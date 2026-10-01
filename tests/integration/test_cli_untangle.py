@@ -58,3 +58,10 @@ def test_untangle_rejects_a_non_positive_max_tangles(make_project: MakeProject) 
     root = make_project(CYCLE)
     result = runner.invoke(app, ["untangle", str(root), "--max-tangles", "0"])
     assert result.exit_code != ExitCode.OK
+
+
+def test_untangle_reports_skipped_files(make_project: MakeProject) -> None:
+    root = make_project({**CYCLE, "app/broken.py": "def broken(:\n"})
+    result = runner.invoke(app, ["untangle", str(root), "--lang", "en"])
+    assert result.exit_code == ExitCode.OK
+    assert "Analysis warnings: 1" in result.output
