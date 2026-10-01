@@ -608,3 +608,21 @@ def test_user_message_carries_no_paths_and_no_source_lines(circular_imports: Pat
     assert str(circular_imports) not in user_message
     assert all(str(file) not in user_message for file in files)
     assert all(line not in user_message for line in source_lines)
+
+
+def test_layer_violations_reach_the_ai_with_their_layer_names() -> None:
+    violation = Finding(
+        FindingKind.LAYER_VIOLATION,
+        ("core.db", "web.views"),
+        {"layer_from": "core", "layer_to": "web"},
+    )
+
+    summary = build_context(with_findings(synthetic_result(3, 0, 0), violation)).findings[0]
+
+    assert (summary.kind, summary.modules) == ("layer_violation", ["core.db", "web.views"])
+    assert summary.evidence == {"layer_from": "core", "layer_to": "web"}
+
+
+def test_system_prompt_explains_layer_violations() -> None:
+    assert "layer_violation" in SYSTEM_PROMPT
+    assert "lower layer" in SYSTEM_PROMPT
