@@ -120,6 +120,21 @@ class FindingSummary:
     evidence: dict[str, float]
 
 
+@dataclass(frozen=True, slots=True)
+class PackageEdgeSummary:
+    """Dependencies from one package to another, as shown to the LLM.
+
+    Attributes:
+        source: Package that imports.
+        target: Package that is imported.
+        imports: Module-level dependencies from ``source`` to ``target``.
+    """
+
+    source: str
+    target: str
+    imports: int
+
+
 @dataclass(frozen=True)
 class AIContext:
     """Bounded, aggregated view of an analysis sent to the LLM instead of the full graph.
@@ -136,6 +151,8 @@ class AIContext:
         warning_counts: Analysis warnings per warning code; no paths or messages.
         findings: Deterministic findings, capped per kind.
         finding_counts: Real number of findings per kind, before the cap.
+        package_edges: Largest dependencies between packages, truncated.
+        total_package_edges: Package dependencies before truncation.
     """
 
     total_modules: int
@@ -149,6 +166,8 @@ class AIContext:
     warning_counts: dict[str, int]
     findings: list[FindingSummary] = field(default_factory=list)
     finding_counts: dict[str, int] = field(default_factory=dict)
+    package_edges: list[PackageEdgeSummary] = field(default_factory=list)
+    total_package_edges: int = 0
 
 
 class AIFailure(StrEnum):

@@ -14,8 +14,10 @@ from unskein.ai.models import (
     CycleSummary,
     FindingSummary,
     ModuleCoupling,
+    PackageEdgeSummary,
     TangleSummary,
 )
+from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang
 
@@ -30,6 +32,7 @@ MAX_CYCLES_IN_PROMPT = 10
 MAX_CYCLE_MEMBERS_IN_PROMPT = 8
 MAX_MODULES_IN_PROMPT = 15
 MAX_FINDINGS_PER_KIND_IN_PROMPT = 5
+MAX_PACKAGE_EDGES_IN_PROMPT = 10
 INSTABILITY_DECIMALS = 2
 MAX_PROMPT_CHARS = 16_000
 
@@ -53,6 +56,9 @@ Data guide: ca = modules that depend on a module, ce = modules it depends on,
 instability = ce / (ca + ce). A tangle is a group of modules that all depend on each
 other, directly or not; size and length are real sizes, members may be truncated. Lists are
 truncated: compare them with their totals.
+impact = modules that depend on a module directly or not (only given for bottleneck
+findings); package_edges = imports from one package to another, largest first, with their
+real total.
 
 Findings are architecture problems that fixed rules already computed from the graph, each with
 the numbers that triggered it and its real total per kind. Treat them as facts: interpret them,
@@ -100,9 +106,10 @@ def build_context(result: AnalysisResult) -> AIContext:
     for finding in findings:
         if shown[finding.kind.value] < MAX_FINDINGS_PER_KIND_IN_PROMPT:
             shown[finding.kind.value] += 1
-            summaries.append(
-                FindingSummary(finding.kind.value, list(finding.modules), dict(finding.evidence))
-            )
+            evidence = dict(finding.evidence)
+            if finding.kind is FindingKind.BOTTLENECK and finding.modules[0] in result.impact:
+                evidence["impact"] = result.impact[finding.modules[0]]
+            summaries.append(FindingSummary(finding.kind.value, list(finding.modules), evidence))
     return AIContext(
         total_modules=result.graph.number_of_nodes(),
         total_dependencies=result.graph.number_of_edges(),
@@ -131,6 +138,11 @@ def build_context(result: AnalysisResult) -> AIContext:
         warning_counts=dict(sorted(warning_counts.items())),
         findings=summaries,
         finding_counts=dict(sorted(finding_counts.items())),
+        package_edges=[
+            PackageEdgeSummary(edge.source, edge.target, edge.imports)
+            for edge in result.package_edges[:MAX_PACKAGE_EDGES_IN_PROMPT]
+        ],
+        total_package_edges=len(result.package_edges),
     )
 
 
@@ -156,6 +168,7 @@ def shrink_context(context: AIContext) -> AIContext:
         ],
         top_coupled_modules=_halved(context.top_coupled_modules),
         findings=_halved(context.findings),
+        package_edges=_halved(context.package_edges),
     )
 
 

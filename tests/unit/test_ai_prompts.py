@@ -12,6 +12,7 @@ from unskein.ai.models import (
     AIReport,
     CycleSummary,
     ModuleCoupling,
+    PackageEdgeSummary,
     Problem,
     TangleSummary,
 )
@@ -20,6 +21,7 @@ from unskein.ai.prompts import (
     MAX_CYCLES_IN_PROMPT,
     MAX_FINDINGS_PER_KIND_IN_PROMPT,
     MAX_MODULES_IN_PROMPT,
+    MAX_PACKAGE_EDGES_IN_PROMPT,
     MAX_PROMPT_CHARS,
     MAX_TANGLE_MEMBERS_IN_PROMPT,
     MAX_TANGLES_IN_PROMPT,
@@ -32,6 +34,7 @@ from unskein.ai.prompts import (
 )
 from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
+from unskein.graph.packages import PackageEdge
 from unskein.i18n import Lang
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.python_parser import PythonAdapter
@@ -518,3 +521,72 @@ def test_prompt_with_many_findings_still_fits_the_limit() -> None:
 def test_system_prompt_declares_findings_as_computed_facts() -> None:
     assert "Findings are architecture problems that fixed rules already computed" in SYSTEM_PROMPT
     assert "do not recompute or contradict them" in SYSTEM_PROMPT
+
+
+def test_context_carries_the_largest_package_dependencies_with_the_real_total() -> None:
+    edges = [
+        PackageEdge(f"p{i:02d}", "core", 100 - i) for i in range(MAX_PACKAGE_EDGES_IN_PROMPT + 5)
+    ]
+    result = replace(synthetic_result(3, 0, 0), package_edges=edges)
+
+    context = build_context(result)
+
+    assert len(context.package_edges) == MAX_PACKAGE_EDGES_IN_PROMPT
+    assert context.total_package_edges == len(edges)
+    assert context.package_edges[0] == PackageEdgeSummary("p00", "core", 100)
+
+
+def test_context_without_packages_has_empty_package_fields() -> None:
+    context = build_context(synthetic_result(3, 0, 0))
+
+    assert (context.package_edges, context.total_package_edges) == ([], 0)
+
+
+def test_bottleneck_evidence_carries_its_measured_impact() -> None:
+    bottleneck = Finding(
+        FindingKind.BOTTLENECK, ("core.settings",), {"afferent": 25, "efferent": 9}
+    )
+    result = replace(
+        with_findings(synthetic_result(3, 0, 0), bottleneck), impact={"core.settings": 54}
+    )
+
+    summary = build_context(result).findings[0]
+
+    assert summary.evidence == {"afferent": 25, "efferent": 9, "impact": 54}
+
+
+def test_other_findings_and_unmeasured_bottlenecks_get_no_impact() -> None:
+    orphan = Finding(FindingKind.ORPHAN, ("lonely",), {})
+    bottleneck = Finding(FindingKind.BOTTLENECK, ("hub",), {"afferent": 6, "efferent": 6})
+    result = replace(
+        with_findings(synthetic_result(3, 0, 0), orphan, bottleneck), impact={"lonely": 9}
+    )
+
+    evidence = {f.modules[0]: f.evidence for f in build_context(result).findings}
+
+    assert "impact" not in evidence["lonely"]
+    assert "impact" not in evidence["hub"]
+
+
+def test_shrinking_halves_the_package_dependencies_but_keeps_their_total() -> None:
+    edges = [PackageEdge(f"p{i}", "core", 10 - i) for i in range(MAX_PACKAGE_EDGES_IN_PROMPT)]
+    context = build_context(replace(synthetic_result(3, 0, 0), package_edges=edges))
+
+    shrunk = shrink_context(context)
+
+    assert len(shrunk.package_edges) == MAX_PACKAGE_EDGES_IN_PROMPT // 2
+    assert shrunk.total_package_edges == context.total_package_edges
+
+
+def test_prompt_with_many_packages_still_fits_the_limit() -> None:
+    edges = [PackageEdge(f"very.long.package.name.number{i:03d}", "core", 1) for i in range(500)]
+    context = build_context(replace(synthetic_result(500, 0, 0), package_edges=edges))
+
+    messages = build_messages(context, Lang.EN)
+
+    assert len(messages[1]["content"]) <= MAX_PROMPT_CHARS
+
+
+def test_system_prompt_explains_impact_and_package_dependencies() -> None:
+    assert "impact" in SYSTEM_PROMPT
+    assert "package_edges" in SYSTEM_PROMPT
