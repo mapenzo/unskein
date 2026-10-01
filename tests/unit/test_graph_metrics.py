@@ -10,6 +10,8 @@ import pytest
 from unskein.config import AnalysisConfig, FindingsConfig
 from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import (
+    IMPACT_BOTTLENECK_MODULES,
+    IMPACT_COUPLED_MODULES,
     MAX_CYCLES,
     CouplingMetrics,
     analyze,
@@ -18,6 +20,7 @@ from unskein.graph.metrics import (
     find_high_coupling,
     find_tangles,
 )
+from unskein.graph.packages import PackageEdge
 from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult
 from unskein.pipeline import should_parallelize
 
@@ -240,3 +243,86 @@ def test_analyze_with_findings_disabled_computes_none() -> None:
     result = analyze(parsed, FindingsConfig(enabled=False))
 
     assert (result.findings, result.findings_enabled) == ([], False)
+
+
+def test_analyze_summarizes_packages_and_their_imports() -> None:
+    parsed = parse_result_of(
+        ("core", "core/__init__.py"),
+        ("core.db", "core/db.py"),
+        ("web.views", "web/views.py"),
+        ("web.forms", "web/forms.py"),
+        imports=(("web.views", "core.db"), ("web.forms", "core.db"), ("web.views", "web.forms")),
+    )
+
+    result = analyze(parsed)
+
+    assert [(p.name, p.modules, p.afferent, p.efferent) for p in result.packages] == [
+        ("core", 2, 1, 0),
+        ("web", 2, 0, 1),
+    ]
+    assert result.package_edges == [PackageEdge("web", "core", 2)]
+
+
+def test_analyze_uses_the_configured_package_depth() -> None:
+    parsed = parse_result_of(
+        ("app.api.users", "app/api/users.py"),
+        ("app.db.models", "app/db/models.py"),
+        imports=(("app.api.users", "app.db.models"),),
+    )
+
+    result = analyze(parsed, FindingsConfig(package_depth=2))
+
+    assert [p.name for p in result.packages] == ["app.api", "app.db"]
+
+
+def test_analyze_measures_the_impact_of_the_most_coupled_modules() -> None:
+    parsed = parse_result_of(
+        ("a", "a.py"), ("b", "b.py"), ("c", "c.py"), imports=(("a", "b"), ("b", "c"))
+    )
+
+    result = analyze(parsed)
+
+    assert result.high_coupling_modules == ["b"]
+    assert result.impact == {"b": 1}
+
+
+def bottleneck_parse_result() -> ParseResult:
+    """Build a project where ``hub`` is a bottleneck with six dependents.
+
+    Returns:
+        The parse result: six importers, ``hub`` and six modules it imports.
+    """
+    users = [f"user{i}" for i in range(6)]
+    deps = [f"dep{i}" for i in range(6)]
+    modules = [(name, f"{name}.py") for name in [*users, "hub", *deps]]
+    imports = tuple((user, "hub") for user in users) + tuple(("hub", dep) for dep in deps)
+    return parse_result_of(*modules, imports=imports)
+
+
+def test_analyze_measures_the_impact_of_bottlenecks() -> None:
+    result = analyze(bottleneck_parse_result())
+
+    assert FindingKind.BOTTLENECK in [f.kind for f in result.findings]
+    assert result.impact["hub"] == 6
+
+
+def test_disabled_findings_still_give_packages_but_no_bottleneck_impact() -> None:
+    parsed = bottleneck_parse_result()
+    enabled = analyze(parsed)
+    disabled = analyze(parsed, FindingsConfig(enabled=False))
+
+    assert disabled.packages == enabled.packages
+    assert disabled.findings == []
+    assert set(disabled.impact) <= set(disabled.high_coupling_modules[:IMPACT_COUPLED_MODULES])
+
+
+def test_impact_is_bounded_by_the_displayed_modules() -> None:
+    names = [f"m{i:03d}" for i in range(60)]
+    parsed = parse_result_of(
+        *[(name, f"{name}.py") for name in names],
+        imports=tuple((a, b) for a, b in zip(names, names[1:], strict=False)),
+    )
+
+    result = analyze(parsed)
+
+    assert len(result.impact) <= IMPACT_COUPLED_MODULES + IMPACT_BOTTLENECK_MODULES
