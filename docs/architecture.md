@@ -346,6 +346,13 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   nombre, la resolución se detiene en el módulo intermedio. Si un facade expone
   el mismo símbolo más de una vez (típico: `try: from ._fast import X` /
   `except ImportError: from ._slow import X`), **gana el primero en el código**.
+  Un `from x import *` dentro de una fachada, con `x` módulo del proyecto, genera
+  `ReExport(paquete, x, STAR_EXPORT)`; `star_exports` calcula los nombres que trae
+  (`__all__` literal, o nombres públicos de `x` más los de sus star-imports
+  anidados si `x` no declara `__all__`) y `build_reexport_index(re_exports,
+  star_names)` los indexa. Un star nunca aporta un nombre que la fachada liga ella
+  misma (definiciones, imports explícitos) y, entre varias fuentes, **gana el
+  primero en el código**.
   Los imports se recorren en profundidad y en orden de código, así que los avisos
   de un archivo también salen en ese orden.
 - **Errores por archivo** → warning, el archivo se omite y el análisis sigue:
@@ -366,10 +373,13 @@ discutirlo primero):
   si los atributos se usan tarde y solo falla con `from a import nombre`; no se modela
   (es el criterio de pylint). `TYPE_CHECKING` se reconoce por nombre, no por semántica:
   `from typing import TYPE_CHECKING as flag` no se detecta.
-- **Star-imports (`from x import *`) no resuelven re-exports** — sin ejecutar
-  el código o inspeccionar `__all__`, no se puede saber con certeza qué
-  símbolos exporta un `*`. Se genera un warning explícito, nunca falla
-  silenciosamente.
+- **Star-imports (`from x import *`)**: dentro de una fachada (`__init__.py`)
+  y de un módulo `x` del proyecto se siguen: re-exportan el `__all__` literal de
+  `x` o, si no lo tiene, sus nombres públicos de nivel de módulo (más los de los
+  star-imports anidados de fachadas sin `__all__`). Fuera de una fachada, o de un
+  módulo externo, siguen sin resolverse y generan el aviso `STAR_IMPORT`. Un
+  `__all__` dinámico (no literal) no se sigue: se usan los nombres públicos.
+  Nunca falla silenciosamente.
 - **Imports dinámicos vía `importlib.import_module()` con strings son
   invisibles** — limitación conocida y común en análisis estático puro.
 

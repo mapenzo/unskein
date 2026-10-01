@@ -79,7 +79,7 @@ config file is needed: every setting has a default.
   recommendation. Problems naming modules that do not exist are discarded, and
   the report says how many.
 - **Analysis warnings**: files skipped or imports that could not be resolved
-  (star imports, relative imports beyond the top package, files too large,
+  (star imports outside package facades, relative imports beyond the top package, files too large,
   unparseable or too slow to parse, re-export cycles or chains too long). A
   warning never stops the analysis.
 
@@ -87,7 +87,8 @@ Imports through a package's `__init__.py` are followed to the module that
 defines the name, so a cycle hidden behind a facade still shows up. That includes
 `import pkg as p` followed by `p.name`: the dependency goes to the module that defines
 `name`, unless the way `p` is used cannot be followed (it is passed around or
-reassigned), in which case it stays on the package.
+reassigned), in which case it stays on the package. `from x import *` inside a package's
+`__init__.py` is followed too.
 
 ## `scan` options
 

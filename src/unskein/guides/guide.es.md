@@ -84,7 +84,7 @@ por defecto.
   recomendación. Los problemas que nombran módulos inexistentes se descartan,
   y el informe dice cuántos.
 - **Advertencias del análisis**: archivos omitidos o imports que no se
-  pudieron resolver (imports con asterisco, imports relativos fuera del
+  pudieron resolver (imports con asterisco fuera de las fachadas, imports relativos fuera del
   paquete raíz, archivos demasiado grandes, no analizables o demasiado lentos,
   ciclos o cadenas de re-exports demasiado largas). Una advertencia nunca
   detiene el análisis.
@@ -93,7 +93,8 @@ Los imports a través del `__init__.py` de un paquete se siguen hasta el módulo
 que define el nombre, así que un ciclo escondido tras una fachada también
 aparece. Eso incluye `import pkg as p` seguido de `p.nombre`: la dependencia va al
 módulo que define `nombre`, salvo que no se pueda seguir el uso de `p` (se pasa como
-valor o se reasigna), y entonces se queda en el paquete.
+valor o se reasigna), y entonces se queda en el paquete. Los `from x import *` del
+`__init__.py` de un paquete también se siguen.
 
 ## Opciones de `scan`
 
