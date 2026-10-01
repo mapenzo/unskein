@@ -77,3 +77,11 @@ def test_guide_explains_every_finding_kind(lang: Lang) -> None:
     titles = [t(f"finding.{kind}.title", lang) for kind in FindingKind]
 
     assert all(title in usage_guide(lang) for title in titles)
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_guide_explains_packages_and_impact(lang: Lang) -> None:
+    guide = usage_guide(lang)
+
+    assert f"**{t('report.packages', lang)}**" in guide
+    assert f"**{t('report.impact', lang)}**" in guide

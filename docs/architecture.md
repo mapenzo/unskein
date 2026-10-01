@@ -655,6 +655,35 @@ aplicados) y construye el grafo real.
   la fachada —, pero el reporte/IA deben interpretarlo como tal, no como un
   "god module" clásico.
 
+### Impacto transitivo y paquetes (`graph/impact.py`, `graph/packages.py`)
+
+- **Radio de impacto** (`impact_radius(graph, modules)`): para cada módulo, cuántos módulos
+  dependen de él directa o indirectamente, es decir sus ancestros en el grafo (`a -> b`
+  significa que `a` importa a `b`). El propio módulo no cuenta, pero los demás miembros de
+  una maraña a la que pertenece sí. Cuesta un recorrido del grafo por módulo, así que
+  `analyze` lo calcula solo para el conjunto que el informe muestra: los 15 primeros de la
+  tabla de acoplamiento más los 10 primeros cuellos de botella (`AnalysisResult.impact`).
+  Coste medido: 0,44 s para 25 módulos en un grafo de 20.000 nodos y 200.000 aristas.
+- **Resumen por paquetes** (`summarize_packages(graph, depth, facades=...)`): un paquete se
+  nombra con los primeros `package_depth` segmentos del nombre del módulo (default 1). Un
+  módulo suelto en esa profundidad o por encima va a `ROOT_PACKAGE` (`"(root)"`), salvo que
+  sea una fachada `__init__`, que pertenece a su paquete. Ca y Ce cuentan paquetes
+  distintos, no módulos, y los imports dentro de un mismo paquete se ignoran. Los paquetes
+  salen ordenados por `Ca + Ce` descendente y luego por nombre; las dependencias, por número
+  de imports descendente y luego por nombres. Coste medido: 0,013 s con 20.000 nodos y
+  200.000 aristas. Resultado en `AnalysisResult.packages` y `.package_edges`.
+- `package_depth` vive en `[findings]`, pero el resumen por paquetes **no** depende de
+  `enabled`: se calcula también con los hallazgos desactivados. El informe lo muestra solo
+  con dos o más paquetes (a lo sumo 15 paquetes y 10 dependencias); la IA recibe las 10
+  mayores dependencias con su total real y el impacto de los cuellos de botella. Nada de
+  esto cambia el código de salida.
+- Calibración medida:
+
+  | Proyecto | Paquetes | Impacto máximo |
+  |---|---|---|
+  | swo-aura-rag_api | `core` (81 módulos, Ca 5), `nexus_ai`, `application`, `webapi`, `tools`, `docs` | `core.logging.logger` 152, `core.configuration.load_env` 110, `core.configuration.app_settings` 75 |
+  | unskein (`src`) | uno solo: la sección se omite | 0 marañas |
+
 Output consolidado (`AnalysisResult`): `graph`, `coupling_metrics`, `cycles`,
 `high_coupling_modules`, `parse_warnings`, `cycles_truncated`, `tangles`.
 `analyze()` es composición pura `build_graph → compute_coupling →

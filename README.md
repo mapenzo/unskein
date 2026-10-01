@@ -67,6 +67,8 @@ Architecture health: fair.
 - **Architecture findings**: unstable dependencies, bottlenecks, growing orchestrators
   and orphan modules, each with a recommendation. Computed from the graph, so they
   appear also without AI.
+- **Package overview and impact**: coupling measured between packages, and for each
+  coupled module how many others depend on it, directly or indirectly.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
 - **Re-exports resolved**: `from app import Engine` is traced through `__init__.py`
   facades to the module that actually defines `Engine`, so cycles hidden behind a

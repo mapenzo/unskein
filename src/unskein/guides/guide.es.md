@@ -33,6 +33,13 @@ por defecto.
   y, si las hay, las marañas.
 - **Métricas generales**: número de módulos, dependencias, ciclos, marañas y
   advertencias.
+- **Paquetes**: la misma medida de acoplamiento entre paquetes, que da la visión de
+  conjunto que una tabla de módulos no puede (se muestra con dos o más). Un paquete se
+  nombra por los primeros `package_depth` segmentos del nombre de sus módulos (por defecto 1:
+  `core.db` y `core.http` están en `core`); los módulos sueltos por encima de esa
+  profundidad van a `(root)`. Ca y Ce cuentan otros paquetes, no módulos, y los imports
+  dentro de un mismo paquete no cuentan. Bajo la tabla, las mayores dependencias entre
+  paquetes con su número de imports.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto
@@ -41,6 +48,8 @@ por defecto.
     significa que se rompe cuando cambia cualquiera de ellos.
   - **Inestabilidad** = `Ce / (Ca + Ce)`, de 0 (estable, otros dependen de
     él) a 1 (inestable, depende de otros).
+  - **Impacto**: cuántos módulos dependen de este, directa o indirectamente: hasta dónde
+    puede llegar un cambio. Se muestra para los módulos listados y para los cuellos de botella.
 - **Ciclos de dependencia**: módulos que acaban importándose a sí mismos.
   - Primero van las **marañas**: grupos donde cada módulo alcanza a todos los
     demás. Su tamaño es exacto aunque la lista de ciclos se corte.
@@ -154,7 +163,8 @@ Si tus paquetes no están en la raíz ni en `src/`, define `source_roots` en
 
 La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde fuera
 del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los
-módulos `__main__` se detectan solos).
+módulos `__main__` se detectan solos). El ajuste `package_depth` cambia cómo se
+nombran los paquetes.
 
 ## Interpretación con IA
 
