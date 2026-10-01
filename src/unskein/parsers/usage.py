@@ -304,6 +304,7 @@ class ImportEvidence:
         postponed_annotations: Whether the importing module has
             ``from __future__ import annotations``, so its signature and module-level
             annotations are not evaluated at import time.
+        bound_names: Names those statements bind in the importing module, sorted.
     """
 
     file_path: Path | None
@@ -311,6 +312,7 @@ class ImportEvidence:
     symbols: tuple[str, ...]
     contexts: frozenset[UseContext]
     postponed_annotations: bool = False
+    bound_names: tuple[str, ...] = ()
 
 
 NO_EVIDENCE = ImportEvidence(None, (), (), frozenset())
@@ -408,5 +410,6 @@ def collect_import_evidence(
             tuple(sorted(symbols[pair])),
             pair_contexts,
             postponed_annotations=postponed,
+            bound_names=tuple(sorted(used)),
         )
     return evidence

@@ -1,7 +1,7 @@
 """Prepare and build an untangle plan: the imports to cut to undo each tangle."""
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from unskein.graph.metrics import PACKAGE_INIT_FILE, analyze, find_tangles, import_time_graph
@@ -81,6 +81,47 @@ def facade_own_names(parsed: ParseResult) -> dict[str, frozenset[str]]:
     return facades
 
 
+def names_imported_from(parsed: ParseResult) -> dict[str, frozenset[str]]:
+    """Map each project module to the names other project modules import from it.
+
+    Args:
+        parsed: The resolved parse result.
+
+    Returns:
+        The names imported by name from each module that has any.
+    """
+    found: dict[str, set[str]] = {}
+    for module in parsed.modules:
+        for edge in module.imports:
+            if not edge.is_external and edge.symbol_name is not None:
+                found.setdefault(edge.target, set()).add(edge.symbol_name)
+    return {name: frozenset(names) for name, names in found.items()}
+
+
+def _keep_names_at_module_level(
+    evidence: Mapping[Edge, ImportEvidence], imported_from: Mapping[str, frozenset[str]]
+) -> dict[Edge, ImportEvidence]:
+    """Drop the use contexts of imports that bind a name other modules import from the source.
+
+    Moving such an import into a function or under ``TYPE_CHECKING`` removes the name
+    from the source module at runtime, which breaks every module importing it from there.
+
+    Args:
+        evidence: Evidence per dependency.
+        imported_from: Names other modules import from each module.
+
+    Returns:
+        The evidence, without contexts where the lazy and type-only steps would break others.
+    """
+    kept = {}
+    for edge, found in evidence.items():
+        if imported_from.get(edge[0], frozenset()).isdisjoint(found.bound_names):
+            kept[edge] = found
+        else:
+            kept[edge] = replace(found, contexts=frozenset())
+    return kept
+
+
 def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePlan:
     """Analyze the project and plan the cuts of every tangle.
 
@@ -117,6 +158,7 @@ def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePla
                     encoding=context.analysis.default_encoding,
                 )
             )
+    evidence = _keep_names_at_module_level(evidence, names_imported_from(parsed))
     plans = plan_tangles(scope, tangles, evidence, facades=facades, all_edges=all_edges)
     cuts = [(cut.source, cut.target) for plan in plans for cut in plan.cuts]
     return UntanglePlan(

@@ -195,3 +195,29 @@ def test_all_edges_offers_only_structural_steps(
     [tangle] = plan_for(make_project(FUNCTION_READ_CYCLE), all_edges=all_edges).tangles
     [cut] = tangle.cuts
     assert (cut.source, cut.target, cut.step) == ("q.a", "q.b", expected)
+
+
+RE_IMPORTED = {
+    "reexp/__init__.py": "",
+    "reexp/a.py": "from reexp.b import Thing\n\n\ndef make():\n    return Thing()\n\n\n"
+    "def more(): ...\n\n\ndef extra(): ...\n",
+    "reexp/b.py": "from reexp.a import make, more, extra\n\n\nclass Thing: ...\n\n\n"
+    "X = [make, more, extra]\n",
+}
+
+
+@pytest.mark.parametrize(
+    ("consumer", "expected"),
+    [
+        ("from reexp.b import Thing\n", StepKind.LAZY),
+        ("from reexp.a import Thing\n", StepKind.MOVE_SYMBOL),
+    ],
+    ids=["imported_from_its_definer", "imported_through_the_cut_module"],
+)
+def test_no_lazy_step_for_a_name_other_modules_import_from_the_source(
+    make_project: MakeProject, consumer: str, expected: StepKind
+) -> None:
+    root = make_project({**RE_IMPORTED, "reexp/c.py": consumer})
+    [tangle] = plan_for(root).tangles
+    [cut] = tangle.cuts
+    assert (cut.source, cut.target, cut.step) == ("reexp.a", "reexp.b", expected)

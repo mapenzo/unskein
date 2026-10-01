@@ -72,7 +72,7 @@ def test_evidence_gathers_lines_symbols_and_contexts(make_project: MakeProject) 
     root = make_project(
         {
             "app/__init__.py": "",
-            "app/a.py": "from app.b import B, C\n\ndef run():\n    return B(), C()\n",
+            "app/a.py": "from app.b import B as Bee, C\n\ndef run():\n    return Bee(), C()\n",
             "app/b.py": "class B: ...\nclass C: ...\n",
         }
     )
@@ -82,7 +82,11 @@ def test_evidence_gathers_lines_symbols_and_contexts(make_project: MakeProject) 
     )
     assert evidence == {
         ("app.a", "app.b"): ImportEvidence(
-            module.file_path, (1,), ("B", "C"), frozenset({UseContext.FUNCTION})
+            module.file_path,
+            (1,),
+            ("B", "C"),
+            frozenset({UseContext.FUNCTION}),
+            bound_names=("Bee", "C"),
         )
     }
 
