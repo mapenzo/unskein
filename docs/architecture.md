@@ -598,6 +598,45 @@ aplicados) y construye el grafo real.
   (`PYTHONHASHSEED`), así que el grafo se enumera con etiquetas enteras (índice
   del nombre ordenado): la lista y el punto de truncado son idénticos entre
   ejecuciones (coste medido: 0,7 s con 20.000 nodos y 200.000 aristas).
+- **Hallazgos** (`graph/findings.py`, `find_findings(graph, metrics, config)`): reglas
+  deterministas sobre el grafo y las métricas, sin LLM. `analyze(result,
+  findings_config)` las calcula tras los ciclos y las guarda en `AnalysisResult.findings`
+  (`findings_enabled` dice si el informe debe mostrar la sección). Las fachadas
+  `__init__.py` quedan excluidas de todas las reglas. Defaults en `FindingsConfig`
+  (`[findings]` de `.unskein.toml`, sin flags por umbral; solo `--findings/--no-findings`).
+
+  | Regla | Condición | Defaults |
+  |---|---|---|
+  | Dependencia inestable | arista A→B con `I(B) − I(A) ≥ gap` y `Ca(A) ≥ min_afferent` | gap 0,5 · min_afferent 2 |
+  | Cuello de botella | `Ca ≥ max(P(Ca), mín)` y `Ce ≥ max(P(Ce), mín)` | P90 · mín 5 |
+  | Orquestador creciente | `Ce ≥ max(P(Ce), mín)` | P95 · mín 10 |
+  | Huérfano | `Ca = 0` y `Ce = 0`, sin puntos de entrada conocidos | — |
+
+  `CouplingMetrics` vive en `graph/coupling.py` y no en `metrics.py`: `findings.py` lo
+  necesita y `metrics.py` importa `findings.py`, así que dejarlo en `metrics.py` creaba
+  un ciclo que unskein detectaba en su propio código (lo vigila
+  `tests/integration/test_self_analysis.py`). `metrics.py` lo reexporta.
+
+  `P(x)` es el percentil por rango más cercano (`graph/percentile.py`, compartido con
+  `find_high_coupling`): sin interpolación, siempre un valor real. Se combina con un
+  mínimo absoluto porque el percentil solo marcaría siempre a alguien (en un proyecto
+  pequeño, cualquier módulo sería «el peor»); el mínimo evita inundar de hallazgos un
+  proyecto de pocos módulos. Un módulo puede ser a la vez cuello de botella y
+  orquestador. Puntos de entrada: `entry_points.py` (la capa con E/S, llamada desde
+  `scan.py`) lee `[project.scripts]` y `[project.gui-scripts]` del `pyproject.toml` de la
+  raíz y los pasa, junto a `__main__` y `[findings] entry_points`, en
+  `FindingsConfig.entry_points`; así las reglas siguen siendo puras. Un `pyproject.toml`
+  ausente no es un error; uno ilegible o inválido se avisa (WARNING) y se ignora. En el
+  informe: a lo sumo 10 módulos por tipo; en el contexto de la IA, 5 por tipo con el total
+  real, como hechos ya calculados. Los hallazgos **no** cambian el código de salida.
+  Calibración medida antes de fijar los defaults:
+
+  | Proyecto | Módulos | Cuellos | Orquestadores | Dep. inestables | Huérfanos |
+  |---|---:|---:|---:|---:|---:|
+  | swo-aura-rag_api | 281 | 1 (`app_settings`) | 7 | 1 | 1 |
+  | unskein (`src`) | 31 | 0 | 2 (`cli`, `scan`) | 0 | 0 |
+
+  Coste medido: 0,05 s con 20.000 nodos y 200.000 aristas.
 - **Marañas** (`find_tangles`, #8): componentes fuertemente conexas de más
   de un módulo (`nx.strongly_connected_components`, lineal y exacto, nunca
   se trunca). Todo ciclo vive dentro de una maraña, así que dan el tamaño

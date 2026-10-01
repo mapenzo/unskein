@@ -5,14 +5,16 @@ import pytest
 from unskein.config import (
     AnalysisConfig,
     AnalysisFlags,
+    FindingsConfig,
     TomlAI,
     TomlAnalysis,
     TomlConfig,
     load_toml_config,
     resolve_ai_config,
     resolve_analysis_config,
+    resolve_findings_config,
 )
-from unskein.errors import ConfigError
+from unskein.errors import ConfigError, ErrorKey
 
 
 def write(path: Path, text: str) -> Path:
@@ -204,3 +206,69 @@ def test_api_key_is_not_in_repr() -> None:
 
 def test_api_key_is_not_in_loaded_toml_repr() -> None:
     assert "s3cr3t-value" not in repr(toml_ai(model="m", api_key="s3cr3t-value"))
+
+
+def test_findings_defaults_when_nothing_is_configured() -> None:
+    assert resolve_findings_config(TomlConfig(), None) == FindingsConfig()
+
+
+def test_findings_toml_overrides_the_defaults(tmp_path: Path) -> None:
+    write(
+        tmp_path / ".unskein.toml",
+        '[findings]\nbottleneck_percentile = 80\nstability_gap = 0.4\nentry_points = ["app.cli"]\n',
+    )
+    toml = load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    config = resolve_findings_config(toml, None)
+
+    assert (config.bottleneck_percentile, config.stability_gap) == (80, 0.4)
+    assert config.entry_points == ("app.cli",)
+
+
+@pytest.mark.parametrize(
+    ("in_toml", "flag", "expected"), [(True, False, False), (False, True, True)]
+)
+def test_findings_flag_beats_the_toml(
+    tmp_path: Path, in_toml: bool, flag: bool, expected: bool
+) -> None:
+    write(tmp_path / ".unskein.toml", f"[findings]\nenabled = {str(in_toml).lower()}\n")
+    toml = load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert resolve_findings_config(toml, flag).enabled is expected
+
+
+def test_script_entry_points_come_before_the_configured_ones(tmp_path: Path) -> None:
+    write(tmp_path / ".unskein.toml", '[findings]\nentry_points = ["app.cli"]\n')
+    toml = load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    config = resolve_findings_config(toml, None, ("pkg.main",))
+
+    assert config.entry_points == ("pkg.main", "app.cli")
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "bottleneck_percentile = 0",
+        "bottleneck_percentile = 101",
+        "orchestrator_percentile = 101",
+        "stability_gap = 1.5",
+        "orchestrator_min_efferent = -1",
+    ],
+)
+def test_findings_value_out_of_range_is_a_config_error(tmp_path: Path, line: str) -> None:
+    write(tmp_path / ".unskein.toml", f"[findings]\n{line}\n")
+
+    with pytest.raises(ConfigError) as raised:
+        load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert raised.value.key == ErrorKey.INVALID_VALUE
+
+
+def test_unknown_findings_key_is_a_config_error(tmp_path: Path) -> None:
+    write(tmp_path / ".unskein.toml", "[findings]\nbottleneck = 3\n")
+
+    with pytest.raises(ConfigError) as raised:
+        load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert raised.value.key == ErrorKey.UNKNOWN_KEY

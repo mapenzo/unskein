@@ -227,6 +227,79 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "report.recommendation": {Lang.ES: "Recomendación", Lang.EN: "Recommendation"},
     "report.warnings": {Lang.ES: "Advertencias del análisis", Lang.EN: "Analysis warnings"},
     "report.more": {Lang.ES: "…y {count} más", Lang.EN: "…and {count} more"},
+    "report.findings": {Lang.ES: "Hallazgos", Lang.EN: "Findings"},
+    "report.no_findings": {
+        Lang.ES: "No se detectaron hallazgos.",
+        Lang.EN: "No findings detected.",
+    },
+    "report.summary_findings.one": {
+        Lang.ES: "1 hallazgo de arquitectura.",
+        Lang.EN: "1 architecture finding.",
+    },
+    "report.summary_findings.other": {
+        Lang.ES: "{count} hallazgos de arquitectura.",
+        Lang.EN: "{count} architecture findings.",
+    },
+}
+
+_FINDINGS: dict[str, dict[Lang, str]] = {
+    "finding.unstable_dependency.title": {
+        Lang.ES: "Dependencia inestable",
+        Lang.EN: "Unstable dependency",
+    },
+    "finding.unstable_dependency.explanation": {
+        Lang.ES: "Un módulo del que otros dependen importa uno mucho más inestable "
+        "(I es la inestabilidad, de 0 a 1): los cambios del segundo llegan a todos los "
+        "que se apoyan en el primero.",
+        Lang.EN: "A module others rely on imports a much more unstable one (I is the "
+        "instability, from 0 to 1): the second one's changes reach everything that "
+        "relies on the first.",
+    },
+    "finding.unstable_dependency.recommendation": {
+        Lang.ES: "Invertir la dependencia: que el primero dependa de una abstracción estable, "
+        "o mover lo que necesita del segundo a un módulo estable.",
+        Lang.EN: "Invert the dependency: make the first depend on a stable abstraction, "
+        "or move what it needs from the second into a stable module.",
+    },
+    "finding.bottleneck.title": {Lang.ES: "Cuello de botella", Lang.EN: "Bottleneck"},
+    "finding.bottleneck.explanation": {
+        Lang.ES: "Módulos muy usados que a la vez dependen de muchos: un cambio en sus "
+        "dependencias llega a todos sus usuarios, y un cambio en ellos, a muchos.",
+        Lang.EN: "Modules many depend on that also depend on many: a change in their "
+        "dependencies reaches all their users, and a change in them reaches many.",
+    },
+    "finding.bottleneck.recommendation": {
+        Lang.ES: "Dividirlo por responsabilidades para que cada parte tenga menos motivos "
+        "de cambio.",
+        Lang.EN: "Split it by responsibility so each part has fewer reasons to change.",
+    },
+    "finding.orchestrator.title": {
+        Lang.ES: "Orquestador con muchas dependencias",
+        Lang.EN: "Orchestrator with many dependencies",
+    },
+    "finding.orchestrator.explanation": {
+        Lang.ES: "Módulos que importan muchos más módulos que el resto del proyecto. Es normal "
+        "en puntos de entrada y casos de uso; preocupa si sigue creciendo.",
+        Lang.EN: "Modules that import far more modules than the rest of the project. This is "
+        "normal for entry points and use cases; it is a concern if it keeps growing.",
+    },
+    "finding.orchestrator.recommendation": {
+        Lang.ES: "Si sigue creciendo, agrupar pasos relacionados en componentes propios.",
+        Lang.EN: "If it keeps growing, group related steps into components of their own.",
+    },
+    "finding.orphan.title": {Lang.ES: "Módulo huérfano", Lang.EN: "Orphan module"},
+    "finding.orphan.explanation": {
+        Lang.ES: "Módulo que no importa ningún módulo del proyecto y nadie lo importa.",
+        Lang.EN: "Module that imports no project module and that nobody imports.",
+    },
+    "finding.orphan.recommendation": {
+        Lang.ES: "Comprobar si es código muerto o un punto de entrada invocado fuera del "
+        "código (script, tarea programada); borrarlo o documentarlo, y si es un punto de "
+        "entrada, declararlo en `entry_points`.",
+        Lang.EN: "Check whether it is dead code or an entry point run from outside the code "
+        "(script, scheduled task); delete or document it, and if it is an entry point, "
+        "declare it in `entry_points`.",
+    },
 }
 
 _CLI: dict[str, dict[Lang, str]] = {
@@ -250,7 +323,7 @@ _CLI: dict[str, dict[Lang, str]] = {
     },
 }
 
-STRINGS: dict[str, dict[Lang, str]] = _ERRORS | _WARNINGS | _REPORT | _CLI
+STRINGS: dict[str, dict[Lang, str]] = _ERRORS | _WARNINGS | _REPORT | _FINDINGS | _CLI
 
 
 def t(key: str, lang: Lang, **kwargs: object) -> str:

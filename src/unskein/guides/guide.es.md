@@ -46,6 +46,20 @@ por defecto.
     demás. Su tamaño es exacto aunque la lista de ciclos se corte.
   - Después, los **ciclos** como bucles de ejemplo, como máximo 100; el
     informe avisa cuando la búsqueda se detuvo en ese límite.
+- **Hallazgos**: reglas calculadas a partir del grafo, también con `--no-ai`. Cada
+  tipo tiene una explicación y una recomendación, y luego sus módulos con los
+  números que lo justifican (como máximo 10 por tipo):
+  - **Dependencia inestable**: un módulo del que otros dependen importa uno mucho más
+    inestable.
+  - **Cuello de botella**: Ca alto y Ce alto a la vez, así que los cambios entran y
+    salen.
+  - **Orquestador con muchas dependencias**: muchos más imports que el resto; es
+    normal en puntos de entrada y casos de uso.
+  - **Módulo huérfano**: no importa ningún módulo del proyecto y nadie lo importa:
+    código muerto o un punto de entrada que se ejecuta desde fuera del código.
+
+  Los umbrales son relativos al proyecto (percentiles, con un mínimo absoluto) y se
+  pueden ajustar en `[findings]`. Los hallazgos nunca cambian el código de salida.
 - **Problemas señalados (IA)**: solo con un modelo configurado. Cada problema
   tiene una severidad (`low`, `medium`, `high`), los módulos implicados y una
   recomendación. Los problemas que nombran módulos inexistentes se descartan,
@@ -73,6 +87,7 @@ unskein scan [RUTA] [opciones]
 | `--exclude PATRÓN` | Excluye más rutas, sintaxis gitignore (repetible). |
 | `--min-severity low\|medium\|high` | Severidad mínima de los problemas de IA que se muestran. |
 | `--include-tests` / `--no-include-tests` | Analiza también el código de tests (desactivado por defecto). |
+| `--findings` / `--no-findings` | Muestra u oculta la sección de hallazgos (se muestra por defecto). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Sigue carpetas enlazadas (desactivado por defecto). |
 | `--encoding NOMBRE` | Encoding de reserva para archivos que no declaran ninguno. |
 | `--lang es\|en` | Idioma del informe. |
@@ -136,6 +151,10 @@ dos detiene el análisis con código 1 y nombra el archivo y la clave.
 
 Si tus paquetes no están en la raíz ni en `src/`, define `source_roots` en
 `[analysis]`.
+
+La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde fuera
+del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los
+módulos `__main__` se detectan solos).
 
 ## Interpretación con IA
 

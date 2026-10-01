@@ -6,6 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from unskein.ai.models import AIFailure, AIReport, Problem, Severity
+from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
@@ -15,6 +16,7 @@ MAX_MODULES_IN_TABLE = 15
 TOP_COUPLED_SHARE = 100 - HIGH_COUPLING_PERCENTILE
 MAX_WARNING_EXAMPLES = 5
 MAX_TANGLE_MEMBERS_SHOWN = 10
+MAX_FINDINGS_PER_KIND = 10
 
 
 class AIStatus(StrEnum):
@@ -94,8 +96,10 @@ def render_report(context: ReportContext, lang: Lang) -> str:
         _metrics(context.result, lang),
         _cycles(context.result, lang),
         _coupled(context.result, lang),
-        _ai(context, lang),
     ]
+    if context.result.findings_enabled:
+        sections.append(_findings(context.result, lang))
+    sections.append(_ai(context, lang))
     if context.result.parse_warnings:
         sections.append(_warnings(context.result.parse_warnings, context.root, lang))
     return "\n\n".join("\n".join(lines) for lines in sections) + "\n"
@@ -140,6 +144,9 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         lines.append(top_line)
     if result.tangles:
         lines.append(_tangle_summary(result.tangles, lang))
+    if result.findings:
+        key = "one" if len(result.findings) == 1 else "other"
+        lines.append(t(f"report.summary_findings.{key}", lang, count=len(result.findings)))
     if context.ai_report:
         health = t(f"report.health.{context.ai_report.architecture_health}", lang)
         lines += ["", context.ai_report.summary, "", t("report.health", lang, health=health)]
@@ -265,6 +272,61 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
         )
         lines += ["", showing]
     return lines
+
+
+def _findings(result: AnalysisResult, lang: Lang) -> list[str]:
+    """Build the findings section: each rule explained once, then its modules.
+
+    Args:
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        Markdown lines of the section.
+    """
+    lines = [f"## {t('report.findings', lang)}", ""]
+    if not result.findings:
+        return [*lines, t("report.no_findings", lang)]
+    for kind in FindingKind:
+        group = [finding for finding in result.findings if finding.kind is kind]
+        if not group:
+            continue
+        lines += [
+            f"### {t(f'finding.{kind}.title', lang)} ({len(group)})",
+            "",
+            t(f"finding.{kind}.explanation", lang),
+            "",
+            f"*{t('report.recommendation', lang)}:* {t(f'finding.{kind}.recommendation', lang)}",
+            "",
+        ]
+        lines += [_finding_line(finding) for finding in group[:MAX_FINDINGS_PER_KIND]]
+        hidden = len(group) - MAX_FINDINGS_PER_KIND
+        if hidden > 0:
+            lines.append(f"- {t('report.more', lang, count=hidden)}")
+        lines.append("")
+    return lines[:-1]
+
+
+def _finding_line(finding: Finding) -> str:
+    """Render one finding as a list item with the numbers behind it.
+
+    Args:
+        finding: The finding to render.
+
+    Returns:
+        One Markdown list item.
+    """
+    evidence = finding.evidence
+    if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
+        source, target = finding.modules
+        return (
+            f"- `{source}` → `{target}` (Ca {evidence['afferent_from']}, "
+            f"I {evidence['instability_from']:.2f} → {evidence['instability_to']:.2f})"
+        )
+    (module,) = finding.modules
+    if finding.kind is FindingKind.ORPHAN:
+        return f"- `{module}`"
+    return f"- `{module}` (Ca {evidence['afferent']}, Ce {evidence['efferent']})"
 
 
 def _ai(context: ReportContext, lang: Lang) -> list[str]:

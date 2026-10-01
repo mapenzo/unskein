@@ -2,19 +2,23 @@ import os
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import networkx as nx
 import pytest
 
-from unskein.config import AnalysisConfig
+from unskein.config import AnalysisConfig, FindingsConfig
+from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import (
     MAX_CYCLES,
     CouplingMetrics,
+    analyze,
     compute_coupling,
     find_cycles,
     find_high_coupling,
     find_tangles,
 )
+from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult
 from unskein.pipeline import should_parallelize
 
 
@@ -185,3 +189,54 @@ def test_cycles_do_not_depend_on_the_hash_seed(limit: int) -> None:
     }
 
     assert len(outputs) == 1
+
+
+def parse_result_of(
+    *modules: tuple[str, str], imports: tuple[tuple[str, str], ...] = ()
+) -> ParseResult:
+    """Build a ParseResult with the given ``(name, file name)`` modules and imports.
+
+    Args:
+        *modules: ``(module name, file name)`` pairs.
+        imports: ``(importer, imported)`` pairs, all internal.
+
+    Returns:
+        The parse result.
+    """
+    infos = [ModuleInfo(name=name, file_path=Path(file)) for name, file in modules]
+    for source, target in imports:
+        next(m for m in infos if m.name == source).imports.append(
+            ImportEdge(source=source, target=target, is_external=False)
+        )
+    return ParseResult(language="python", modules=infos)
+
+
+def test_analyze_reports_unstable_dependency_through_imports() -> None:
+    names = ["user1", "user2", "core", "flaky", *[f"dep{n}" for n in range(5)]]
+    imports = (
+        ("user1", "core"),
+        ("user2", "core"),
+        ("core", "flaky"),
+        *[("flaky", f"dep{n}") for n in range(5)],
+    )
+
+    result = analyze(parse_result_of(*[(n, f"{n}.py") for n in names], imports=imports))
+
+    assert [(f.kind, f.modules) for f in result.findings] == [
+        (FindingKind.UNSTABLE_DEPENDENCY, ("core", "flaky"))
+    ]
+
+
+def test_analyze_reports_orphans_but_not_package_facades() -> None:
+    result = analyze(parse_result_of(("pkg", "pkg/__init__.py"), ("pkg.lonely", "pkg/lonely.py")))
+
+    assert [(f.kind, f.modules) for f in result.findings] == [(FindingKind.ORPHAN, ("pkg.lonely",))]
+    assert result.findings_enabled is True
+
+
+def test_analyze_with_findings_disabled_computes_none() -> None:
+    parsed = parse_result_of(("pkg.lonely", "pkg/lonely.py"))
+
+    result = analyze(parsed, FindingsConfig(enabled=False))
+
+    assert (result.findings, result.findings_enabled) == ([], False)

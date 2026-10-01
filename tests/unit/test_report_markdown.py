@@ -5,12 +5,14 @@ import networkx as nx
 import pathspec
 
 from unskein.ai.models import AIFailure, AIReport, Problem
+from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import AnalysisResult, CouplingMetrics, analyze
 from unskein.i18n import Lang
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import ParseWarning, WarningCode
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.report.markdown import (
+    MAX_FINDINGS_PER_KIND,
     MAX_MODULES_IN_TABLE,
     MAX_TANGLE_MEMBERS_SHOWN,
     MAX_WARNING_EXAMPLES,
@@ -99,6 +101,7 @@ def test_sections_in_order_english(circular_imports: Path) -> None:
         "## General metrics",
         "## Dependency cycles",
         "## Most coupled modules",
+        "## Findings",
         "## Problems flagged (AI)",
     ]
 
@@ -309,3 +312,86 @@ def test_no_dropped_notice_when_nothing_was_dropped(simple_project: Path) -> Non
         ai_status=AIStatus.PRESENT,
     )
     assert "discarded" not in report.lower()
+
+
+def result_with(*findings: Finding, **fields: object) -> AnalysisResult:
+    """Build a minimal analysis carrying the given findings.
+
+    Args:
+        *findings: Findings to attach.
+        **fields: Other ``AnalysisResult`` fields to set.
+
+    Returns:
+        The analysis.
+    """
+    return AnalysisResult(
+        graph=nx.DiGraph(),
+        coupling_metrics={},
+        cycles=[],
+        high_coupling_modules=[],
+        findings=list(findings),
+        **fields,
+    )
+
+
+def test_findings_section_lists_each_kind_with_its_evidence(tmp_path: Path) -> None:
+    result = result_with(
+        Finding(FindingKind.BOTTLENECK, ("core.settings",), {"afferent": 25, "efferent": 9}),
+        Finding(
+            FindingKind.UNSTABLE_DEPENDENCY,
+            ("core.svc", "web.factory"),
+            {"afferent_from": 2, "instability_from": 0.33, "instability_to": 0.83},
+        ),
+        Finding(FindingKind.ORPHAN, ("tools.stray",), {}),
+    )
+
+    report = render(tmp_path, result)
+
+    assert "## Findings" in report
+    assert "### Bottleneck (1)" in report
+    assert "- `core.settings` (Ca 25, Ce 9)" in report
+    assert "- `core.svc` → `web.factory` (Ca 2, I 0.33 → 0.83)" in report
+    assert "- `tools.stray`" in report
+    assert report.index("Unstable dependency") < report.index("Bottleneck") < report.index("Orphan")
+
+
+def test_findings_section_is_in_spanish_when_asked(tmp_path: Path) -> None:
+    result = result_with(Finding(FindingKind.ORPHAN, ("tools.stray",), {}))
+
+    report = render(tmp_path, result, lang=Lang.ES)
+
+    assert "## Hallazgos" in report
+    assert "Recomendación" in report
+
+
+def test_no_findings_says_so(tmp_path: Path) -> None:
+    assert "No findings detected." in render(tmp_path, result_with())
+
+
+def test_disabled_findings_leave_no_section(tmp_path: Path) -> None:
+    report = render(tmp_path / "project", result_with(findings_enabled=False))
+
+    assert "Findings" not in report
+    assert "findings" not in report
+
+
+def test_findings_per_kind_are_capped_with_a_note(tmp_path: Path) -> None:
+    orphans = [
+        Finding(FindingKind.ORPHAN, (f"m{i:02d}",), {}) for i in range(MAX_FINDINGS_PER_KIND + 3)
+    ]
+
+    report = render(tmp_path, result_with(*orphans))
+
+    assert f"### Orphan module ({len(orphans)})" in report
+    assert f"`m{MAX_FINDINGS_PER_KIND:02d}`" not in report
+    assert "…and 3 more" in report
+
+
+def test_summary_counts_the_findings(tmp_path: Path) -> None:
+    one = result_with(Finding(FindingKind.ORPHAN, ("a",), {}))
+    two = result_with(
+        Finding(FindingKind.ORPHAN, ("a",), {}), Finding(FindingKind.ORPHAN, ("b",), {})
+    )
+
+    assert "1 architecture finding." in render(tmp_path, one)
+    assert "2 architecture findings." in render(tmp_path, two)

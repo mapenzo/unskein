@@ -43,6 +43,18 @@ config file is needed: every setting has a default.
     Their size is exact, even when the cycle list is cut short.
   - **Cycles** are then listed as example loops, at most 100; the report says
     when the search stopped at that limit.
+- **Findings**: rules computed from the graph, shown also with `--no-ai`. Each kind has
+  one explanation and one recommendation, then its modules with the numbers behind
+  them (at most 10 per kind):
+  - **Unstable dependency**: a module others rely on imports a much more unstable one.
+  - **Bottleneck**: high Ca and high Ce at once, so changes flow in and out.
+  - **Orchestrator with many dependencies**: far more imports than the rest; normal for
+    entry points and use cases.
+  - **Orphan module**: imports no project module and is imported by none: dead code or an
+    entry point run from outside the code.
+
+  Thresholds are relative to the project (percentiles, with an absolute minimum) and can
+  be tuned in `[findings]`. Findings never change the exit code.
 - **Problems flagged (AI)**: only with a model configured. Each problem has a
   severity (`low`, `medium`, `high`), the modules involved and a
   recommendation. Problems naming modules that do not exist are discarded, and
@@ -68,6 +80,7 @@ unskein scan [PATH] [options]
 | `--exclude PATTERN` | Skip more paths, gitignore syntax (repeatable). |
 | `--min-severity low\|medium\|high` | Lowest AI problem severity to show. |
 | `--include-tests` / `--no-include-tests` | Also analyze test code (off by default). |
+| `--findings` / `--no-findings` | Show or hide the findings section (shown by default). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Follow symlinked folders (off by default). |
 | `--encoding NAME` | Fallback encoding for files that declare none. |
 | `--lang es\|en` | Report language. |
@@ -130,6 +143,10 @@ stops the scan with exit code 1 and names the file and the key.
 
 If your packages live somewhere other than the root or `src/`, set
 `source_roots` in `[analysis]`.
+
+The `[findings]` table tunes the findings; modules that are run from outside the
+code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`
+modules are detected on their own).
 
 ## AI interpretation
 

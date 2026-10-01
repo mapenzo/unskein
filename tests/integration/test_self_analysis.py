@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import networkx as nx
+
 from unskein.parsers.discovery import load_exclude_spec
 from unskein.parsers.python_parser import PythonAdapter
 
@@ -18,3 +20,11 @@ def test_parsers_base_and_indirection_do_not_import_each_other() -> None:
     edges = unskein_internal_edges()
     base, indirection = "unskein.parsers.base", "unskein.parsers.indirection"
     assert not ((base, indirection) in edges and (indirection, base) in edges)
+
+
+def test_unskein_source_has_no_import_tangles() -> None:
+    graph = nx.DiGraph(sorted(unskein_internal_edges()))
+
+    tangles = [sorted(group) for group in nx.strongly_connected_components(graph) if len(group) > 1]
+
+    assert tangles == []

@@ -64,6 +64,9 @@ Architecture health: fair.
   packages kept out of the way.
 - **Coupling metrics**: afferent (Ca), efferent (Ce) and instability for each module,
   so you can tell a stable core from a fragile hub.
+- **Architecture findings**: unstable dependencies, bottlenecks, growing orchestrators
+  and orphan modules, each with a recommendation. Computed from the graph, so they
+  appear also without AI.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
 - **Re-exports resolved**: `from app import Engine` is traced through `__init__.py`
   facades to the module that actually defines `Engine`, so cycles hidden behind a

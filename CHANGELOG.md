@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Findings section in the report: four deterministic rules over the graph (unstable
+  dependency, bottleneck, growing orchestrator, orphan module), each with an explanation
+  and a recommendation. Thresholds are relative (percentiles of the project) with
+  absolute minimums, so a small project is not flooded; package `__init__.py` facades are
+  excluded. Tune them in the `[findings]` table of `.unskein.toml`, or switch the
+  section off with `--no-findings` (`--findings` to override a config that disables it).
+  Entry points are never reported as orphans: `__main__`, the targets of
+  `[project.scripts]` and `[project.gui-scripts]` in `pyproject.toml`, and the
+  `entry_points` setting. The section is shown also with `--no-ai`, the AI receives the
+  findings as facts already computed, and they never change the exit code.
+
 ### Changed
 
 - The most coupled modules table now says what it lists (the top 10% of modules by
