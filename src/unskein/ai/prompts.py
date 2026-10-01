@@ -313,7 +313,7 @@ def ground_report(report: AIReport, graph: nx.DiGraph) -> GroundingResult:
 
     Matches each module name to the graph (see ``normalize_module_name``),
     removes the ones that match none and drops problems left without any.
-    Also clears ``code_snippet``, which arrives in v0.2.
+    Also clears ``code_snippet``, since code suggestions are not offered yet.
 
     Args:
         report: Validated report from the LLM.

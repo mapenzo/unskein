@@ -36,9 +36,10 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
 ## Lenguajes
 
 - **v0.1: solo Python.**
-- Roadmap futuro (no implementar todavía): TypeScript/JavaScript (v0.3), luego
-  Java (v0.4), usando `tree-sitter` como capa de abstracción de parseo para no
-  reescribir el pipeline por cada lenguaje nuevo.
+- Roadmap futuro (no implementar todavía, sin versión asignada y sin anunciarla):
+  más lenguajes, primero TypeScript/JavaScript y después Java, usando `tree-sitter`
+  como capa de abstracción de parseo para no reescribir el pipeline por cada
+  lenguaje nuevo.
 - El diseño del adapter (`parsers/base.py`) ya está pensado para esto: es una
   interfaz (`LanguageAdapter`) que cada lenguaje implementa.
 
@@ -74,7 +75,7 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
 - **Python `>=3.12`** como mínimo soportado; **3.14 como versión de desarrollo/CI
   principal**. No se diseña v0.1 asumiendo builds free-threaded (`cp314t`): el
   ecosistema de wheels de extensiones en C (pydantic-core, y el futuro
-  tree-sitter para v0.3+) todavía no tiene soporte maduro y confiable para
+  tree-sitter) todavía no tiene soporte maduro y confiable para
   free-threading. Revisar de nuevo cuando se evalúe activarlo como optimización
   opcional, no asumirlo como base.
 - `ast` (stdlib) para parseo de Python — no usar `tree-sitter` todavía en v0.1,
@@ -182,8 +183,9 @@ para paquetes Python distribuibles).
   de IA, con un aviso claro.
 - **Salida estructurada del LLM vía Pydantic**, con fallback de extracción de
   JSON embebido para modelos económicos que no respetan bien `response_format`.
-- **Snippets de código en las recomendaciones de IA son v0.2**, no v0.1. En v0.1
-  la IA solo da resumen + problemas señalados, sin proponer código de solución.
+- **Snippets de código en las recomendaciones de IA quedan para más adelante**
+  (sin versión asignada). Hoy la IA solo da resumen + problemas señalados, sin
+  proponer código de solución.
 
 ## Jerarquía de configuración
 
@@ -316,7 +318,7 @@ no se mergea.
   ```
 - **La decisión de paralelizar vive en una función aislada**,
   `should_parallelize(file_count, config)` — punto de extensión explícito para
-  cuando se introduzca lógica adaptativa (v0.2+: calibrar según núcleos
+  cuando se introduzca lógica adaptativa (más adelante: calibrar según núcleos
   disponibles, tamaño total en bytes, etc.) sin tocar el resto del pipeline.
 - **Cola única compartida entre workers de una misma etapa** (no sharding por
   hash) — el autobalanceo dinámico de una cola compartida evita el "efecto
@@ -371,14 +373,17 @@ scriptear `unskein` por su cuenta, aunque v0.1 no es un gate de CI dedicado.
   memoria del proceso: `psutil` `peak_wset` en Windows, `resource.ru_maxrss`
   en Unix), nunca se envía a ningún servidor.
 
-## Roadmap de versiones
+## Hoja de ruta
 
-| Versión | Alcance |
+Las versiones publicadas están en `CHANGELOG.md`. Lo que sigue **no tiene versión
+asignada** y no se anuncia con número (el README solo dice «próximamente» para otros
+lenguajes):
+
+| Estado | Alcance |
 |---|---|
-| v0.1 | Python, nivel módulo, dependencias + acoplamiento, salida texto/Markdown, IA = resumen + problemas señalados (sin snippets) |
-| v0.2 | Recomendaciones con snippets de código, salida JSON opcional |
-| v0.3 | Segundo lenguaje (TypeScript/JavaScript) vía tree-sitter |
-| v0.4 | Tercer lenguaje (Java) |
+| Publicado | Python, nivel módulo: dependencias, acoplamiento, ciclos al importar y acoplamiento oculto, hallazgos y capas, paquetes e impacto, `untangle`, reporte Markdown ES/EN, IA = resumen + problemas señalados (sin snippets) |
+| Próximamente | Más lenguajes: TypeScript/JavaScript primero, luego Java, vía tree-sitter |
+| También previsto | Recomendaciones con snippets de código, salida JSON |
 | Fase 2 | CVE + mapa de arquitectura completo |
 
 ## Estado actual

@@ -32,8 +32,8 @@ class Problem(BaseModel):
         description: Explanation in the selected output language.
         affected_modules: Modules involved in the problem.
         recommendation: Suggested way to address it.
-        code_snippet: Proposed code; always None in v0.1 and hidden from the
-            JSON schema the model sees, snippets arrive in v0.2.
+        code_snippet: Proposed code; always None for now and hidden from the
+            JSON schema the model sees, until code suggestions are offered.
     """
 
     model_config = ConfigDict(json_schema_extra=_drop_class_description)

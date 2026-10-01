@@ -438,7 +438,7 @@ del pipeline:
 
 ```python
 def should_parallelize(file_count: int, config: AnalysisConfig) -> bool:
-    """v0.1: umbral fijo. v0.2+: podría considerar núcleos disponibles,
+    """Umbral fijo hoy; más adelante podría considerar núcleos disponibles,
     tamaño total en bytes de los archivos, tiempos medidos en análisis
     previos, etc. — el contrato con parse_all no cambia."""
     return file_count >= config.parallel_threshold
@@ -457,7 +457,7 @@ Python 3.14 soporta oficialmente builds sin GIL (free-threaded, PEP 779), lo
 que en teoría sería una alternativa más liviana que procesos separados para
 paralelizar el parseo de archivos (evita el overhead de serialización entre
 procesos). **Se descarta para v0.1** porque el ecosistema de wheels de
-extensiones en C (`pydantic-core`, y el futuro `tree-sitter` para v0.3+) no
+extensiones en C (`pydantic-core`, y el futuro `tree-sitter`) no
 tiene todavía soporte confiable para el ABI `cp314t`. `ProcessPoolExecutor`
 funciona igual en cualquier Python `>=3.12` sin depender de esa madurez.
 Reevaluar cuando el ecosistema esté más consolidado — no antes.
@@ -931,7 +931,7 @@ extremos, y una ruta (`app/core.py`, `./app/core.py`, `app/__init__.py`,
 inicial `src` (raíz de fuentes) solo se quita si el nombre con él no existe en el
 grafo; ningún otro segmento se adivina. Luego se eliminan de cada problema los módulos que no son nodos del grafo
 (sin duplicados) y se descartan los problemas que se quedan sin ninguno;
-`code_snippet` se fuerza a `None` (v0.2). `ground_report` devuelve
+`code_snippet` se fuerza a `None` (aún no se ofrecen sugerencias de código). `ground_report` devuelve
 `GroundingResult(report, dropped_problems)`; si hubo descartes, se avisa por consola
 (`WARNING`, solo el número, nunca el texto del LLM) y en el reporte.
 
@@ -1258,7 +1258,7 @@ La rama macOS no tiene runner en CI.
   introducir un registro/factory ahí.
 - **`tree-sitter`** se adopta recién al implementar el segundo lenguaje, no
   antes — Python usa `ast` de la stdlib en v0.1 sin necesidad de esa capa.
-- **Snippets de código en recomendaciones de IA** (v0.2): requiere pasarle al
+- **Snippets de código en recomendaciones de IA** (sin versión asignada): requiere pasarle al
   LLM fragmentos reales de código (no solo grafo/métricas), lo que aumenta
   contexto y costo, y exige decidir cómo validar que el snippet propuesto
   tiene sentido.
