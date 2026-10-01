@@ -141,6 +141,7 @@ src/unskein/
 │   └── percentile.py        # percentil por rango más cercano (compartido)
 ├── ai/
 │   ├── client.py             # wrapper de litellm.completion
+│   ├── proxy.py              # pregunta a un LiteLLM Proxy si su alias es de razonamiento
 │   └── prompts.py            # system prompt + construcción de prompts
 └── report/
     └── markdown.py           # generación del reporte final

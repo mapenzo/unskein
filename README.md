@@ -149,19 +149,28 @@ export UNSKEIN_AI_API_BASE="http://localhost:11434"
 unskein scan .
 ```
 
-Behind a team [LiteLLM Proxy](https://docs.litellm.ai/docs/simple_proxy)? Use the
-`litellm_proxy/` prefix and your virtual key:
+For a cloud model, name it `provider/model` and give its key. The provider's own
+variable works, or `UNSKEIN_API_KEY`:
 
 ```bash
-export UNSKEIN_AI_MODEL="litellm_proxy/gpt-5"
+export UNSKEIN_AI_MODEL="anthropic/<model>"
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+Behind a team [LiteLLM Proxy](https://docs.litellm.ai/docs/simple_proxy)? Use the
+`litellm_proxy/` prefix and your virtual key. unskein asks the proxy whether the alias
+is a reasoning model, so any alias name works:
+
+```bash
+export UNSKEIN_AI_MODEL="litellm_proxy/my-alias"
 export UNSKEIN_AI_API_BASE="https://litellm.example.com"
 export UNSKEIN_API_KEY="sk-..."
 ```
 
-Name the alias like the real model when you can: unskein asks LiteLLM whether the
-model is a reasoning model (they only accept `temperature=1.0`), and an opaque alias
-hides that. Direct calls are limited to 60 s; through a proxy the proxy decides.
-If the AI call fails for any reason, the report is still produced, with a notice.
+`unskein guide` has a recipe for each provider: OpenAI, Claude, Gemini, Azure OpenAI,
+AWS Bedrock, Mistral, Groq, DeepSeek, LiteLLM Proxy and OpenAI-compatible local
+servers. Direct calls are limited to 60 s; through a proxy the proxy decides. If the
+AI call fails for any reason, the report is still produced, with a notice.
 
 Settings are read in this order, first match wins:
 
@@ -169,7 +178,9 @@ Settings are read in this order, first match wins:
 2. `.unskein.toml` in the project, or `~/.config/unskein/config.toml`
 3. The `--api-key` flag, for quick tests only, since it ends up in your shell history
 
-Templates: [`.env.example`](.env.example), and `unskein init` for a commented `.unskein.toml`.
+Templates: [`.env.example`](.env.example) (unskein reads environment variables, not
+`.env` files: load it in your shell first) and `unskein init` for a commented
+`.unskein.toml`.
 
 ## Privacy
 

@@ -185,26 +185,85 @@ están en ninguna capa no se comprueban, y sin `[layers]` no hay regla de capas.
 
 ## Interpretación con IA
 
-Funciona cualquier modelo compatible con LiteLLM: un modelo local de Ollama,
-un proveedor en la nube o un LiteLLM Proxy.
+El paso de IA es opcional y pasa por LiteLLM, así que funciona con un modelo
+local, un proveedor en la nube o un LiteLLM Proxy. Lo controlan tres ajustes:
+
+| Ajuste | Variable de entorno | `.unskein.toml` | Qué es |
+|---|---|---|---|
+| Modelo | `UNSKEIN_AI_MODEL` | `[ai] model` | `proveedor/modelo`, como lo nombra LiteLLM. Sin él, no hay IA. |
+| Clave de API | `UNSKEIN_API_KEY` | `[ai] api_key` | Opcional: si no está, LiteLLM lee la variable propia del proveedor (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`...). |
+| Endpoint | `UNSKEIN_AI_API_BASE` | `[ai] api_base` | Solo para servidores locales, Azure y proxies. |
+
+Las variables de entorno ganan a `.unskein.toml`. Guarda las claves en
+variables de entorno: una clave escrita en `.unskein.toml` puede acabar en git.
+
+unskein lee variables de entorno, no archivos `.env`. Para usar uno, cárgalo
+antes en tu shell (`set -a; source .env; set +a`) o con una herramienta como
+direnv. El `.env.example` del repositorio enumera las variables.
+
+### Proveedores
+
+| Proveedor | `model` | Clave y endpoint |
+|---|---|---|
+| Ollama (local) | `ollama/qwen2.5-coder:7b` | `api_base` `http://localhost:11434`; sin clave |
+| OpenAI | `openai/<modelo>` | `OPENAI_API_KEY` |
+| Claude (Anthropic) | `anthropic/<modelo>` | `ANTHROPIC_API_KEY` |
+| Gemini | `gemini/<modelo>` | `GEMINI_API_KEY` |
+| Azure OpenAI | `azure/<deployment>` | `AZURE_API_KEY`, `AZURE_API_VERSION` y `api_base` (la URL de tu recurso) |
+| AWS Bedrock | `bedrock/<id del modelo>` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME` |
+| Mistral | `mistral/<modelo>` | `MISTRAL_API_KEY` |
+| Groq | `groq/<modelo>` | `GROQ_API_KEY` |
+| DeepSeek | `deepseek/<modelo>` | `DEEPSEEK_API_KEY` |
+| LiteLLM Proxy | `litellm_proxy/<alias>` | `api_base` (la URL del proxy) y tu clave virtual |
+| Servidor compatible con OpenAI (LM Studio, vLLM) | `openai/<modelo>` | `api_base` (p. ej. `http://localhost:1234/v1`); cualquier clave si el servidor no la comprueba |
+
+Sustituye `<modelo>` por un modelo actual del proveedor; la documentación de
+LiteLLM lista los nombres. `UNSKEIN_API_KEY` puede sustituir a cualquiera de
+las claves de arriba. Algunos ejemplos:
 
 ```bash
-# Ollama local
-export UNSKEIN_AI_MODEL="ollama/qwen2.5-coder:7b"
-export UNSKEIN_AI_API_BASE="http://localhost:11434"
+# Claude
+export UNSKEIN_AI_MODEL="anthropic/<modelo>"
+export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Proveedor en la nube
-export UNSKEIN_AI_MODEL="gpt-4o-mini"
+# Azure OpenAI
+export UNSKEIN_AI_MODEL="azure/mi-deployment"
+export UNSKEIN_AI_API_BASE="https://mi-recurso.openai.azure.com"
+export AZURE_API_KEY="..."
+export AZURE_API_VERSION="2024-10-21"
+
+# LiteLLM Proxy
+export UNSKEIN_AI_MODEL="litellm_proxy/mi-alias"
+export UNSKEIN_AI_API_BASE="https://litellm.example.com"
 export UNSKEIN_API_KEY="sk-..."
 ```
+
+O, para un modelo sin secreto, en `.unskein.toml`:
+
+```toml
+[ai]
+model = "ollama/qwen2.5-coder:7b"
+api_base = "http://localhost:11434"
+```
+
+Los modelos de razonamiento solo aceptan temperatura 1, y unskein la elige
+según lo que LiteLLM sabe del modelo. Un alias de proxy puede llamarse de
+cualquier forma, así que con los modelos `litellm_proxy/` unskein pregunta
+antes al proxy (`/model/info`, con la misma clave) si el alias es un modelo de
+razonamiento.
+
+Para comprobar la configuración, ejecuta `unskein scan . --verbose`: una línea
+con los tokens usados indica que el modelo respondió. Si el informe no tiene
+sección de IA, explica por qué.
 
 Qué sale de tu equipo: nombres de módulos y sus métricas (acoplamiento,
 ciclos, marañas). Nunca código fuente. Con `--no-ai` o un modelo local, nada.
 unskein no tiene telemetría de ningún tipo.
 
-Si el modelo falla, no responde a tiempo (60 s en llamadas directas) o
-responde con un formato incorrecto, el informe se genera igual sin la sección
-de IA y explica por qué. La respuesta llega en el idioma del informe.
+Si el modelo falla, no responde a tiempo (60 s en llamadas directas; detrás
+de un proxy, decide el proxy) o responde con un formato incorrecto, el
+informe se genera igual sin la sección de IA y explica por qué. La respuesta
+llega en el idioma del informe.
 
 ## Códigos de salida
 
@@ -235,6 +294,15 @@ sitio.
   de la raíz y de `src/`; define `source_roots`.
 - **Sin sección de IA**: no hay modelo configurado, o se pasó `--no-ai`. El
   informe dice cuál de los dos.
+- **«No se pudo contactar con el modelo (AuthenticationError)»**: falta la
+  clave o es incorrecta. Revisa `UNSKEIN_API_KEY` o la variable del proveedor.
+- **«…(NotFoundError)» o «(BadRequestError)»**: el nombre del modelo es
+  incorrecto o falta el prefijo del proveedor (`anthropic/`, `azure/`...).
+  `--verbose` muestra el mensaje del proveedor.
+- **«El modelo no respondió a tiempo»**: prueba un modelo más rápido; con un
+  modelo local grande, uno más pequeño.
+- **«La respuesta del modelo no cumple el formato esperado»**: habitual en
+  modelos locales pequeños. Vuelve a intentarlo o usa un modelo mayor.
 - **Idioma equivocado**: pasa `--lang`, o define `UNSKEIN_LANG` o
   `[general] lang`.
 - **Un bug**: abre un issue en https://github.com/mapenzo/unskein/issues con
