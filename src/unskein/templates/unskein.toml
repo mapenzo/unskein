@@ -18,7 +18,9 @@
 # Endpoint for local servers or a LiteLLM Proxy. Env var: UNSKEIN_AI_API_BASE.
 # api_base = "http://localhost:11434"
 
-# Prefer the UNSKEIN_API_KEY env var: a key written here can end up in git.
+# Prefer the UNSKEIN_API_KEY env var, or the provider's own one such as
+# ANTHROPIC_API_KEY: a key written here can end up in git. Provider recipes:
+# unskein guide.
 # api_key = ""
 
 [analysis]

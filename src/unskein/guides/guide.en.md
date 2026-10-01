@@ -177,26 +177,82 @@ checked, and without `[layers]` there is no layer rule.
 
 ## AI interpretation
 
-Any model supported by LiteLLM works: a local Ollama model, a cloud provider
-or a LiteLLM Proxy.
+The AI step is optional and goes through LiteLLM, so it works with a local
+model, a cloud provider or a LiteLLM Proxy. Three settings drive it:
+
+| Setting | Environment variable | `.unskein.toml` | What it is |
+|---|---|---|---|
+| Model | `UNSKEIN_AI_MODEL` | `[ai] model` | `provider/model`, as LiteLLM names it. Without it, no AI. |
+| API key | `UNSKEIN_API_KEY` | `[ai] api_key` | Optional: if unset, LiteLLM reads the provider's own variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`...). |
+| Endpoint | `UNSKEIN_AI_API_BASE` | `[ai] api_base` | Only for local servers, Azure and proxies. |
+
+Environment variables win over `.unskein.toml`. Keep keys in environment
+variables: a key written in `.unskein.toml` can end up in git.
+
+unskein reads environment variables, not `.env` files. To use one, load it
+in your shell first (`set -a; source .env; set +a`) or with a tool such as
+direnv. `.env.example` in the repository lists the variables.
+
+### Providers
+
+| Provider | `model` | Key and endpoint |
+|---|---|---|
+| Ollama (local) | `ollama/qwen2.5-coder:7b` | `api_base` `http://localhost:11434`; no key |
+| OpenAI | `openai/<model>` | `OPENAI_API_KEY` |
+| Claude (Anthropic) | `anthropic/<model>` | `ANTHROPIC_API_KEY` |
+| Gemini | `gemini/<model>` | `GEMINI_API_KEY` |
+| Azure OpenAI | `azure/<deployment>` | `AZURE_API_KEY`, `AZURE_API_VERSION`, and `api_base` (your resource URL) |
+| AWS Bedrock | `bedrock/<model id>` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION_NAME` |
+| Mistral | `mistral/<model>` | `MISTRAL_API_KEY` |
+| Groq | `groq/<model>` | `GROQ_API_KEY` |
+| DeepSeek | `deepseek/<model>` | `DEEPSEEK_API_KEY` |
+| LiteLLM Proxy | `litellm_proxy/<alias>` | `api_base` (the proxy URL) and your virtual key |
+| OpenAI-compatible server (LM Studio, vLLM) | `openai/<model>` | `api_base` (e.g. `http://localhost:1234/v1`); any non-empty key (e.g. `sk-local`) if the server checks none |
+
+Replace `<model>` with a current model of the provider; the LiteLLM
+documentation lists the names. `UNSKEIN_API_KEY` can replace any of the keys
+above, except the AWS credentials. Some examples:
 
 ```bash
-# Local Ollama
-export UNSKEIN_AI_MODEL="ollama/qwen2.5-coder:7b"
-export UNSKEIN_AI_API_BASE="http://localhost:11434"
+# Claude
+export UNSKEIN_AI_MODEL="anthropic/<model>"
+export ANTHROPIC_API_KEY="sk-ant-..."
 
-# Cloud provider
-export UNSKEIN_AI_MODEL="gpt-4o-mini"
+# Azure OpenAI
+export UNSKEIN_AI_MODEL="azure/my-deployment"
+export UNSKEIN_AI_API_BASE="https://my-resource.openai.azure.com"
+export AZURE_API_KEY="..."
+export AZURE_API_VERSION="2024-10-21"
+
+# LiteLLM Proxy
+export UNSKEIN_AI_MODEL="litellm_proxy/my-alias"
+export UNSKEIN_AI_API_BASE="https://litellm.example.com"
 export UNSKEIN_API_KEY="sk-..."
 ```
+
+Or, for a model without a secret, in `.unskein.toml`:
+
+```toml
+[ai]
+model = "ollama/qwen2.5-coder:7b"
+api_base = "http://localhost:11434"
+```
+
+Reasoning models only accept temperature 1, and unskein picks it from what
+LiteLLM knows about the model. A proxy alias can be any name, so for
+`litellm_proxy/` models unskein first asks the proxy (`/model/info`, with the
+same key) whether the alias is a reasoning model.
+
+To check the setup, run `unskein scan . --verbose`: a line with the tokens
+used means the model answered. If the report has no AI section, it says why.
 
 What leaves your machine: module names and their metrics (coupling, cycles,
 tangles). Never source code. With `--no-ai` or a local model, nothing does.
 unskein has no telemetry of any kind.
 
-If the model fails, times out (60 s for direct calls) or answers in the wrong
-format, the report is still produced without the AI section and says why.
-The answer comes in the report language.
+If the model fails, times out (60 s for direct calls; behind a proxy, the
+proxy decides) or answers in the wrong format, the report is still produced
+without the AI section and says why. The answer comes in the report language.
 
 ## Exit codes
 
@@ -226,6 +282,15 @@ of the run, measured locally and never sent anywhere.
   and `src/`; set `source_roots`.
 - **No AI section**: no model is configured, or `--no-ai` was passed. The
   report says which.
+- **"The model could not be reached (AuthenticationError)"**: the key is
+  missing or wrong. Check `UNSKEIN_API_KEY` or the provider's variable.
+- **"...(NotFoundError)" or "(BadRequestError)"**: the model name is wrong or
+  the provider prefix is missing (`anthropic/`, `azure/`...). `--verbose`
+  shows the provider's message.
+- **"The model did not answer in time"**: try a faster model; for a large
+  local model, a smaller one.
+- **"The model's answer does not follow the expected format"**: common with
+  small local models. Try again or use a larger model.
 - **Wrong language**: pass `--lang`, or set `UNSKEIN_LANG` or
   `[general] lang`.
 - **A bug**: open an issue at https://github.com/mapenzo/unskein/issues with

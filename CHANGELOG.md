@@ -44,6 +44,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Ca + Ce) and what Ca, Ce and instability mean. The note under a cut table reads
   "Showing the 15 most coupled of the 31 modules in the top 10% by Ca + Ce" instead of
   "Showing 15 of 31", which looked like an unfinished scan.
+- The usage guide (`unskein guide`) explains how to set up the AI step: what the model,
+  key and endpoint settings are, a recipe per provider (Ollama, OpenAI, Claude, Gemini,
+  Azure OpenAI, AWS Bedrock, Mistral, Groq, DeepSeek, LiteLLM Proxy, OpenAI-compatible
+  servers), how to check the setup and what each AI error means. The README,
+  `.env.example` and the `unskein init` template point to it, and say that unskein reads
+  environment variables, not `.env` files.
+
+### Fixed
+
+- Reasoning models behind a LiteLLM Proxy alias that does not name the real model (for
+  example "GPT 5.6 Luna") failed with `BadRequestError`, because they were sent
+  temperature 0.2. For `litellm_proxy/` models unskein now asks the proxy's
+  `/model/info` whether the alias is a reasoning model, and falls back to LiteLLM's own
+  model map when the proxy cannot say.
+- With `--verbose`, the provider's error message hid only the key given to unskein
+  (`UNSKEIN_API_KEY`, `[ai] api_key`, `--api-key`). A key LiteLLM read from the
+  provider's own variable (`ANTHROPIC_API_KEY`, AWS credentials...) could show in clear.
+  Those values are now hidden too.
 
 ## [0.1.1] - 2026-09-30
 

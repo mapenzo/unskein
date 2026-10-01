@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from unskein.ai.models import AIFailure, AIOutcome, AIReport
+from unskein.ai.proxy import is_proxy_model, proxy_supports_reasoning
 from unskein.config import AIConfig
 
 logger = logging.getLogger("unskein")
@@ -18,11 +20,15 @@ JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 REASONING_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 DIRECT_CALL_TIMEOUT_SECONDS = 60
-PROXY_MODEL_PREFIX = "litellm_proxy/"
 DEFAULT_TEMPERATURE = 0.2
 REASONING_TEMPERATURE = 1.0
 ENV_LOCAL_COST_MAP = "LITELLM_LOCAL_MODEL_COST_MAP"
 REDACTED = "***"
+# Variables that hold provider credentials LiteLLM may read when unskein passes no key:
+# OPENAI_API_KEY, ANTHROPIC_API_KEY... and AWS's access key, secret and session token.
+SECRET_VARIABLE = re.compile(r".+_(API_KEY|SECRET_ACCESS_KEY|ACCESS_KEY_ID|SESSION_TOKEN)")
+# Shorter values are placeholders, and replacing them would mangle ordinary words.
+MIN_SECRET_LENGTH = 8
 
 
 @dataclass(frozen=True)
@@ -60,25 +66,41 @@ def load_litellm() -> ModuleType:
     return litellm
 
 
-def build_profile(model: str) -> ModelProfile:
-    """Decide how to call a model from what LiteLLM knows about it.
+def build_profile(config: AIConfig) -> ModelProfile:
+    """Decide how to call a model from what LiteLLM, or its proxy, knows about it.
 
     Args:
-        model: LiteLLM model string, e.g. ``ollama/qwen2.5-coder:7b``.
+        config: Model, API key and API base; the last two are only used to ask
+            a LiteLLM Proxy about its alias.
 
     Returns:
         The temperature, response format and timeout to use with that model.
     """
-    litellm = load_litellm()
-    is_reasoning = litellm.supports_reasoning(model)
-    supports_schema = litellm.supports_response_schema(model)
+    supports_schema = load_litellm().supports_response_schema(config.model)
     return ModelProfile(
-        temperature=REASONING_TEMPERATURE if is_reasoning else DEFAULT_TEMPERATURE,
+        temperature=REASONING_TEMPERATURE if _is_reasoning(config) else DEFAULT_TEMPERATURE,
         response_format=AIReport if supports_schema else {"type": "json_object"},
-        timeout_seconds=None
-        if model.startswith(PROXY_MODEL_PREFIX)
-        else DIRECT_CALL_TIMEOUT_SECONDS,
+        timeout_seconds=None if is_proxy_model(config.model) else DIRECT_CALL_TIMEOUT_SECONDS,
     )
+
+
+def _is_reasoning(config: AIConfig) -> bool:
+    """Tell whether a model only accepts the reasoning temperature.
+
+    A proxy alias is an arbitrary name, so the proxy is asked first; LiteLLM's
+    own model map answers otherwise.
+
+    Args:
+        config: Model, API key and API base.
+
+    Returns:
+        True for reasoning models.
+    """
+    if is_proxy_model(config.model):
+        declared = proxy_supports_reasoning(config)
+        if declared is not None:
+            return declared
+    return bool(load_litellm().supports_reasoning(config.model))
 
 
 def find_json_candidates(raw: str) -> list[str]:
@@ -164,7 +186,7 @@ class AIClient:
 
     def __init__(self, config: AIConfig):
         self.config = config
-        self.profile = build_profile(config.model)
+        self.profile = build_profile(config)
 
     def generate_report(self, messages: list[dict[str, str]]) -> AIOutcome:
         """Ask the model to interpret the analysis.
@@ -238,19 +260,43 @@ class AIClient:
         return AIOutcome(report=report)
 
     def _redact(self, text: str) -> str:
-        """Hide the API key in a provider message before it is logged.
+        """Hide every key the call may have used in a provider message before it is logged.
 
         Args:
-            text: Message that may repeat the key.
+            text: Message that may repeat a key.
 
         Returns:
-            The text with every occurrence of the key replaced.
+            The text with every occurrence of each key replaced.
         """
-        # Only the exact key string is replaced: a provider that echoes a masked or
+        # Only exact key strings are replaced: a provider that echoes a masked or
         # transformed key (truncated, base64, URL-encoded) is not covered.
-        if not self.config.api_key:
-            return text
-        return text.replace(self.config.api_key, REDACTED)
+        for secret in secrets_to_redact(self.config.api_key, os.environ):
+            text = text.replace(secret, REDACTED)
+        return text
+
+
+def secrets_to_redact(api_key: str | None, env: Mapping[str, str]) -> list[str]:
+    """List the keys a LiteLLM call may have used, longest first.
+
+    Without an unskein key, LiteLLM reads the provider's own variable, so those
+    values must be hidden too.
+
+    Args:
+        api_key: Key given to unskein, if any.
+        env: Environment variables.
+
+    Returns:
+        The unskein key and every credential-like variable value long enough to be
+        a real secret, longest first so no key is left half replaced.
+    """
+    found = {
+        value
+        for name, value in env.items()
+        if SECRET_VARIABLE.fullmatch(name) and len(value) >= MIN_SECRET_LENGTH
+    }
+    if api_key:
+        found.add(api_key)
+    return sorted(found, key=lambda secret: (-len(secret), secret))
 
 
 def _log_usage(response: Any) -> None:

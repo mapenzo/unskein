@@ -759,8 +759,17 @@ determinista.
 `AIClient(config)` resuelve un `ModelProfile` **una sola vez**, al construirse, y
 solo si la IA está activa (`--no-ai` nunca importa `litellm`):
 
-- `temperature`: 1.0 si `litellm.supports_reasoning(model)` (los modelos de
-  razonamiento solo aceptan 1.0), 0.2 en los demás.
+- `temperature`: 1.0 para los modelos de razonamiento (solo aceptan 1.0), 0.2 en
+  los demás. Con `litellm_proxy/…` se pregunta antes al proxy (`ai/proxy.py`):
+  un `GET {api_base}/model/info` con la clave virtual como bearer, límite de 10 s,
+  solo con `api_base` http(s), y se usa el `supports_reasoning` del alias. El alias
+  lo elige quien administra el proxy ("GPT 5.6 Luna"), así que LiteLLM no puede
+  deducir de él el modelo real; sin ese dato, un modelo de razonamiento recibía 0.2
+  y fallaba con `BadRequestError`. Si el proxy no responde, no está autorizado,
+  devuelve algo inesperado o no conoce el alias, decide
+  `litellm.supports_reasoning(model)`, como en las llamadas directas. El fallo solo
+  se registra en DEBUG con el tipo de error, nunca el mensaje (podría repetir la
+  clave).
 - `response_format`: la clase `AIReport` si el modelo soporta JSON schema; si no,
   `{"type": "json_object"}`.
 - `timeout`: 60 s en llamadas directas; ninguno con `litellm_proxy/…` (manda el
@@ -796,7 +805,12 @@ grafo; ningún otro segmento se adivina. Luego se eliminan de cada problema los 
 
 La API key nunca aparece en logs, `repr`, reporte ni errores. `WARNING` solo lleva
 el tipo de fallo y la clase de la excepción; el mensaje del proveedor solo va a
-`DEBUG`, con la key sustituida por `***`.
+`DEBUG`, con la key sustituida por `***`. Sin key de unskein, LiteLLM lee la variable
+del proveedor (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, credenciales de AWS…), así que
+también se sustituyen los valores de las variables cuyo nombre termina en `_API_KEY`,
+`_SECRET_ACCESS_KEY`, `_ACCESS_KEY_ID` o `_SESSION_TOKEN` (`secrets_to_redact`), si
+tienen al menos 8 caracteres: uno más corto es un marcador, y sustituirlo destrozaría
+palabras normales del mensaje.
 
 ### Degradación
 

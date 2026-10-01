@@ -74,6 +74,8 @@ def reexport_cycle() -> Path:
 def no_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail any test that reaches the network through ``litellm.completion``.
 
+    Also keeps ``AIClient`` from asking a real LiteLLM Proxy about its aliases.
+
     Tests that need a model answer install ``fake_llm`` on top of this.
 
     Args:
@@ -86,6 +88,8 @@ def no_real_llm(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("test called a real LLM; use the fake_llm fixture")
 
     monkeypatch.setattr(litellm, "completion", refuse)
+    # A LiteLLM Proxy is asked about its aliases over HTTP; by default it says nothing.
+    monkeypatch.setattr("unskein.ai.client.proxy_supports_reasoning", lambda config: None)
 
 
 class FakeLLM:
