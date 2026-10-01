@@ -10,6 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from unskein.ai.models import AIFailure, AIOutcome, AIReport
+from unskein.ai.proxy import is_proxy_model, proxy_supports_reasoning
 from unskein.config import AIConfig
 
 logger = logging.getLogger("unskein")
@@ -18,7 +19,6 @@ JSON_FENCE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 REASONING_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 DIRECT_CALL_TIMEOUT_SECONDS = 60
-PROXY_MODEL_PREFIX = "litellm_proxy/"
 DEFAULT_TEMPERATURE = 0.2
 REASONING_TEMPERATURE = 1.0
 ENV_LOCAL_COST_MAP = "LITELLM_LOCAL_MODEL_COST_MAP"
@@ -60,25 +60,41 @@ def load_litellm() -> ModuleType:
     return litellm
 
 
-def build_profile(model: str) -> ModelProfile:
-    """Decide how to call a model from what LiteLLM knows about it.
+def build_profile(config: AIConfig) -> ModelProfile:
+    """Decide how to call a model from what LiteLLM, or its proxy, knows about it.
 
     Args:
-        model: LiteLLM model string, e.g. ``ollama/qwen2.5-coder:7b``.
+        config: Model, API key and API base; the last two are only used to ask
+            a LiteLLM Proxy about its alias.
 
     Returns:
         The temperature, response format and timeout to use with that model.
     """
-    litellm = load_litellm()
-    is_reasoning = litellm.supports_reasoning(model)
-    supports_schema = litellm.supports_response_schema(model)
+    supports_schema = load_litellm().supports_response_schema(config.model)
     return ModelProfile(
-        temperature=REASONING_TEMPERATURE if is_reasoning else DEFAULT_TEMPERATURE,
+        temperature=REASONING_TEMPERATURE if _is_reasoning(config) else DEFAULT_TEMPERATURE,
         response_format=AIReport if supports_schema else {"type": "json_object"},
-        timeout_seconds=None
-        if model.startswith(PROXY_MODEL_PREFIX)
-        else DIRECT_CALL_TIMEOUT_SECONDS,
+        timeout_seconds=None if is_proxy_model(config.model) else DIRECT_CALL_TIMEOUT_SECONDS,
     )
+
+
+def _is_reasoning(config: AIConfig) -> bool:
+    """Tell whether a model only accepts the reasoning temperature.
+
+    A proxy alias is an arbitrary name, so the proxy is asked first; LiteLLM's
+    own model map answers otherwise.
+
+    Args:
+        config: Model, API key and API base.
+
+    Returns:
+        True for reasoning models.
+    """
+    if is_proxy_model(config.model):
+        declared = proxy_supports_reasoning(config)
+        if declared is not None:
+            return declared
+    return bool(load_litellm().supports_reasoning(config.model))
 
 
 def find_json_candidates(raw: str) -> list[str]:
@@ -164,7 +180,7 @@ class AIClient:
 
     def __init__(self, config: AIConfig):
         self.config = config
-        self.profile = build_profile(config.model)
+        self.profile = build_profile(config)
 
     def generate_report(self, messages: list[dict[str, str]]) -> AIOutcome:
         """Ask the model to interpret the analysis.
