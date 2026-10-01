@@ -106,7 +106,9 @@ unskein scan path/to/project
 
 No config file is needed. To tune settings, `unskein init` writes a `.unskein.toml` in
 the current folder with every option commented out at its default (`--user` writes
-`~/.config/unskein/config.toml` instead).
+`~/.config/unskein/config.toml` instead). A project's `.unskein.toml` is read from the
+folder you analyze; the user file applies to every project. Once a `.unskein.toml` works
+for you, `unskein config save` validates it and saves it as your user file.
 
 `unskein guide` shows the full usage guide of the installed version, in English or
 Spanish (`--lang es`).
@@ -175,7 +177,9 @@ AI call fails for any reason, the report is still produced, with a notice.
 Settings are read in this order, first match wins:
 
 1. Environment variables: `UNSKEIN_AI_MODEL`, `UNSKEIN_API_KEY`, `UNSKEIN_AI_API_BASE`
-2. `.unskein.toml` in the project, or `~/.config/unskein/config.toml`
+2. `.unskein.toml` in the analyzed folder, or `~/.config/unskein/config.toml` for every
+   project (`unskein init --user` creates it, `unskein config save` fills it from a
+   `.unskein.toml`)
 3. The `--api-key` flag, for quick tests only, since it ends up in your shell history
 
 Templates: [`.env.example`](.env.example) (unskein reads environment variables, not

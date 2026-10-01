@@ -19,7 +19,7 @@ from unskein.ai.models import AIReport, Severity
 from unskein.errors import ErrorKey, ExitCode, UnskeinError
 from unskein.guide import usage_guide
 from unskein.i18n import Lang, detect_lang, t, translate_error
-from unskein.init_config import write_config
+from unskein.init_config import save_user_config, write_config
 from unskein.logging_setup import setup_logging
 from unskein.perf import PerformanceStats, measure
 from unskein.report.markdown import ReportContext, render_report
@@ -43,6 +43,12 @@ app = typer.Typer(
     # Plain click help: rich tables squeeze the --x/--no-x columns unreadably at 80 columns.
     rich_markup_mode=None,
 )
+config_app = typer.Typer(
+    no_args_is_help=True,
+    help="Manage unskein's config files.",
+    rich_markup_mode=None,
+)
+app.add_typer(config_app, name="config")
 
 
 def run() -> None:
@@ -222,6 +228,33 @@ def init(
         _print_to_stderr(translate_error(e, message_lang), style="red")
         raise typer.Exit(ExitCode.USAGE_ERROR) from e
     _print_to_stderr(t("cli.config_written", message_lang, path=str(target)))
+    if not user:
+        _print_to_stderr(t("cli.config_project_hint", message_lang))
+
+
+@config_app.command("save")
+def config_save(
+    source: Annotated[
+        Path, typer.Argument(help="Config file to save. Default: ./.unskein.toml.")
+    ] = Path(config_module.PROJECT_CONFIG_NAME),
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite an existing user config.")
+    ] = False,
+    lang: Annotated[
+        Literal["es", "en"] | None, typer.Option("--lang", help="Message language.")
+    ] = None,
+) -> None:
+    """Check a config file and save it as your config for every project."""
+    message_lang = detect_lang(lang)
+    target = config_module.USER_CONFIG_PATH
+    try:
+        settings = save_user_config(source, target, force=force)
+    except UnskeinError as e:
+        _print_to_stderr(translate_error(e, message_lang), style="red")
+        raise typer.Exit(ExitCode.USAGE_ERROR) from e
+    _print_to_stderr(t("cli.config_saved", message_lang, path=str(target)))
+    if settings.ai.api_key:
+        _print_to_stderr(t("cli.config_saved_key", message_lang), style="yellow")
 
 
 @app.command()

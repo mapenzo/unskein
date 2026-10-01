@@ -180,6 +180,18 @@ def test_ai_status_messages(simple_project: Path) -> None:
     assert "UNSKEIN_AI_MODEL" in render(simple_project, result, ai_status=AIStatus.NOT_CONFIGURED)
 
 
+@pytest.mark.parametrize("lang", list(Lang))
+def test_missing_model_message_names_where_the_config_is_read(
+    simple_project: Path, lang: Lang
+) -> None:
+    report = render(
+        simple_project, analyzed(simple_project), ai_status=AIStatus.NOT_CONFIGURED, lang=lang
+    )
+
+    assert "~/.config/unskein/config.toml" in report
+    assert "unskein init --user" in report
+
+
 def test_ai_problems_are_rendered_and_filtered(simple_project: Path) -> None:
     ai_report = AIReport(
         summary="The core is healthy.",
