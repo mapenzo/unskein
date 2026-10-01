@@ -41,3 +41,8 @@ def test_public_top_level_names_without_all() -> None:
     result = exports_of(source)
     assert result.names == ("A", "B", "D", "E", "F", "G", "H", "K", "f", "g", "os", "pkg", "w", "z")
     assert result.declares_all is False
+
+
+def test_bound_names_include_private_and_ignore_all() -> None:
+    result = exports_of("__all__ = ['A']\nimport os\n_p = 1\ndef f(): pass\nfrom q import *\n")
+    assert result.bound_names == ("__all__", "_p", "f", "os")

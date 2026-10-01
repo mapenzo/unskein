@@ -114,3 +114,26 @@ def test_star_reexport_cycle_terminates(make_project: MakeProject) -> None:
         "use.py": "from a import X\n",
     }
     assert targets_of(resolve_indirection(parse(make_project(files))), "use") == {("a.b", "X")}
+
+
+def test_facade_all_does_not_hide_star_reexports(make_project: MakeProject) -> None:
+    files = {
+        "pkg/__init__.py": "from pkg.a import *\n__all__ = ['Thing']\n",
+        "pkg/a.py": "class Thing: ...\n",
+        "use.py": "from pkg import Thing\n",
+    }
+    assert targets_of(resolve_indirection(parse(make_project(files))), "use") == {
+        ("pkg.a", "Thing")
+    }
+
+
+def test_explicit_import_after_a_star_wins(make_project: MakeProject) -> None:
+    files = {
+        "pkg/__init__.py": "from pkg.b import *\nfrom pkg.a import Thing\n",
+        "pkg/a.py": "class Thing: ...\n",
+        "pkg/b.py": "class Thing: ...\n",
+        "use.py": "from pkg import Thing\n",
+    }
+    assert targets_of(resolve_indirection(parse(make_project(files))), "use") == {
+        ("pkg.a", "Thing")
+    }

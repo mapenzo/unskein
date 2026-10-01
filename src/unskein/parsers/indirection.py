@@ -70,7 +70,7 @@ def star_exports(modules: Sequence[ModuleInfo], re_exports: Sequence[ReExport]) 
             stars.setdefault(re_export.exporting_module, []).append(re_export.original_module)
     result: StarNames = {}
     for facade, sources in sorted(stars.items()):
-        own = set(by_name[facade].public_names) if facade in by_name else set()
+        own = set(by_name[facade].bound_names) if facade in by_name else set()
         for source in sources:
             names = _names_through_stars(source, by_name, stars)
             result[facade, source] = tuple(name for name in names if name not in own)

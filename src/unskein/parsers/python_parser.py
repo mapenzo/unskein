@@ -470,7 +470,9 @@ def parse_file(
     collector.visit(tree)
     collector.attach_usage(tree)
     exports = module_exports(tree)
-    module = ModuleInfo(name, file_path, collector.edges, exports.names, exports.declares_all)
+    module = ModuleInfo(
+        name, file_path, collector.edges, exports.names, exports.declares_all, exports.bound_names
+    )
     return FileParseResult(module, collector.re_exports, collector.warnings)
 
 

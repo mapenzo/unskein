@@ -18,10 +18,13 @@ class ModuleExports:
     Attributes:
         names: Exposed names, sorted.
         declares_all: Whether they come from a literal ``__all__``.
+        bound_names: Every name the module binds at module level (private ones and
+            names left out of ``__all__`` included), sorted.
     """
 
     names: tuple[str, ...]
     declares_all: bool
+    bound_names: tuple[str, ...] = ()
 
 
 def _module_level_statements(tree: ast.Module) -> Iterator[ast.stmt]:
@@ -144,12 +147,13 @@ def module_exports(tree: ast.Module) -> ModuleExports:
         tree: Parsed module.
 
     Returns:
-        The exposed names, sorted, and whether they come from ``__all__``.
+        The exposed names, sorted, whether they come from ``__all__``, and every bound name.
     """
     statements = list(_module_level_statements(tree))
+    names = {name for node in statements for name in _bound_names(node)}
+    bound = tuple(sorted(names))
     declared = _literal_all(statements)
     if declared is not None:
-        return ModuleExports(tuple(sorted(set(declared))), True)
-    names = {name for node in statements for name in _bound_names(node)}
+        return ModuleExports(tuple(sorted(set(declared))), True, bound)
     public = {name for name in names if not name.startswith(PRIVATE_PREFIX)}
-    return ModuleExports(tuple(sorted(public)), False)
+    return ModuleExports(tuple(sorted(public)), False, bound)

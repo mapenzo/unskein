@@ -133,6 +133,7 @@ class ModuleInfo:
         imports: Imports found in the module.
         public_names: Names the module exposes to ``from module import *``, sorted.
         declares_all: Whether those names come from a literal ``__all__``.
+        bound_names: Every name the module binds at module level, sorted.
     """
 
     name: str
@@ -140,6 +141,7 @@ class ModuleInfo:
     imports: list[ImportEdge] = field(default_factory=list)
     public_names: tuple[str, ...] = ()
     declares_all: bool = False
+    bound_names: tuple[str, ...] = ()
 
 
 # Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.
