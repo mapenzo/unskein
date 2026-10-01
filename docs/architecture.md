@@ -655,12 +655,50 @@ aplicados) y construye el grafo real.
   la fachada —, pero el reporte/IA deben interpretarlo como tal, no como un
   "god module" clásico.
 
+### Impacto transitivo y paquetes (`graph/impact.py`, `graph/packages.py`)
+
+- **Radio de impacto** (`impact_radius(graph, modules)`): para cada módulo, cuántos módulos
+  dependen de él directa o indirectamente, es decir sus ancestros en el grafo (`a -> b`
+  significa que `a` importa a `b`). El propio módulo no cuenta, pero los demás miembros de
+  una maraña a la que pertenece sí. Cuesta un recorrido del grafo por módulo, así que
+  `analyze` lo calcula solo para el conjunto que el informe muestra: los 15 primeros de la
+  tabla de acoplamiento más los 10 primeros cuellos de botella (`AnalysisResult.impact`).
+  Coste medido: 0,44 s para 25 módulos en un grafo de 20.000 nodos y 200.000 aristas.
+- **Resumen por paquetes** (`summarize_packages(graph, depth, facades=...)`): `package_of`
+  asigna cada módulo a un paquete. Una fachada `__init__` es el paquete mismo, nombrado por
+  los primeros `depth` segmentos de su nombre. Un módulo normal pertenece al paquete en el
+  que está, recortado a `depth` segmentos (`min(depth, segmentos - 1)`): `core.db` está en
+  `core` con profundidad 1, 2 o 5. Solo un módulo sin paquete encima (un archivo suelto de
+  primer nivel, como `manage`) va a `ROOT_PACKAGE` (`"(root)"`). Ca y Ce cuentan paquetes
+  distintos, no módulos, y los imports dentro de un mismo paquete se ignoran. Los paquetes
+  salen ordenados por `Ca + Ce` descendente y luego por nombre; las dependencias, por número
+  de imports descendente y luego por nombres. Coste medido: 0,013 s con 20.000 nodos y
+  200.000 aristas. Resultado en `AnalysisResult.packages` y `.package_edges`.
+- **Profundidad automática** (`summarize_project_packages(graph, depth, facades=...)`):
+  `package_depth` es `int | None` y por defecto `None`. Con un número se usa tal cual. Con
+  `None` se resume a `AUTO_START_DEPTH` (1) y, si el resultado es un único paquete que no es
+  `ROOT_PACKAGE` (todo el proyecto cuelga de un solo paquete de primer nivel, como `unskein`),
+  se resume una vez más a `AUTO_START_DEPTH + 1` y se devuelve ese. Si no, se queda con el
+  primero. Nunca baja más de un nivel.
+- `package_depth` vive en `[findings]`, pero el resumen por paquetes **no** depende de
+  `enabled`: se calcula también con los hallazgos desactivados. El informe lo muestra solo
+  con dos o más paquetes (a lo sumo 15 paquetes y 10 dependencias); la IA recibe las 10
+  mayores dependencias con su total real y el impacto de los cuellos de botella. Nada de
+  esto cambia el código de salida.
+- Calibración medida:
+
+  | Proyecto | Paquetes | Impacto máximo |
+  |---|---|---|
+  | swo-aura-rag_api | `core` (81 módulos, Ca 5), `nexus_ai`, `application`, `webapi`, `tools`, `docs` | `core.logging.logger` 152, `core.configuration.load_env` 110, `core.configuration.app_settings` 75 |
+  | unskein (`src`) | profundidad automática (un solo paquete de primer nivel, baja a 2): `unskein` (14 módulos), `unskein.graph` (8), `unskein.parsers` (6), `unskein.ai` (4), `unskein.report` (2) | `unskein.config` 16 (0 marañas) |
+
 Output consolidado (`AnalysisResult`): `graph`, `coupling_metrics`, `cycles`,
-`high_coupling_modules`, `parse_warnings`, `cycles_truncated`, `tangles`.
-`analyze()` es composición pura `build_graph → compute_coupling →
-find_cycles → find_tangles → find_high_coupling` y espera un `ParseResult` ya pasado por
-`resolve_indirection`. Este objeto es el punto de unión entre el análisis
-determinista y la interpretación por IA/reporte.
+`high_coupling_modules`, `parse_warnings`, `cycles_truncated`, `tangles`, `findings`,
+`findings_enabled`, `impact`, `packages` y `package_edges`.
+`analyze()` es composición pura `build_graph → compute_coupling → find_cycles →
+find_high_coupling → find_findings → summarize_project_packages → find_tangles →
+impact_radius` y espera un `ParseResult` ya pasado por `resolve_indirection`. Este objeto es
+el punto de unión entre el análisis determinista y la interpretación por IA/reporte.
 
 ---
 

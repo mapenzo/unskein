@@ -31,6 +31,16 @@ config file is needed: every setting has a default.
   module and, if any, the tangles.
 - **General metrics**: counts of modules, dependencies, cycles, tangles and
   warnings.
+- **Packages**: the same coupling measured between packages, which gives the overview a
+  table of modules cannot (shown when the project has two or more). A module belongs to the
+  package it sits in, named by at most the first `package_depth` segments of its name (`core.db`
+  and `core.http` are both in `core`); modules that are in no package, such as a top-level
+  single file, go to `(root)`. By default the depth is automatic: it starts at 1 and goes one
+  level deeper when the whole project is a single top-level package; a number in
+  `package_depth` fixes it. Ca and Ce count other packages, not modules, and imports inside
+  one package do not count. Below the table, the largest dependencies between packages with
+  their number of imports. Both are shown, and given to the AI, even with
+  `[findings] enabled = false`.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.
@@ -38,6 +48,8 @@ config file is needed: every setting has a default.
     means it breaks when any of them changes.
   - **Instability** = `Ce / (Ca + Ce)`, from 0 (stable, others depend on it)
     to 1 (unstable, it depends on others).
+  - **Impact**: how many modules depend on this one, directly or indirectly: what a change
+    to it can reach. Shown for the modules listed and for bottlenecks.
 - **Dependency cycles**: modules that end up importing themselves.
   - **Tangles** come first: groups where every module reaches every other one.
     Their size is exact, even when the cycle list is cut short.
@@ -146,7 +158,8 @@ If your packages live somewhere other than the root or `src/`, set
 
 The `[findings]` table tunes the findings; modules that are run from outside the
 code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`
-modules are detected on their own).
+modules are detected on their own). The `package_depth` setting changes how
+packages are named.
 
 ## AI interpretation
 

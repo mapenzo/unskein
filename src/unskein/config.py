@@ -24,6 +24,7 @@ DEFAULT_BOTTLENECK_PERCENTILE = 90
 DEFAULT_BOTTLENECK_MIN_COUPLING = 5
 DEFAULT_ORCHESTRATOR_PERCENTILE = 95
 DEFAULT_ORCHESTRATOR_MIN_EFFERENT = 10
+DEFAULT_PACKAGE_DEPTH = 1
 
 PROJECT_CONFIG_NAME = ".unskein.toml"
 USER_CONFIG_PATH = Path.home() / ".config" / "unskein" / "config.toml"
@@ -104,6 +105,8 @@ class FindingsConfig:
         bottleneck_min_coupling: Absolute minimum of Ca and of Ce for a bottleneck.
         orchestrator_percentile: Percentile of Ce an orchestrator must reach.
         orchestrator_min_efferent: Absolute minimum of Ce for an orchestrator.
+        package_depth: Dotted segments that name a package in the package summary;
+            None picks the depth automatically, starting at ``DEFAULT_PACKAGE_DEPTH``.
         entry_points: Module names or ``fnmatch`` patterns that are entry points
             and never count as orphans.
     """
@@ -115,6 +118,7 @@ class FindingsConfig:
     bottleneck_min_coupling: int = DEFAULT_BOTTLENECK_MIN_COUPLING
     orchestrator_percentile: int = DEFAULT_ORCHESTRATOR_PERCENTILE
     orchestrator_min_efferent: int = DEFAULT_ORCHESTRATOR_MIN_EFFERENT
+    package_depth: int | None = None
     entry_points: tuple[str, ...] = ()
 
 
@@ -202,6 +206,7 @@ class TomlFindings(_TomlTable):
         bottleneck_min_coupling: See ``FindingsConfig``.
         orchestrator_percentile: See ``FindingsConfig``.
         orchestrator_min_efferent: See ``FindingsConfig``.
+        package_depth: See ``FindingsConfig``.
         entry_points: Extra entry points, added to the ones read from ``pyproject.toml``.
     """
 
@@ -212,6 +217,7 @@ class TomlFindings(_TomlTable):
     bottleneck_min_coupling: int | None = Field(default=None, ge=0)
     orchestrator_percentile: int | None = Field(default=None, ge=1, le=100)
     orchestrator_min_efferent: int | None = Field(default=None, ge=0)
+    package_depth: int | None = Field(default=None, ge=1)
     entry_points: list[str] | None = None
 
 

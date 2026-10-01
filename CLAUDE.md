@@ -136,6 +136,8 @@ src/unskein/
 │   ├── coupling.py          # CouplingMetrics (módulo aparte: evita el ciclo metrics ↔ findings)
 │   ├── metrics.py           # Ca, Ce, inestabilidad, ciclos
 │   ├── findings.py          # hallazgos: reglas deterministas sobre el grafo
+│   ├── impact.py            # radio de impacto transitivo (impact_radius)
+│   ├── packages.py          # resumen por paquetes: Ca/Ce entre paquetes y dependencias
 │   └── percentile.py        # percentil por rango más cercano (compartido)
 ├── ai/
 │   ├── client.py             # wrapper de litellm.completion

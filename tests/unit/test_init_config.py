@@ -70,7 +70,7 @@ def test_template_shows_the_real_findings_defaults() -> None:
 
     for field in fields(FindingsConfig):
         default = getattr(defaults, field.name)
-        if field.name in documented and field.name != "entry_points":
+        if field.name in documented and default is not None and field.name != "entry_points":
             assert documented[field.name] == default, field.name
 
 
