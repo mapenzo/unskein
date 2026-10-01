@@ -85,3 +85,11 @@ def test_guide_explains_packages_and_impact(lang: Lang) -> None:
 
     assert f"**{t('report.packages', lang)}**" in guide
     assert f"**{t('report.impact', lang)}**" in guide
+
+
+@pytest.mark.parametrize("lang", list(Lang))
+def test_guide_explains_how_to_declare_layers(lang: Lang) -> None:
+    guide = usage_guide(lang)
+
+    assert "[layers]" in guide
+    assert "order = [" in guide

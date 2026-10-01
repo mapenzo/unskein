@@ -171,6 +171,18 @@ del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` 
 módulos `__main__` se detectan solos). El ajuste `package_depth` cambia cómo se
 nombran los paquetes.
 
+Para comprobar las capas de tu arquitectura, enuméralas de la más alta a la más baja
+como prefijos de paquete:
+
+```toml
+[layers]
+order = ["app.web", "app.services", "app.core"]
+```
+
+Un módulo pertenece a la capa con el prefijo más largo que coincida; un import de una
+capa inferior a una superior se informa como violación de capas. Los módulos que no
+están en ninguna capa no se comprueban, y sin `[layers]` no hay regla de capas.
+
 ## Interpretación con IA
 
 Funciona cualquier modelo compatible con LiteLLM: un modelo local de Ollama,

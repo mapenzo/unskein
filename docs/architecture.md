@@ -611,6 +611,7 @@ aplicados) y construye el grafo real.
   | Cuello de botella | `Ca ≥ max(P(Ca), mín)` y `Ce ≥ max(P(Ce), mín)` | P90 · mín 5 |
   | Orquestador creciente | `Ce ≥ max(P(Ce), mín)` | P95 · mín 10 |
   | Huérfano | `Ca = 0` y `Ce = 0`, sin puntos de entrada conocidos | — |
+  | Violación de capas | arista A→B con capa(A) más baja que capa(B); solo con `[layers]` | — |
 
   `CouplingMetrics` vive en `graph/coupling.py` y no en `metrics.py`: `findings.py` lo
   necesita y `metrics.py` importa `findings.py`, así que dejarlo en `metrics.py` creaba
@@ -629,6 +630,16 @@ aplicados) y construye el grafo real.
   ausente no es un error; uno ilegible o inválido se avisa (WARNING) y se ignora. En el
   informe: a lo sumo 10 módulos por tipo; en el contexto de la IA, 5 por tipo con el total
   real, como hechos ya calculados. Los hallazgos **no** cambian el código de salida.
+
+  Regla de capas (`_layer_violations`, `_layer_of`): `[layers] order` lista las capas de
+  la más alta a la más baja como prefijos de paquete; el rango es la posición. Un módulo
+  pertenece a la capa de su prefijo más largo que coincida por segmentos completos
+  (`app.web` no abarca `app.webhooks`); sin capa, no se comprueba. Hay violación cuando
+  el importador está en una capa más baja (posterior en la lista) que el importado. Las
+  fachadas quedan excluidas, y se ordenan por par de módulos tras los huérfanos. Sin
+  `[layers]` la regla no existe. Validación: cada nombre cumple `LAYER_NAME_PATTERN`, sin
+  repetidos, y el error nunca repite el valor. Calibración en swo-aura-rag_api: orden
+  declarado (`webapi, application, nexus_ai, core`) 0 violaciones; invertido, 158.
   Calibración medida antes de fijar los defaults:
 
   | Proyecto | Módulos | Cuellos | Orquestadores | Dep. inestables | Huérfanos |
