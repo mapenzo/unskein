@@ -174,3 +174,24 @@ def test_facade_own_names_leave_out_re_exports_and_submodules(make_project: Make
     )
     parsed = parse_project(prepare_untangle(UntangleOptions(path=root), env={}))
     assert facade_own_names(parsed) == {"pkg": frozenset({"CONST"})}
+
+
+FUNCTION_READ_CYCLE = {
+    "q/__init__.py": "",
+    "q/a.py": "from q.b import B\n\n\ndef use():\n    return B()\n\n\n"
+    "def more(): ...\n\n\ndef extra(): ...\n",
+    "q/b.py": "from q.a import use, more, extra\n\n\nclass B: ...\n\n\nX = [use, more, extra]\n",
+}
+
+
+@pytest.mark.parametrize(
+    ("all_edges", "expected"),
+    [(False, StepKind.LAZY), (True, StepKind.MOVE_SYMBOL)],
+    ids=["import_time", "all_edges"],
+)
+def test_all_edges_offers_only_structural_steps(
+    make_project: MakeProject, all_edges: bool, expected: StepKind
+) -> None:
+    [tangle] = plan_for(make_project(FUNCTION_READ_CYCLE), all_edges=all_edges).tangles
+    [cut] = tangle.cuts
+    assert (cut.source, cut.target, cut.step) == ("q.a", "q.b", expected)

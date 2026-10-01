@@ -117,7 +117,7 @@ def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePla
                     encoding=context.analysis.default_encoding,
                 )
             )
-    plans = plan_tangles(scope, tangles, evidence, facades=facades)
+    plans = plan_tangles(scope, tangles, evidence, facades=facades, all_edges=all_edges)
     cuts = [(cut.source, cut.target) for plan in plans for cut in plan.cuts]
     return UntanglePlan(
         all_edges=all_edges,

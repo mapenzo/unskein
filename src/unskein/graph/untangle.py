@@ -155,23 +155,26 @@ class Simulation:
 
 
 def _usable(
-    scope: nx.DiGraph, edge: Edge, evidence: Mapping[Edge, ImportEvidence]
+    scope: nx.DiGraph, edge: Edge, evidence: Mapping[Edge, ImportEvidence], *, all_edges: bool
 ) -> ImportEvidence:
-    """Return an edge's evidence, without use contexts when it is already lazy or type-only.
+    """Return an edge's evidence, without use contexts when moving the import cannot help.
 
     An import that already sits in a function or under ``TYPE_CHECKING`` cannot be
-    removed by moving it there again, so only the structural steps stay applicable.
+    removed by moving it there again; and when hidden coupling counts, moving any import
+    there keeps the dependency. Then only the structural steps stay applicable.
 
     Args:
         scope: Graph whose edges carry their ``kind`` (edges without one count as module level).
         edge: The dependency.
         evidence: Evidence per dependency.
+        all_edges: Whether the goal is removing the coupling itself, hidden or not.
 
     Returns:
         The evidence to choose the step from.
     """
     found = evidence.get(edge, NO_EVIDENCE)
-    if scope.edges[edge].get("kind", ImportKind.MODULE) is ImportKind.MODULE:
+    is_module_level = scope.edges[edge].get("kind", ImportKind.MODULE) is ImportKind.MODULE
+    if is_module_level and not all_edges:
         return found
     return replace(found, contexts=frozenset())
 
@@ -200,6 +203,7 @@ def plan_tangles(
     evidence: Mapping[Edge, ImportEvidence],
     *,
     facades: Mapping[str, Collection[str]],
+    all_edges: bool,
 ) -> tuple[TanglePlan, ...]:
     """Plan the cuts of every tangle, each step chosen from its evidence.
 
@@ -208,6 +212,7 @@ def plan_tangles(
         tangles: Tangles, each with its members sorted.
         evidence: Evidence per dependency; missing entries count as no evidence.
         facades: The project's package facades, each with the names it defines itself.
+        all_edges: Whether hidden coupling counts, so only structural steps remove an edge.
 
     Returns:
         One plan per tangle, in the given order.
@@ -216,7 +221,9 @@ def plan_tangles(
     for members in tangles:
         subgraph = scope.subgraph(members)
         steps = {
-            edge: choose_step(*edge, _usable(scope, edge, evidence), facades=facades)
+            edge: choose_step(
+                *edge, _usable(scope, edge, evidence, all_edges=all_edges), facades=facades
+            )
             for edge in subgraph.edges
         }
         cuts = find_cuts(subgraph, {edge: STEP_COSTS[step] for edge, step in steps.items()})
