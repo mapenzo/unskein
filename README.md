@@ -28,9 +28,10 @@ unskein scan .
 ```
 
 > [!NOTE]
-> unskein is in **alpha** (v0.2.0). `unskein scan <path>` already works end to end (graph,
-> coupling, cycles, findings, AI interpretation, Markdown report in English or Spanish). The
-> sample below shows the v0.1 report, AI section included.
+> unskein is in **alpha** (v0.3.0). `unskein scan <path>` already works end to end (graph,
+> coupling, cycles, findings, AI interpretation, Markdown report in English or Spanish), and
+> `unskein untangle <path>` plans how to undo the tangles. The first sample below shows the
+> v0.1 report, AI section included.
 
 ## What you get
 
@@ -85,6 +86,27 @@ Architecture health: fair.
   traced the same way.
 - **An AI reading of the numbers** (optional): a short summary and the problems worth
   fixing, in English or Spanish.
+
+## Untangling a real project
+
+`unskein untangle` on [rich](https://github.com/Textualize/rich) (35 modules in one
+tangle), with no AI involved:
+
+```text
+$ unskein untangle ./rich
+
+Tangles: 1 · imports to cut: 31 · total cost: 104.
+Simulation after the cuts: tangles 1 → 0, cycles 100+ → 0.
+
+ Import                    Step                   Cost  Evidence
+ rich.console → rich.emoji Move under TYPE_CHECKING  1  rich/console.py:44 · EmojiVariant
+ rich.palette → rich.color Lazy import               3  rich/palette.py:78 · Color
+ rich.box → rich.panel     Move the symbol           4  rich/box.py:426 · Panel
+```
+
+The cuts are a heuristic (not guaranteed minimal) and the simulation is optimistic: read
+the output as a plan to review. On networkx the plan has 32 cuts, mostly "import from the
+module that defines it" instead of through the package's `__init__.py`.
 
 ## How it works
 
