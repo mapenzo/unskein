@@ -55,7 +55,9 @@ insufficient for a conclusion, say so explicitly instead of giving generic advic
 Data guide: ca = modules that depend on a module, ce = modules it depends on,
 instability = ce / (ca + ce). A tangle is a group of modules that all depend on each
 other, directly or not; size and length are real sizes, members may be truncated. Lists are
-truncated: compare them with their totals.
+truncated: compare them with their totals. Cycles and tangles are computed at import time
+(module-level imports only; imports inside functions or under TYPE_CHECKING are not
+counted there), while ca and ce count every import.
 impact = modules that depend on a module directly or not (only given for bottleneck
 findings); package_edges = imports from one package to another, largest first, with their
 real total.

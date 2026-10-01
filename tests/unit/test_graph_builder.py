@@ -4,7 +4,7 @@ import networkx as nx
 import pathspec
 
 from unskein.graph.builder import build_graph
-from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult
+from unskein.parsers.models import ImportEdge, ImportKind, ModuleInfo, ParseResult
 from unskein.parsers.python_parser import PythonAdapter
 
 
@@ -64,3 +64,18 @@ def test_simple_project_graph(simple_project: Path) -> None:
         ("app.main", "app.services.user"),
         ("app.services.user", "app.models"),
     }
+
+
+def test_edge_kind_is_the_strongest_among_its_statements() -> None:
+    def build(*kinds: ImportKind):
+        edges = [ImportEdge("a", "b", False, kind=kind) for kind in kinds]
+        modules = [ModuleInfo("a", Path("a.py"), edges), ModuleInfo("b", Path("b.py"))]
+        return build_graph(ParseResult(modules=modules, language="python"))
+
+    mixed = build(ImportKind.TYPE_CHECKING, ImportKind.LAZY, ImportKind.MODULE)
+    assert mixed.edges["a", "b"]["kind"] is ImportKind.MODULE
+    assert mixed.edges["a", "b"]["weight"] == 3
+    assert build(ImportKind.TYPE_CHECKING, ImportKind.LAZY).edges["a", "b"]["kind"] is (
+        ImportKind.LAZY
+    )
+    assert build(ImportKind.TYPE_CHECKING).edges["a", "b"]["kind"] is ImportKind.TYPE_CHECKING

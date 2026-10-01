@@ -72,6 +72,8 @@ Architecture health: fair.
 - **Package overview and impact**: coupling measured between packages, and for each
   coupled module how many others depend on it, directly or indirectly.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
+  Only imports that run when the code is imported count; those inside functions or under
+  `TYPE_CHECKING` are reported apart as hidden coupling.
 - **Re-exports resolved**: `from app import Engine` is traced through `__init__.py`
   facades to the module that actually defines `Engine`, so cycles hidden behind a
   package's `__init__.py` still show up.

@@ -159,8 +159,31 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "report.cycles_heading": {Lang.ES: "Ciclos", Lang.EN: "Cycles"},
     "report.cycles": {Lang.ES: "Ciclos de dependencia", Lang.EN: "Dependency cycles"},
     "report.no_cycles": {
-        Lang.ES: "No se encontraron ciclos de dependencia.",
-        Lang.EN: "No dependency cycles found.",
+        Lang.ES: "No se encontraron ciclos de dependencia al importar.",
+        Lang.EN: "No dependency cycles found at import time.",
+    },
+    "report.metric.hidden_tangles": {Lang.ES: "Marañas ocultas", Lang.EN: "Hidden tangles"},
+    "report.summary_hidden.one": {
+        Lang.ES: "1 grupo de módulos que dependen entre sí si se cuentan los imports "
+        "perezosos o de tipos ({size} módulos).",
+        Lang.EN: "1 group of modules that depend on each other once lazy or type-only "
+        "imports are counted ({size} modules).",
+    },
+    "report.summary_hidden.other": {
+        Lang.ES: "{count} grupos de módulos que dependen entre sí si se cuentan los imports "
+        "perezosos o de tipos; el mayor tiene {size} módulos.",
+        Lang.EN: "{count} groups of modules that depend on each other once lazy or type-only "
+        "imports are counted; the largest has {size} modules.",
+    },
+    "report.hidden_heading": {Lang.ES: "Acoplamiento oculto", Lang.EN: "Hidden coupling"},
+    "report.hidden_explanation": {
+        Lang.ES: "Grupos de módulos que dependen entre sí, o grupos mayores que una maraña de "
+        "las anteriores, cuando se cuentan los imports dentro de funciones o bajo "
+        "`TYPE_CHECKING`. Esos imports no fallan al importar, pero siguen siendo "
+        "acoplamiento de diseño.",
+        Lang.EN: "Groups of modules that depend on each other, or groups larger than a tangle "
+        "above, once imports inside functions or under `TYPE_CHECKING` are counted. Those "
+        "imports do not fail at import time, but they are still design coupling.",
     },
     "report.cycles_truncated": {
         Lang.ES: "Mostrando los primeros {shown} ciclos: la búsqueda se detuvo en ese "

@@ -161,6 +161,11 @@ para paquetes Python distribuibles).
   Son cinco reglas; la quinta (violación de capas) solo existe con `[layers]`.
 - **`is_external` se calcula comparando el primer segmento del import contra los
   módulos del proyecto**, no contra una lista de stdlib/paquetes conocidos.
+- **Ciclos y marañas = grafo al importar.** Cada `ImportEdge` lleva su `ImportKind`
+  (`MODULE`, `LAZY`, `TYPE_CHECKING`) y la arista del grafo el más fuerte de sus
+  sentencias. `cycles` y `tangles` solo usan aristas `MODULE`; las marañas que solo
+  existen con imports perezosos o de tipos son `hidden_tangles`. Ca/Ce, hallazgos,
+  capas e impacto cuentan todas las aristas.
 - **Resolución de re-exports (indirección) es parte de v0.1**, no se pospuso.
   Ver `docs/architecture.md` para el algoritmo completo (incluye límite de
   profundidad y detección de ciclos de re-export).
