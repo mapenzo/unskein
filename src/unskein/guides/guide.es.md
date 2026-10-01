@@ -118,7 +118,7 @@ unskein scan . --exclude "migrations/"       # omite todas las carpetas migratio
 unskein scan . --min-severity high           # solo problemas de IA de severidad alta
 ```
 
-Otros comandos: `unskein init` (ver Configuración), `unskein guide` (esta
+Otros comandos: `unskein init` y `unskein config save` (ver Configuración), `unskein guide` (esta
 guía, `--lang` para elegir su idioma; `unskein guide > guia.md` la guarda) y
 `unskein --version`.
 
@@ -140,16 +140,36 @@ solo omite la carpeta de primer nivel, mientras que `migrations/` o
 
 ## Configuración
 
+unskein lee dos archivos, ambos opcionales:
+
+- **Archivo del proyecto**: `.unskein.toml` (con el punto inicial) en la carpeta
+  que **analizas**, no en la carpeta desde la que lanzas el comando.
+  `unskein scan ~/code/app` lee `~/code/app/.unskein.toml`.
+- **Archivo de usuario**: `~/.config/unskein/config.toml`, que se usa en todos
+  los proyectos que analices. Es el sitio para tu modelo de IA cuando analizas
+  proyectos que no son tuyos.
+
 ```bash
 unskein init                # escribe ./.unskein.toml
-unskein init --user         # escribe ~/.config/unskein/config.toml
+unskein init --user         # escribe ~/.config/unskein/config.toml (crea la carpeta)
 unskein init --force        # sustituye un archivo existente
+unskein config save         # valida ./.unskein.toml y lo guarda como archivo de usuario
 ```
 
 `init` acepta una carpeta (`PATH`, por defecto la actual), `--user`, `--force`
 y `--lang` para sus mensajes. Escribe un archivo con todas las opciones comentadas en su valor por
 defecto y una línea que explica cada una. Descomenta solo lo que quieras
 cambiar. Nunca sobrescribe un archivo existente sin `--force`.
+
+`config save` acepta un archivo (`SOURCE`, por defecto `./.unskein.toml`),
+`--force` y `--lang`. Primero valida el archivo, así que una errata lo detiene
+antes de escribir nada; después lo copia tal cual, comentarios incluidos, a
+`~/.config/unskein/config.toml`, y crea la carpeta si hace falta. Nunca
+sustituye un archivo de usuario existente sin `--force`. Un camino habitual:
+`unskein init` en cualquier carpeta, editar el archivo, probarlo con
+`unskein scan` y después `unskein config save`. Si el archivo lleva
+`[ai] api_key`, se guarda legible solo por ti y verás un aviso: mejor usa la
+variable `UNSKEIN_API_KEY`.
 
 Precedencia, de mayor a menor:
 

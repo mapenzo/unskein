@@ -111,7 +111,7 @@ unskein scan . --exclude "migrations/"       # skip every migrations/ folder
 unskein scan . --min-severity high           # only high-severity AI problems
 ```
 
-Other commands: `unskein init` (see Configuration), `unskein guide` (this
+Other commands: `unskein init` and `unskein config save` (see Configuration), `unskein guide` (this
 guide, `--lang` to pick its language; `unskein guide > guide.md` saves it) and
 `unskein --version`.
 
@@ -133,16 +133,35 @@ A pattern with a slash in the middle is anchored to the root:
 
 ## Configuration
 
+unskein reads two files, both optional:
+
+- **Project file**: `.unskein.toml` (with the leading dot) in the folder you
+  **analyze**, not the folder you run the command from. `unskein scan ~/code/app`
+  reads `~/code/app/.unskein.toml`.
+- **User file**: `~/.config/unskein/config.toml`, used for every project you
+  analyze. The place for your AI model when you scan projects that are not
+  yours.
+
 ```bash
 unskein init                # writes ./.unskein.toml
-unskein init --user         # writes ~/.config/unskein/config.toml
+unskein init --user         # writes ~/.config/unskein/config.toml (creates the folder)
 unskein init --force        # replaces an existing file
+unskein config save         # checks ./.unskein.toml and saves it as the user file
 ```
 
 `init` takes a folder (`PATH`, default: current folder), `--user`, `--force`
 and `--lang` for its messages. It writes a file where every setting is commented out at its default,
 with a line explaining it. Uncomment only what you want to change. It never
 overwrites an existing file without `--force`.
+
+`config save` takes a file (`SOURCE`, default: `./.unskein.toml`), `--force`
+and `--lang`. It validates the file first, so a typo stops it before anything
+is written, then copies it as it is, comments included, to
+`~/.config/unskein/config.toml`, creating the folder if needed. It never
+replaces an existing user file without `--force`. A usual path: `unskein init`
+in any folder, edit the file, try it with `unskein scan`, then
+`unskein config save`. If the file holds `[ai] api_key`, it is saved readable
+only by you and you get a warning: prefer the `UNSKEIN_API_KEY` variable.
 
 Precedence, highest first:
 

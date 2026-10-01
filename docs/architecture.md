@@ -931,7 +931,8 @@ Reglas:
 
 Framework: `typer` (type hints, genera `--help` automático).
 
-Comandos: `unskein scan <path> [opciones]`, `unskein init [path]` y `unskein guide`.
+Comandos: `unskein scan <path> [opciones]`, `unskein init [path]`,
+`unskein config save [source]` y `unskein guide`.
 
 `unskein init` escribe `<path>/.unskein.toml` (default `.`), o
 `~/.config/unskein/config.toml` con `--user`, copiando la plantilla que viaja en
@@ -943,6 +944,18 @@ archivo existe no lo toca (`UnskeinError CONFIG_EXISTS`, código 1) salvo con
 documenta todas las claves del esquema `TomlConfig`, que descomentada valida en
 modo estricto y que sus valores coinciden con los defaults de `AnalysisConfig`:
 un default que cambie sin actualizar la plantilla rompe la CI.
+
+`unskein config save [source]` (grupo `config` de typer, `init_config.save_user_config`)
+promueve un archivo ya probado (default `./.unskein.toml`) a
+`~/.config/unskein/config.toml`. Lo valida con el mismo `read_toml_file` que el
+escaneo antes de escribir nada (`ConfigError`, código 1), lo copia tal cual,
+comentarios incluidos, y crea la carpeta. Origen inexistente: `CONFIG_NOT_FOUND`;
+destino existente sin `--force`: `CONFIG_EXISTS`. Se escribe con modo `0600`
+(abierto ya privado con `os.open`, y `chmod` para un archivo previo) porque puede
+llevar `[ai] api_key`; en ese caso el CLI avisa y recomienda `UNSKEIN_API_KEY`, sin
+mostrar nunca el valor. El `.unskein.toml` del proyecto se busca en la carpeta
+**analizada**, no en el directorio de trabajo; el aviso de "sin modelo" del informe
+nombra ambas rutas (la de usuario literal, `~/...`, para no filtrar el home).
 
 `unskein guide [--lang]` imprime la guía de uso que viaja en el paquete
 (`src/unskein/guides/guide.{es,en}.md`, con `{version}` sustituido por la versión

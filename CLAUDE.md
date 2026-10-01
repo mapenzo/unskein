@@ -118,7 +118,7 @@ src/unskein/
 ├── scan.py                # orquestación: prepare_scan + execute_scan
 ├── entry_points.py        # puntos de entrada de pyproject.toml (scripts)
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
-├── init_config.py         # `unskein init`: plantilla .unskein.toml comentada
+├── init_config.py         # `unskein init` (plantilla comentada) y `unskein config save`
 ├── templates/unskein.toml # plantilla (viaja en el wheel)
 ├── guide.py               # `unskein guide`: guía de uso ES/EN de la versión instalada
 ├── guides/guide.{es,en}.md # la guía (viaja en el wheel; un test exige cada opción)

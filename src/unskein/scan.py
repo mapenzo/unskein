@@ -9,7 +9,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from unskein import config as config_module
 from unskein.ai.client import AIClient
 from unskein.ai.models import AIOutcome, AIReport, Severity
 from unskein.ai.prompts import build_context, build_messages, ground_report
@@ -132,7 +131,7 @@ def prepare_scan(
         ConfigError: If a configuration file is invalid.
     """
     env = os.environ if env is None else env
-    toml = load_toml_config(options.path, user_config or config_module.USER_CONFIG_PATH)
+    toml = load_toml_config(options.path, user_config)
     flags = AnalysisFlags(
         exclude=options.exclude,
         include_tests=options.include_tests,

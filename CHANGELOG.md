@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `unskein config save [SOURCE]`: validates a config file (default `./.unskein.toml`)
+  and copies it, comments included, to `~/.config/unskein/config.toml`, creating the
+  folder. It never replaces an existing user file without `--force`, writes it readable
+  only by its owner, and warns when the file holds `[ai] api_key`.
+
+### Changed
+
+- The "no AI model configured" notice names both places a model can be set: the
+  `.unskein.toml` of the analyzed folder and `~/.config/unskein/config.toml`
+  (`unskein init --user`). `unskein init` points to `unskein config save`, and the
+  guide explains where each config file is read from.
+
+### Fixed
+
+- Tests no longer read the developer's real `~/.config/unskein/config.toml`:
+  `load_toml_config` looks the user file up at call time.
+
 ## [0.2.0] - 2026-10-01
 
 ### Added

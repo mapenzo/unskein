@@ -42,6 +42,10 @@ _ERRORS: dict[str, dict[Lang, str]] = {
         Lang.ES: "{path} ya existe; usa --force para sobrescribirlo",
         Lang.EN: "{path} already exists; use --force to overwrite it",
     },
+    "config_not_found": {
+        Lang.ES: "No existe el archivo de configuración '{path}'",
+        Lang.EN: "Config file '{path}' does not exist",
+    },
 }
 
 _WARNINGS: dict[str, dict[Lang, str]] = {
@@ -216,10 +220,13 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.EN: "AI interpretation disabled with `--no-ai`.",
     },
     "report.ai.not_configured": {
-        Lang.ES: "No hay modelo de IA configurado. Define `UNSKEIN_AI_MODEL` o `[ai] model` "
-        "en `.unskein.toml` para obtener una interpretación de estos resultados.",
-        Lang.EN: "No AI model configured. Set `UNSKEIN_AI_MODEL` or `[ai] model` in "
-        "`.unskein.toml` to get an interpretation of these results.",
+        Lang.ES: "No hay modelo de IA configurado. Para obtener una interpretación de estos "
+        "resultados, define `UNSKEIN_AI_MODEL`, o `[ai] model` en el `.unskein.toml` de la "
+        "carpeta analizada o en `~/.config/unskein/config.toml` (lo crea "
+        "`unskein init --user`).",
+        Lang.EN: "No AI model configured. To get an interpretation of these results, set "
+        "`UNSKEIN_AI_MODEL`, or `[ai] model` in the `.unskein.toml` of the analyzed folder or "
+        "in `~/.config/unskein/config.toml` (`unskein init --user` creates it).",
     },
     "report.ai.failed.timeout": {
         Lang.ES: "El modelo no respondió a tiempo. El análisis determinista está completo.",
@@ -364,6 +371,36 @@ _CLI: dict[str, dict[Lang, str]] = {
         Lang.EN: (
             "Config written to {path}. "
             "Everything is commented out: uncomment what you want to change."
+        ),
+    },
+    "cli.config_project_hint": {
+        Lang.ES: (
+            "unskein lo lee al analizar esta carpeta. "
+            "Para usarlo en todos tus proyectos: unskein config save"
+        ),
+        Lang.EN: (
+            "unskein reads it when analyzing this folder. "
+            "To use it in all your projects: unskein config save"
+        ),
+    },
+    "cli.config_saved": {
+        Lang.ES: (
+            "Configuración guardada en {path}. unskein la usa en todos tus proyectos; "
+            "el .unskein.toml de un proyecto la sustituye clave a clave."
+        ),
+        Lang.EN: (
+            "Config saved to {path}. unskein uses it in all your projects; "
+            "a project's .unskein.toml overrides it key by key."
+        ),
+    },
+    "cli.config_saved_key": {
+        Lang.ES: (
+            "Aviso: el archivo guardado contiene [ai] api_key en claro. "
+            "Mejor quítala de ahí y usa la variable de entorno UNSKEIN_API_KEY."
+        ),
+        Lang.EN: (
+            "Warning: the saved file holds [ai] api_key in plain text. "
+            "Better remove it from there and use the UNSKEIN_API_KEY environment variable."
         ),
     },
 }

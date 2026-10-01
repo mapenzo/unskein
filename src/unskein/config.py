@@ -279,7 +279,7 @@ class TomlConfig(_TomlTable):
     layers: TomlLayers = TomlLayers()
 
 
-def _read_toml(path: Path) -> dict:
+def read_toml_file(path: Path) -> dict:
     """Read and validate one TOML file; a missing file is an empty config.
 
     Validating each file on its own lets errors name the file at fault.
@@ -324,12 +324,13 @@ def _config_error(path: Path, error: ValidationError) -> ConfigError:
     return ConfigError(ErrorKey.INVALID_VALUE, params | {"detail": first["msg"]})
 
 
-def load_toml_config(root: Path, user_config: Path = USER_CONFIG_PATH) -> TomlConfig:
+def load_toml_config(root: Path, user_config: Path | None = None) -> TomlConfig:
     """Merge the user config with ``<root>/.unskein.toml``; the project wins key by key.
 
     Args:
         root: Project root where ``.unskein.toml`` may live.
-        user_config: User-wide config file (``~/.config/unskein/config.toml``).
+        user_config: User-wide config file; None means ``USER_CONFIG_PATH``,
+            looked up at call time so tests can point it elsewhere.
 
     Returns:
         The validated, merged configuration.
@@ -338,8 +339,8 @@ def load_toml_config(root: Path, user_config: Path = USER_CONFIG_PATH) -> TomlCo
         ConfigError: If either file is invalid TOML or has unknown keys or wrong types.
     """
     merged: dict[str, dict] = {}
-    for path in (user_config, root / PROJECT_CONFIG_NAME):
-        for table, values in _read_toml(path).items():
+    for path in (user_config or USER_CONFIG_PATH, root / PROJECT_CONFIG_NAME):
+        for table, values in read_toml_file(path).items():
             merged.setdefault(table, {}).update(values)
     return TomlConfig.model_validate(merged)
 
