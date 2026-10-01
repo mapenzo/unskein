@@ -154,6 +154,9 @@ class AIContext:
         finding_counts: Real number of findings per kind, before the cap.
         package_edges: Largest dependencies between packages, truncated.
         total_package_edges: Package dependencies before truncation.
+        hidden_tangles: Largest groups coupled only through lazy or type-only imports,
+            truncated.
+        total_hidden_tangles: Hidden tangles before truncation.
     """
 
     total_modules: int
@@ -169,6 +172,8 @@ class AIContext:
     finding_counts: dict[str, int] = field(default_factory=dict)
     package_edges: list[PackageEdgeSummary] = field(default_factory=list)
     total_package_edges: int = 0
+    hidden_tangles: list[TangleSummary] = field(default_factory=list)
+    total_hidden_tangles: int = 0
 
 
 class AIFailure(StrEnum):

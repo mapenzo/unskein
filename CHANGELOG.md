@@ -20,7 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no longer exist there.
 - Hidden coupling: the report lists groups of modules that depend on each other only
   through imports inside functions or under `TYPE_CHECKING`, with their own summary
-  line and a "Hidden tangles" metric.
+  line and a "Hidden tangles" metric. The AI context receives them too (largest first,
+  with their total), rated medium severity since they do not fail at import time.
 - `unskein config save [SOURCE]`: validates a config file (default `./.unskein.toml`)
   and copies it, comments included, to `~/.config/unskein/config.toml`, creating the
   folder. It never replaces an existing user file without `--force`, writes it readable

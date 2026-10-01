@@ -852,7 +852,9 @@ analyze → build_context → build_messages → AIClient.generate_report → gr
 ### Contexto acotado (`AIContext`)
 
 Solo nombres de módulo y métricas (nunca código fuente ni rutas): las mayores
-marañas (5, con hasta 20 miembros), los ciclos más cortos (10, con hasta 8 miembros
+marañas (5, con hasta 20 miembros), las mayores marañas ocultas (`hidden_tangles`, mismo
+límite: acoplamiento que solo existe por imports perezosos o bajo `TYPE_CHECKING`), los
+ciclos más cortos (10, con hasta 8 miembros
 cada uno y su longitud real en `CycleSummary.length`), los 15 módulos con mayor
 `Ca + Ce` y el recuento de warnings por código. Cada lista truncada lleva su total al
 lado, para que el LLM sepa que hay más. Los ciclos se resumen porque `find_cycles`
@@ -869,7 +871,8 @@ puede reducir más; en ese caso se envía en su tamaño mínimo.
 `build_messages(context, lang)` devuelve `[system, user]`. El system lleva una
 rúbrica de severidad anclada en los datos (`high`: maraña o ciclo; `medium`: módulo
 en el top de `Ca + Ce` volátil del que otros dependen — inestabilidad ≥
-`UNSTABLE_THRESHOLD` (0.7) y `Ca > 0` — o con `Ce` muy por encima del resto; `low`: el
+`UNSTABLE_THRESHOLD` (0.7) y `Ca > 0` —, con `Ce` muy por encima del resto, o una maraña
+oculta, que no falla al importar pero sigue acoplando; `low`: el
 resto; nunca se señala un módulo solo por ser estable, porque inestabilidad baja con
 muchos dependientes es sano), la regla de
 copiar los nombres de módulo literalmente y la instrucción de idioma. El user lleva
