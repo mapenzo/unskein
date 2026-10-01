@@ -152,6 +152,7 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         lines.append(top_line)
     if result.tangles:
         lines.append(_tangle_summary(result.tangles, lang, "report.summary_tangles"))
+        lines.append(t("report.untangle_hint", lang))
     if result.hidden_tangles:
         lines.append(_tangle_summary(result.hidden_tangles, lang, "report.summary_hidden"))
     if result.findings:

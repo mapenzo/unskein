@@ -154,6 +154,10 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.ES: "{count} marañas de módulos que dependen entre sí; la mayor tiene {size} módulos.",
         Lang.EN: "{count} tangles of mutually dependent modules; the largest has {size} modules.",
     },
+    "report.untangle_hint": {
+        Lang.ES: "Para ver qué imports cortar para deshacerlas: `unskein untangle`.",
+        Lang.EN: "To see which imports to cut to undo them: `unskein untangle`.",
+    },
     "report.tangles_heading": {Lang.ES: "Marañas", Lang.EN: "Tangles"},
     "report.tangle_size": {Lang.ES: "{size} módulos", Lang.EN: "{size} modules"},
     "report.cycles_heading": {Lang.ES: "Ciclos", Lang.EN: "Cycles"},
@@ -279,6 +283,151 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "report.recommendation": {Lang.ES: "Recomendación", Lang.EN: "Recommendation"},
     "report.warnings": {Lang.ES: "Advertencias del análisis", Lang.EN: "Analysis warnings"},
     "report.more": {Lang.ES: "…y {count} más", Lang.EN: "…and {count} more"},
+    "untangle.title": {
+        Lang.ES: "Plan de desenredo de {project}",
+        Lang.EN: "Untangle plan for {project}",
+    },
+    "untangle.scope.import": {
+        Lang.ES: "Alcance: marañas al importar (imports a nivel de módulo).",
+        Lang.EN: "Scope: import-time tangles (module-level imports).",
+    },
+    "untangle.scope.all": {
+        Lang.ES: "Alcance: todas las dependencias, incluido el acoplamiento oculto "
+        "(imports perezosos y bajo `TYPE_CHECKING`).",
+        Lang.EN: "Scope: every dependency, hidden coupling included "
+        "(lazy and `TYPE_CHECKING` imports).",
+    },
+    "untangle.summary": {
+        Lang.ES: "Marañas: {tangles} · imports a cortar: {cuts} · coste total: {cost}.",
+        Lang.EN: "Tangles: {tangles} · imports to cut: {cuts} · total cost: {cost}.",
+    },
+    "untangle.simulation": {
+        Lang.ES: "Simulación tras los cortes: marañas {tangles_before} → {tangles_after}, "
+        "ciclos {cycles_before} → {cycles_after}.",
+        Lang.EN: "Simulation after the cuts: tangles {tangles_before} → {tangles_after}, "
+        "cycles {cycles_before} → {cycles_after}.",
+    },
+    "untangle.none": {
+        Lang.ES: "No hay marañas al importar: no hay nada que desenredar.",
+        Lang.EN: "No import-time tangles: nothing to untangle.",
+    },
+    "untangle.none_all": {
+        Lang.ES: "No hay marañas, ni siquiera contando el acoplamiento oculto.",
+        Lang.EN: "No tangles, not even counting hidden coupling.",
+    },
+    "untangle.warnings": {
+        Lang.ES: "Advertencias del análisis: {count} (detalle con `unskein scan`).",
+        Lang.EN: "Analysis warnings: {count} (details with `unskein scan`).",
+    },
+    "untangle.hidden_hint": {
+        Lang.ES: "Grupos de acoplamiento oculto: {count}; `unskein untangle --all-edges` "
+        "también los incluye.",
+        Lang.EN: "Hidden-coupling groups: {count}; `unskein untangle --all-edges` "
+        "includes them too.",
+    },
+    "untangle.tangle_heading": {
+        Lang.ES: "Maraña {index}: {size} módulos",
+        Lang.EN: "Tangle {index}: {size} modules",
+    },
+    "untangle.tangle_line": {
+        Lang.ES: "Imports a cortar: {cuts} · coste: {cost} · miembros: {members}",
+        Lang.EN: "Imports to cut: {cuts} · cost: {cost} · members: {members}",
+    },
+    "untangle.col.import": {Lang.ES: "Import", Lang.EN: "Import"},
+    "untangle.col.cost": {Lang.ES: "Coste", Lang.EN: "Cost"},
+    "untangle.col.step": {Lang.ES: "Paso", Lang.EN: "Step"},
+    "untangle.col.evidence": {Lang.ES: "Evidencia", Lang.EN: "Evidence"},
+    "untangle.col.module": {Lang.ES: "Módulo", Lang.EN: "Module"},
+    "untangle.col.instability": {Lang.ES: "Inestabilidad", Lang.EN: "Instability"},
+    "untangle.cuts_truncated": {
+        Lang.ES: "Cortes sin mostrar: {count}.",
+        Lang.EN: "Cuts not shown: {count}.",
+    },
+    "untangle.tangles_truncated": {
+        Lang.ES: "Se muestran {shown} de {total} marañas (las mayores); `--max-tangles` "
+        "cambia el límite.",
+        Lang.EN: "Showing {shown} of {total} tangles (the largest); `--max-tangles` "
+        "changes the limit.",
+    },
+    "untangle.changes_heading": {Lang.ES: "Módulos afectados", Lang.EN: "Affected modules"},
+    "untangle.steps_heading": {
+        Lang.ES: "Qué significa cada paso",
+        Lang.EN: "What each step means",
+    },
+    "untangle.note": {
+        Lang.ES: "Los cortes salen de una heurística (Eades–Lin–Smyth) que no garantiza el "
+        "mínimo. La simulación quita los imports cortados de las marañas; en el acoplamiento, "
+        "los imports perezosos y bajo `TYPE_CHECKING` siguen contando. Mover un símbolo "
+        "traslada su dependencia, así que el resultado real puede ser algo peor.",
+        Lang.EN: "The cuts come from a heuristic (Eades–Lin–Smyth) that does not guarantee "
+        "the minimum. The simulation removes the cut imports from the tangles; in the "
+        "coupling, lazy and `TYPE_CHECKING` imports still count. Moving a symbol moves its "
+        "dependency, so the real result can be somewhat worse.",
+    },
+    "untangle.step.type_checking": {
+        Lang.ES: "Mover bajo TYPE_CHECKING",
+        Lang.EN: "Move under TYPE_CHECKING",
+    },
+    "untangle.step.type_checking.help": {
+        Lang.ES: "Los nombres solo se usan en anotaciones: importarlos bajo "
+        "`if TYPE_CHECKING:` (con `from __future__ import annotations` o anotaciones entre "
+        "comillas) quita la dependencia al importar. Las bibliotecas que leen anotaciones en "
+        "ejecución (modelos de pydantic, firmas de typer o FastAPI, `typing.get_type_hints`, "
+        "`functools.singledispatch`) necesitan el nombre en ejecución: ahí no sirve.",
+        Lang.EN: "The names are only used in annotations: importing them under "
+        "`if TYPE_CHECKING:` (with `from __future__ import annotations` or quoted "
+        "annotations) removes the import-time dependency. Libraries that read annotations at "
+        "runtime (pydantic models, typer or FastAPI signatures, `typing.get_type_hints`, "
+        "`functools.singledispatch`) need the name at runtime: it does not work there.",
+    },
+    "untangle.step.bypass_facade": {
+        Lang.ES: "Importar del módulo que lo define",
+        Lang.EN: "Import from the defining module",
+    },
+    "untangle.step.bypass_facade.help": {
+        Lang.ES: "La dependencia va al `__init__.py` de un paquete: importar cada nombre "
+        "del módulo que lo define evita depender del paquete entero. Si el paquete se usa "
+        "como estado global (`paquete.ajuste = ...`), el cambio es de diseño.",
+        Lang.EN: "The dependency goes to a package's `__init__.py`: importing each name from "
+        "the module that defines it avoids depending on the whole package. When the package "
+        "is used as global state (`package.setting = ...`), it is a design change.",
+    },
+    "untangle.step.lazy": {Lang.ES: "Import perezoso", Lang.EN: "Lazy import"},
+    "untangle.step.lazy.help": {
+        Lang.ES: "Los nombres solo se usan dentro de funciones (o también en anotaciones, si el "
+        "módulo tiene `from __future__ import annotations`): importarlos ahí rompe el ciclo al "
+        "importar, aunque el acoplamiento sigue (aparecerá como acoplamiento oculto).",
+        Lang.EN: "The names are only used inside functions (or in annotations too, when the "
+        "module has `from __future__ import annotations`): importing them there breaks the "
+        "import-time cycle, though the coupling stays (it will show as hidden coupling).",
+    },
+    "untangle.step.move_symbol": {Lang.ES: "Mover el símbolo", Lang.EN: "Move the symbol"},
+    "untangle.step.move_symbol.help": {
+        Lang.ES: "Se importan uno o dos símbolos: moverlos a un módulo que no dependa del "
+        "importador suele bastar. Revisa antes de qué dependen esos símbolos.",
+        Lang.EN: "One or two symbols are imported: moving them to a module that does not "
+        "depend on the importer usually does it. Check first what those symbols depend on.",
+    },
+    "untangle.step.extract_shared": {
+        Lang.ES: "Extraer un módulo compartido",
+        Lang.EN: "Extract a shared module",
+    },
+    "untangle.step.extract_shared.help": {
+        Lang.ES: "Se usa mucho de ese módulo: extraer lo compartido a un módulo nuevo del que "
+        "dependan los dos.",
+        Lang.EN: "Much of that module is used: extract what is shared into a new module that "
+        "both depend on.",
+    },
+    "untangle.step.package_structure": {
+        Lang.ES: "Revisar la estructura del paquete",
+        Lang.EN: "Review the package structure",
+    },
+    "untangle.step.package_structure.help": {
+        Lang.ES: "Es un paquete importando uno de sus propios submódulos: el ciclo solo se "
+        "rompe reorganizando el paquete (qué exporta su `__init__.py` y quién lo importa).",
+        Lang.EN: "A package imports one of its own submodules: the cycle only breaks by "
+        "reorganizing the package (what its `__init__.py` exports and who imports it).",
+    },
     "report.findings": {Lang.ES: "Hallazgos", Lang.EN: "Findings"},
     "report.no_findings": {
         Lang.ES: "No se detectaron hallazgos.",

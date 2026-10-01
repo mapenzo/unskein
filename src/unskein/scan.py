@@ -28,6 +28,7 @@ from unskein.graph.findings import unmatched_layers
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
 from unskein.parsers.discovery import load_exclude_spec
+from unskein.parsers.models import ParseResult
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.pipeline import parse_all
 from unskein.report.markdown import AIStatus
@@ -150,6 +151,34 @@ def prepare_scan(
     )
 
 
+def parse_project(context: ScanContext) -> ParseResult:
+    """Discover, parse and resolve the project's Python files.
+
+    Projects with at least ``parallel_threshold`` files are parsed in a process
+    pool; smaller ones sequentially.
+
+    Args:
+        context: A prepared scan.
+
+    Returns:
+        The parse result with re-exports and package access resolved.
+
+    Raises:
+        UnskeinError: If the path is not a directory or holds no Python files.
+    """
+    root = context.root
+    if not root.is_dir():
+        raise UnskeinError(ErrorKey.PATH_NOT_FOUND, {"path": str(root)})
+    config = context.analysis
+    adapter = PythonAdapter(config)
+    spec = load_exclude_spec(root, config.exclude, config.include_tests)
+    files = sorted(adapter.discover_files(root, spec, config.follow_symlinks))
+    if not files:
+        raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
+    logger.debug("Discovered %d Python files under %s", len(files), root)
+    return adapter.resolve_indirection(parse_all(files, adapter, root, config))
+
+
 def analyze_project(context: ScanContext) -> AnalysisResult:
     """Run discovery, parsing, re-export resolution and analysis.
 
@@ -165,18 +194,7 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
     Raises:
         UnskeinError: If the path is not a directory or holds no Python files.
     """
-    root = context.root
-    if not root.is_dir():
-        raise UnskeinError(ErrorKey.PATH_NOT_FOUND, {"path": str(root)})
-    config = context.analysis
-    adapter = PythonAdapter(config)
-    spec = load_exclude_spec(root, config.exclude, config.include_tests)
-    files = sorted(adapter.discover_files(root, spec, config.follow_symlinks))
-    if not files:
-        raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
-    logger.debug("Discovered %d Python files under %s", len(files), root)
-    parsed = parse_all(files, adapter, root, config)
-    result = analyze(adapter.resolve_indirection(parsed), context.findings)
+    result = analyze(parse_project(context), context.findings)
     if context.findings.enabled:
         for layer in unmatched_layers(result.graph.nodes, context.findings.layers):
             logger.warning("Layer %s in [layers] matches no module of the project", layer)

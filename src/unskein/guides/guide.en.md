@@ -124,6 +124,36 @@ Other commands: `unskein init` and `unskein config save` (see Configuration), `u
 guide, `--lang` to pick its language; `unskein guide > guide.md` saves it) and
 `unskein --version`.
 
+## Untangling: `untangle`
+
+`unskein untangle [PATH]` plans which imports to cut to undo each tangle. For every
+tangle it lists the imports to cut, the cheapest refactoring step for each one and the
+evidence behind it (file, line and imported symbols), then simulates the result:
+tangles, cycles and the coupling of the affected modules before and after.
+
+The steps, cheapest first: move under `TYPE_CHECKING` (names only used in annotations),
+import from the defining module (the import goes through a package's `__init__.py` that
+does not define the name itself), lazy import (names only used inside functions, or in
+annotations too when the module has `from __future__ import annotations`), move the
+symbol (one or two symbols imported), extract a shared module, and review the package
+structure (a package importing its own submodule, only when nothing else breaks the
+cycle). With `--all-edges` only the structural steps are offered, since a lazy or
+`TYPE_CHECKING` import keeps the coupling. The cuts come from a heuristic and the
+simulation is optimistic: read it as a plan to review.
+
+Like `scan`, `untangle` honors the `exclude` and `include_tests` settings of
+`.unskein.toml`. When some file could not be parsed, the plan says how many analysis
+warnings there were; `unskein scan` shows them in detail.
+
+- `--all-edges`: also untangle hidden coupling (imports inside functions or under
+  `TYPE_CHECKING`).
+- `--max-tangles N`: how many tangles to detail, largest first (default 5).
+- `--output FILE` / `-o FILE`: also save the Markdown plan.
+- `--lang es|en`: output language.
+
+Exit codes: 0 when the plan was built (with or without tangles), 1 for usage errors,
+3 for internal errors. `untangle` never calls the AI.
+
 ## Excluding paths
 
 Three sources are combined; none replaces the others:

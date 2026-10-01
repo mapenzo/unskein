@@ -116,6 +116,7 @@ Granularidad: **nivel de módulo/archivo**, no de clase/función.
 src/unskein/
 ├── cli.py                 # typer: flags, salida, códigos de salida (capa fina)
 ├── scan.py                # orquestación: prepare_scan + execute_scan
+├── untangle.py            # orquestación de `unskein untangle` (prepare + build del plan)
 ├── entry_points.py        # puntos de entrada de pyproject.toml (scripts)
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
 ├── init_config.py         # `unskein init` (plantilla comentada) y `unskein config save`
@@ -130,7 +131,7 @@ src/unskein/
 │   ├── base.py             # interfaz LanguageAdapter (el "adapter")
 │   ├── discovery.py        # os.walk, excludes, encoding
 │   ├── indirection.py      # resolución de re-exports
-│   ├── usage.py            # acceso por atributo a través de los nombres importados
+│   ├── usage.py            # uso de nombres importados: acceso por atributo y evidencia para `untangle`
 │   ├── exports.py          # nombres que un módulo expone a `import *`
 │   └── python_parser.py    # implementación para Python con ast
 ├── graph/
@@ -139,6 +140,8 @@ src/unskein/
 │   ├── metrics.py           # Ca, Ce, inestabilidad, ciclos
 │   ├── findings.py          # hallazgos: reglas deterministas sobre el grafo
 │   ├── impact.py            # radio de impacto transitivo (impact_radius)
+│   ├── steps.py             # pasos de refactor y sus costes (choose_step)
+│   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
 │   ├── packages.py          # resumen por paquetes: Ca/Ce entre paquetes y dependencias
 │   └── percentile.py        # percentil por rango más cercano (compartido)
 ├── ai/
@@ -146,7 +149,8 @@ src/unskein/
 │   ├── proxy.py              # pregunta a un LiteLLM Proxy si su alias es de razonamiento
 │   └── prompts.py            # system prompt + construcción de prompts
 └── report/
-    └── markdown.py           # generación del reporte final
+    ├── markdown.py           # generación del reporte final
+    └── untangle.py           # informe del plan de `unskein untangle`
 ```
 
 Layout `src/` deliberado (evita bugs de import en desarrollo, estándar actual

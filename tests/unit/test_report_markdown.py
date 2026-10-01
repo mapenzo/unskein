@@ -603,3 +603,12 @@ def test_hidden_tangles_are_truncated(tmp_path: Path) -> None:
     assert f"`a{MAX_HIDDEN_TANGLES_SHOWN - 1:02d}`" in report
     assert f"`a{MAX_HIDDEN_TANGLES_SHOWN:02d}`" not in report
     assert "…and 2 more" in report
+
+
+def test_summary_points_to_untangle_when_there_are_tangles(
+    circular_imports: Path, simple_project: Path
+) -> None:
+    tangled = render(circular_imports, analyzed(circular_imports))
+    assert "`unskein untangle`" in tangled.split("## General metrics", maxsplit=1)[0]
+    clean = render(simple_project, analyzed(simple_project))
+    assert "unskein untangle" not in clean

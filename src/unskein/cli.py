@@ -23,6 +23,7 @@ from unskein.init_config import save_user_config, write_config
 from unskein.logging_setup import setup_logging
 from unskein.perf import PerformanceStats, measure
 from unskein.report.markdown import ReportContext, render_report
+from unskein.report.untangle import render_untangle
 from unskein.scan import (
     ScanContext,
     ScanOptions,
@@ -30,6 +31,12 @@ from unskein.scan import (
     analyze_project,
     interpret,
     prepare_scan,
+)
+from unskein.untangle import (
+    DEFAULT_MAX_TANGLES,
+    UntangleOptions,
+    build_untangle_plan,
+    prepare_untangle,
 )
 
 EXIT_CODES_EPILOG = (
@@ -205,6 +212,33 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
 
 
 @app.command()
+def untangle(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    path: Annotated[Path, typer.Argument(help="Directory to analyze.")] = Path("."),
+    all_edges: Annotated[
+        bool,
+        typer.Option("--all-edges", help="Also untangle hidden coupling (lazy, TYPE_CHECKING)."),
+    ] = False,
+    max_tangles: Annotated[
+        int, typer.Option("--max-tangles", min=1, help="Tangles to detail, largest first.")
+    ] = DEFAULT_MAX_TANGLES,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Also save the Markdown plan here.")
+    ] = None,
+    lang: Annotated[
+        Literal["es", "en"] | None, typer.Option("--lang", help="Output language.")
+    ] = None,
+) -> None:
+    """Plan which imports to cut to undo each tangle, with the step and its evidence."""
+    options = UntangleOptions(path=path, lang=lang, all_edges=all_edges, max_tangles=max_tangles)
+    try:
+        code = _run_untangle(options, output)
+    except Exception:  # pylint: disable=broad-exception-caught  # any bug -> exit 3
+        Console(stderr=True).print_exception()
+        code = ExitCode.INTERNAL_ERROR
+    raise typer.Exit(code)
+
+
+@app.command()
 def init(
     path: Annotated[Path, typer.Argument(help="Project folder to write .unskein.toml in.")] = Path(
         "."
@@ -318,6 +352,36 @@ def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitC
     if verbose:
         _print_stats(stats, context)
     return exit_code_for(outcome.ai_report)
+
+
+def _run_untangle(options: UntangleOptions, output: Path | None) -> ExitCode:
+    """Prepare and build the plan, print it and pick the exit code.
+
+    Expected errors become translated messages (exit code 1); anything else
+    propagates to ``untangle`` (exit code 3).
+
+    Args:
+        options: What the user asked for.
+        output: File to also write the raw Markdown plan to.
+
+    Returns:
+        The process exit code.
+    """
+    try:
+        context = prepare_untangle(options)
+    except UnskeinError as e:
+        _print_to_stderr(translate_error(e, detect_lang(options.lang)), style="red")
+        return ExitCode.USAGE_ERROR
+    try:
+        plan = build_untangle_plan(context, all_edges=options.all_edges)
+    except UnskeinError as e:
+        _print_to_stderr(translate_error(e, context.lang), style="red")
+        return ExitCode.USAGE_ERROR
+    report = render_untangle(plan, context.root, context.lang, max_tangles=options.max_tangles)
+    if output:
+        output.write_text(report, encoding="utf-8")
+    Console().print(Markdown(report))
+    return ExitCode.OK
 
 
 def _run_pipeline(context: ScanContext) -> ScanOutcome:
