@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import textwrap
@@ -75,7 +76,7 @@ def test_cuts_do_not_depend_on_the_hash_seed() -> None:
     outputs = {
         subprocess.run(
             [sys.executable, "-c", script],
-            env={"PYTHONHASHSEED": seed, "PATH": ""},
+            env={**os.environ, "PYTHONHASHSEED": seed},
             capture_output=True,
             text=True,
             check=True,
