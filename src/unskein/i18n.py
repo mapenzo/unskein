@@ -154,6 +154,10 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.ES: "{count} marañas de módulos que dependen entre sí; la mayor tiene {size} módulos.",
         Lang.EN: "{count} tangles of mutually dependent modules; the largest has {size} modules.",
     },
+    "report.untangle_hint": {
+        Lang.ES: "Para ver qué imports cortar para deshacerlas: `unskein untangle`.",
+        Lang.EN: "To see which imports to cut to undo them: `unskein untangle`.",
+    },
     "report.tangles_heading": {Lang.ES: "Marañas", Lang.EN: "Tangles"},
     "report.tangle_size": {Lang.ES: "{size} módulos", Lang.EN: "{size} modules"},
     "report.cycles_heading": {Lang.ES: "Ciclos", Lang.EN: "Cycles"},

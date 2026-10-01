@@ -130,6 +130,30 @@ Otros comandos: `unskein init` y `unskein config save` (ver Configuración), `un
 guía, `--lang` para elegir su idioma; `unskein guide > guia.md` la guarda) y
 `unskein --version`.
 
+## Desenredar: `untangle`
+
+`unskein untangle [RUTA]` planifica qué imports cortar para deshacer cada maraña. Para
+cada una lista los imports a cortar, el paso de refactor más barato de cada uno y la
+evidencia que lo apoya (archivo, línea y símbolos importados), y simula el resultado:
+marañas, ciclos y acoplamiento de los módulos afectados, antes y después.
+
+Los pasos, del más barato al más caro: mover bajo `TYPE_CHECKING` (nombres que solo
+se usan en anotaciones), importar del módulo que lo define (el import pasa por el
+`__init__.py` de un paquete), import perezoso (nombres que solo se usan dentro de
+funciones), mover el símbolo (se importan uno o dos símbolos), extraer un módulo
+compartido y revisar la estructura del paquete (un paquete importando su propio
+submódulo, solo cuando nada más rompe el ciclo). Los cortes salen de una heurística y
+la simulación es optimista: léelo como un plan que hay que revisar.
+
+- `--all-edges`: desenreda también el acoplamiento oculto (imports dentro de funciones
+  o bajo `TYPE_CHECKING`).
+- `--max-tangles N`: cuántas marañas detallar, de mayor a menor (por defecto 5).
+- `--output FICHERO` / `-o FICHERO`: guarda también el plan en Markdown.
+- `--lang es|en`: idioma de la salida.
+
+Códigos de salida: 0 si el plan se construyó (con o sin marañas), 1 en errores de uso y
+3 en errores internos. `untangle` nunca llama a la IA.
+
 ## Excluir rutas
 
 Se combinan tres orígenes; ninguno sustituye a los demás:
