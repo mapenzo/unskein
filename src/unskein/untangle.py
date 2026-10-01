@@ -114,8 +114,8 @@ def _names_read_from_sources(
 ) -> dict[str, frozenset[str]]:
     """Find which names bound by the candidate imports other modules read at runtime.
 
-    Only imports whose names are read somewhere could take the lazy or type-only step,
-    so only their names are looked for.
+    Only imports that still have use contexts could take the lazy or type-only step, so
+    only their names are looked for.
 
     Args:
         sources: Parse result with imports as written.

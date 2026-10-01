@@ -799,13 +799,17 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   `from a import *` o usa `a` suelto (`getattr(a, …)`). `collect_names_read_from` mira los
   imports **tal como se escriben** (`scan.parse_sources`, antes de resolver re-exports, que
   apuntarían `c` al módulo que define el nombre y ocultarían el paso por `a`); los imports
-  bajo `TYPE_CHECKING` no cuentan. Los accesos por atributo que el parser no analizó (import
-  de un módulo entero que no es paquete) se buscan releyendo solo esos importadores; un
+  bajo `TYPE_CHECKING` no cuentan. Los accesos por atributo que el parser no registró (import
+  de un módulo entero que no es paquete, o de un paquete enlazado más de una vez o sin usos
+  registrados) se buscan releyendo solo esos importadores; un
   importador ilegible cuenta como si leyera todos los nombres. Cada cadena se recorre por los
   submódulos del proyecto (`walk_submodules`, compartido con `resolve_access`) y el nombre
   enlazado se atribuye al módulo al que apunta (`import pkg.a` enlaza `pkg`, no `pkg.a`).
-  Límites: un paquete antecesor usado suelto (`getattr(pkg, n)`) no se sigue hasta sus
-  submódulos; y una cadena literal igual al nombre (`provider="ollama"`) cuenta como uso
+  Una cadena que termina en el propio submódulo (`getattr(pkg.a, n)`) lo usa suelto y cuenta
+  todos sus nombres. Límites: un paquete antecesor usado suelto (`getattr(pkg, n)`) no se
+  sigue hasta sus submódulos; un submódulo que la fachada expone con otro nombre
+  (`from pkg import a as alpha` en `__init__.py`) o que llega por `from pkg import *` no se
+  sigue hasta él; y una cadena literal igual al nombre (`provider="ollama"`) cuenta como uso
   suelto, el mismo criterio conservador de la fase 0b (en litellm, 2 pasos `LAZY` pasan a
   `MOVE_SYMBOL` por esto).
 - **Por qué `PACKAGE_STRUCTURE` es prohibitivo y por qué existe `BYPASS_FACADE`.** En networkx,

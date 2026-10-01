@@ -469,7 +469,8 @@ class _ReadThroughCollector:
         """Count the wanted names read through a module by attribute chains.
 
         Each chain is walked down the project's submodules; the attribute after the last
-        submodule is a name read from that submodule.
+        submodule is a name read from that submodule. A chain that ends at a submodule
+        uses that module by itself (``getattr(pkg.a, name)``), so every name counts.
 
         Args:
             module: Module the chains are read through.
@@ -477,7 +478,9 @@ class _ReadThroughCollector:
         """
         for chain in chains:
             reached, symbol = walk_submodules(module, chain, self.modules)
-            if symbol is not None:
+            if symbol is None:
+                self.add_all(reached)
+            else:
                 self.add_symbol(reached, symbol)
 
 

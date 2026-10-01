@@ -254,6 +254,31 @@ def test_no_lazy_step_for_a_name_other_modules_import_from_the_source(
             StepKind.LAZY,
         ),
         (
+            {"reexp/c.py": "import reexp.a\n\nY = getattr(reexp.a, 'Thing')\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        (
+            {
+                "reexp/__init__.py": "from reexp import a\n",
+                "reexp/c.py": "import reexp\n\nY = getattr(reexp.a, 'Thing')\n",
+            },
+            StepKind.MOVE_SYMBOL,
+        ),
+        ({"reexp/c.py": "from . import a\n\nY = a.Thing\n"}, StepKind.MOVE_SYMBOL),
+        (
+            {"reexp/c.py": "import os; from reexp import a\n\nY = a.Thing, os.sep\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        (
+            {"reexp/c.py": "from reexp import b as m\nfrom reexp import a as m\n\nY = m.Thing\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        ({"reexp/c.py": "import reexp.a.nope\n\nY = reexp.a.Thing\n"}, StepKind.MOVE_SYMBOL),
+        (
+            {"reexp/c.py": "def f():\n    from reexp import a\n\n    return a.Thing\n"},
+            StepKind.MOVE_SYMBOL,
+        ),
+        (
             {
                 "reexp/c.py": "from typing import TYPE_CHECKING\n\n"
                 "if TYPE_CHECKING:\n    from reexp.a import Thing\n"
@@ -271,6 +296,13 @@ def test_no_lazy_step_for_a_name_other_modules_import_from_the_source(
         "other_attribute_only",
         "package_name_used_by_itself",
         "same_name_read_from_the_package",
+        "module_reached_through_a_dotted_import_used_by_itself",
+        "module_reached_through_the_package_used_by_itself",
+        "relative_from_import",
+        "two_statements_on_one_line",
+        "rebound_alias",
+        "fallback_ancestor_target",
+        "reader_inside_a_function",
         "type_only_import",
     ],
 )
