@@ -118,3 +118,28 @@ def test_report_truncates_cuts_beyond_the_limit(
     monkeypatch.setattr("unskein.report.untangle.MAX_CUTS_SHOWN", 0)
     report = render_untangle(plan, root, Lang.EN, max_tangles=5)
     assert "Cuts not shown: 1." in report
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [("", StepKind.MOVE_SYMBOL), ("from __future__ import annotations\n", StepKind.LAZY)],
+    ids=["signature_evaluated_at_import", "signature_postponed"],
+)
+def test_lazy_needs_postponed_annotations_when_a_signature_reads_the_name(
+    make_project: MakeProject, header: str, expected: StepKind
+) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/x.py": (
+                f"{header}from app.y import Engine\n\n\n"
+                "def run(e: Engine):\n    return Engine()\n\n\nA = B = C = 1\n"
+            ),
+            "app/y.py": (
+                "from app.x import A, B, C\n\n\nclass Engine:\n    pass\n\n\nWIDE = [A, B, C]\n"
+            ),
+        }
+    )
+    [tangle] = plan_for(root).tangles
+    [cut] = tangle.cuts
+    assert (cut.source, cut.target, cut.step) == ("app.x", "app.y", expected)

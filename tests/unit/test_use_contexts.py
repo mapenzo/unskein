@@ -119,3 +119,24 @@ def test_unreadable_file_gives_evidence_without_contexts(make_project: MakeProje
 
 def test_no_evidence_is_empty() -> None:
     assert ImportEvidence(None, (), (), frozenset()) == NO_EVIDENCE
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [("", False), ("from __future__ import annotations\n", True)],
+    ids=["evaluated_annotations", "postponed_annotations"],
+)
+def test_evidence_tells_whether_annotations_are_postponed(
+    make_project: MakeProject, header: str, expected: bool
+) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/a.py": f"{header}from app.b import B\n\n\ndef f(x: B):\n    return B()\n",
+            "app/b.py": "class B: ...\n",
+        }
+    )
+    [evidence] = collect_import_evidence(
+        parsed_module(root, "app.a"), [("app.a", "app.b")], kinds={ImportKind.MODULE}, encoding=None
+    ).values()
+    assert evidence.postponed_annotations is expected

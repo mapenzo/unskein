@@ -301,15 +301,41 @@ class ImportEvidence:
         symbols: Symbols those statements import by name, sorted.
         contexts: Where the importing module reads the names those statements bind. Empty
             means unknown (file unreadable, names never read, or a star import), never safe.
+        postponed_annotations: Whether the importing module has
+            ``from __future__ import annotations``, so its signature and module-level
+            annotations are not evaluated at import time.
     """
 
     file_path: Path | None
     lines: tuple[int, ...]
     symbols: tuple[str, ...]
     contexts: frozenset[UseContext]
+    postponed_annotations: bool = False
 
 
 NO_EVIDENCE = ImportEvidence(None, (), (), frozenset())
+
+
+POSTPONED_ANNOTATIONS_FEATURE = "annotations"
+
+
+def postpones_annotations(tree: ast.Module) -> bool:
+    """Tell whether a module has ``from __future__ import annotations``.
+
+    Future imports must open the module, so only its top-level statements are checked.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True when the module postpones the evaluation of its annotations.
+    """
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(alias.name == POSTPONED_ANNOTATIONS_FEATURE for alias in node.names)
+        for node in tree.body
+    )
 
 
 def _parse_source(file_path: Path, encoding: str | None) -> ast.Module | None:
@@ -371,11 +397,16 @@ def collect_import_evidence(
     bound = bound_names_by_line(tree) if tree is not None else {}
     names = {name for found in lines.values() for line in found for name in bound.get(line, ())}
     contexts = collect_use_contexts(tree, names) if tree is not None else {}
+    postponed = tree is not None and postpones_annotations(tree)
     evidence = {}
     for pair, found in lines.items():
         used = {name for line in found for name in bound.get(line, ())}
         pair_contexts = frozenset().union(*(contexts.get(name, frozenset()) for name in used))
         evidence[pair] = ImportEvidence(
-            module.file_path, tuple(sorted(found)), tuple(sorted(symbols[pair])), pair_contexts
+            module.file_path,
+            tuple(sorted(found)),
+            tuple(sorted(symbols[pair])),
+            pair_contexts,
+            postponed_annotations=postponed,
         )
     return evidence

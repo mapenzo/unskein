@@ -17,7 +17,8 @@ class StepKind(StrEnum):
             ``if TYPE_CHECKING:``.
         BYPASS_FACADE: The dependency goes to a package's ``__init__.py``; import from the
             module that defines the name instead.
-        LAZY: The names are only read inside functions; import them there.
+        LAZY: The names are only read inside functions (or in annotations too, when the
+            module postpones them); import them there.
         MOVE_SYMBOL: One or two symbols are imported; move them out of the cycle.
         EXTRACT_SHARED: Much is shared; extract it to a new module both can import.
         PACKAGE_STRUCTURE: A package imports one of its own submodules; only reorganizing
@@ -47,8 +48,31 @@ STEP_COSTS: Mapping[StepKind, int] = MappingProxyType(
 )
 
 
+def _lazy_applies(evidence: ImportEvidence) -> bool:
+    """Tell whether importing the names inside the functions that read them is safe.
+
+    Signature and module-level annotations run at import time unless the module has
+    ``from __future__ import annotations``; a name read there must exist then.
+
+    Args:
+        evidence: Where the names are read and whether annotations are postponed.
+
+    Returns:
+        True when every read happens after import time.
+    """
+    contexts = evidence.contexts
+    if not contexts:
+        return False
+    if contexts <= {UseContext.FUNCTION}:
+        return True
+    return evidence.postponed_annotations and contexts <= {
+        UseContext.ANNOTATION,
+        UseContext.FUNCTION,
+    }
+
+
 def _applicable_steps(
-    source: str, target: str, evidence: ImportEvidence, facades: Collection[str]
+    source: str, target: str, evidence: ImportEvidence, *, facades: Collection[str]
 ) -> set[StepKind]:
     """List every step the evidence allows for one dependency.
 
@@ -67,7 +91,7 @@ def _applicable_steps(
     contexts = evidence.contexts
     if contexts and contexts <= {UseContext.ANNOTATION}:
         steps.add(StepKind.TYPE_CHECKING)
-    if contexts and contexts <= {UseContext.ANNOTATION, UseContext.FUNCTION}:
+    if _lazy_applies(evidence):
         steps.add(StepKind.LAZY)
     if target in facades:
         steps.add(StepKind.BYPASS_FACADE)
@@ -90,4 +114,5 @@ def choose_step(
     Returns:
         The step with the lowest cost in ``STEP_COSTS``.
     """
-    return min(_applicable_steps(source, target, evidence, facades), key=STEP_COSTS.__getitem__)
+    steps = _applicable_steps(source, target, evidence, facades=facades)
+    return min(steps, key=STEP_COSTS.__getitem__)
