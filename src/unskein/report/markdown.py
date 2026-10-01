@@ -17,6 +17,10 @@ TOP_COUPLED_SHARE = 100 - HIGH_COUPLING_PERCENTILE
 MAX_WARNING_EXAMPLES = 5
 MAX_TANGLE_MEMBERS_SHOWN = 10
 MAX_FINDINGS_PER_KIND = 10
+MAX_PACKAGES_IN_TABLE = 15
+MAX_PACKAGE_EDGES_SHOWN = 10
+MIN_PACKAGES_SHOWN = 2
+NOT_MEASURED = "—"
 
 
 class AIStatus(StrEnum):
@@ -95,8 +99,11 @@ def render_report(context: ReportContext, lang: Lang) -> str:
         _summary(context, lang),
         _metrics(context.result, lang),
         _cycles(context.result, lang),
-        _coupled(context.result, lang),
     ]
+    packages = _packages(context.result, lang)
+    if packages:
+        sections.append(packages)
+    sections.append(_coupled(context.result, lang))
     if context.result.findings_enabled:
         sections.append(_findings(context.result, lang))
     sections.append(_ai(context, lang))
@@ -239,6 +246,54 @@ def _tangle_line(members: list[str], lang: Lang) -> str:
     return f"- **{t('report.tangle_size', lang, size=len(members))}**: {shown}{more}"
 
 
+def _packages(result: AnalysisResult, lang: Lang) -> list[str]:
+    """Build the package overview, or nothing when there is no package structure to show.
+
+    Args:
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        Markdown lines of the section; empty with fewer than ``MIN_PACKAGES_SHOWN`` packages.
+    """
+    if len(result.packages) < MIN_PACKAGES_SHOWN:
+        return []
+    lines = [
+        f"## {t('report.packages', lang)}",
+        "",
+        t("report.packages_intro", lang),
+        "",
+        f"| {t('report.package', lang)} | {t('report.package_modules', lang)} | Ca | Ce "
+        f"| {t('report.instability', lang)} |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for package in result.packages[:MAX_PACKAGES_IN_TABLE]:
+        lines.append(
+            f"| `{package.name}` | {package.modules} | {package.afferent} "
+            f"| {package.efferent} | {package.instability:.2f} |"
+        )
+    if len(result.packages) > MAX_PACKAGES_IN_TABLE:
+        lines += [
+            "",
+            t(
+                "report.packages_showing",
+                lang,
+                shown=MAX_PACKAGES_IN_TABLE,
+                total=len(result.packages),
+            ),
+        ]
+    if result.package_edges:
+        lines += ["", f"### {t('report.package_edges', lang)}", ""]
+        for edge in result.package_edges[:MAX_PACKAGE_EDGES_SHOWN]:
+            key = "one" if edge.imports == 1 else "other"
+            label = t(f"report.package_edge.{key}", lang, imports=edge.imports)
+            lines.append(f"- `{edge.source}` → `{edge.target}` ({label})")
+        hidden = len(result.package_edges) - MAX_PACKAGE_EDGES_SHOWN
+        if hidden > 0:
+            lines.append(f"- {t('report.more', lang, count=hidden)}")
+    return lines
+
+
 def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
     """Build the table of the most coupled modules, capped at ``MAX_MODULES_IN_TABLE``.
 
@@ -256,12 +311,16 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
     lines += [
         t("report.coupled_intro", lang, top=TOP_COUPLED_SHARE),
         "",
-        f"| {t('report.module', lang)} | Ca | Ce | {t('report.instability', lang)} |",
-        "|---|---:|---:|---:|",
+        f"| {t('report.module', lang)} | Ca | Ce | {t('report.instability', lang)} "
+        f"| {t('report.impact', lang)} |",
+        "|---|---:|---:|---:|---:|",
     ]
     for name in modules[:MAX_MODULES_IN_TABLE]:
         m = result.coupling_metrics[name]
-        lines.append(f"| `{name}` | {m.afferent} | {m.efferent} | {m.instability:.2f} |")
+        lines.append(
+            f"| `{name}` | {m.afferent} | {m.efferent} | {m.instability:.2f} "
+            f"| {result.impact.get(name, NOT_MEASURED)} |"
+        )
     if len(modules) > MAX_MODULES_IN_TABLE:
         showing = t(
             "report.showing",
@@ -299,7 +358,9 @@ def _findings(result: AnalysisResult, lang: Lang) -> list[str]:
             f"*{t('report.recommendation', lang)}:* {t(f'finding.{kind}.recommendation', lang)}",
             "",
         ]
-        lines += [_finding_line(finding) for finding in group[:MAX_FINDINGS_PER_KIND]]
+        lines += [
+            _finding_line(finding, result.impact, lang) for finding in group[:MAX_FINDINGS_PER_KIND]
+        ]
         hidden = len(group) - MAX_FINDINGS_PER_KIND
         if hidden > 0:
             lines.append(f"- {t('report.more', lang, count=hidden)}")
@@ -307,11 +368,13 @@ def _findings(result: AnalysisResult, lang: Lang) -> list[str]:
     return lines[:-1]
 
 
-def _finding_line(finding: Finding) -> str:
+def _finding_line(finding: Finding, impact: dict[str, int], lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
     Args:
         finding: The finding to render.
+        impact: Measured impact per module; a bottleneck shows its own when present.
+        lang: Report language.
 
     Returns:
         One Markdown list item.
@@ -326,7 +389,10 @@ def _finding_line(finding: Finding) -> str:
     (module,) = finding.modules
     if finding.kind is FindingKind.ORPHAN:
         return f"- `{module}`"
-    return f"- `{module}` (Ca {evidence['afferent']}, Ce {evidence['efferent']})"
+    numbers = f"Ca {evidence['afferent']}, Ce {evidence['efferent']}"
+    if finding.kind is FindingKind.BOTTLENECK and module in impact:
+        numbers += f", {t('finding.impact', lang, impact=impact[module])}"
+    return f"- `{module}` ({numbers})"
 
 
 def _ai(context: ReportContext, lang: Lang) -> list[str]:

@@ -174,13 +174,35 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.ES: "Ningún módulo destaca por su acoplamiento.",
         Lang.EN: "No module stands out for its coupling.",
     },
+    "report.packages": {Lang.ES: "Paquetes", Lang.EN: "Packages"},
+    "report.packages_intro": {
+        Lang.ES: "Acoplamiento agregado por paquete. Ca y Ce cuentan paquetes distintos, "
+        "no módulos; los imports dentro de un mismo paquete no cuentan.",
+        Lang.EN: "Coupling aggregated by package. Ca and Ce count other packages, not "
+        "modules; imports inside one package do not count.",
+    },
+    "report.package": {Lang.ES: "Paquete", Lang.EN: "Package"},
+    "report.package_modules": {Lang.ES: "Módulos", Lang.EN: "Modules"},
+    "report.packages_showing": {
+        Lang.ES: "Se muestran los {shown} paquetes más acoplados de {total}.",
+        Lang.EN: "Showing the {shown} most coupled of the {total} packages.",
+    },
+    "report.package_edges": {
+        Lang.ES: "Dependencias entre paquetes",
+        Lang.EN: "Dependencies between packages",
+    },
+    "report.package_edge.one": {Lang.ES: "{imports} import", Lang.EN: "{imports} import"},
+    "report.package_edge.other": {Lang.ES: "{imports} imports", Lang.EN: "{imports} imports"},
+    "report.impact": {Lang.ES: "Impacto", Lang.EN: "Impact"},
     "report.coupled_intro": {
         Lang.ES: "El {top} % de los módulos con mayor Ca + Ce. Ca: cuántos módulos lo "
         "importan. Ce: cuántos importa él. Inestabilidad: Ce / (Ca + Ce), de 0 (otros se "
-        "apoyan en él) a 1 (él se apoya en otros).",
+        "apoyan en él) a 1 (él se apoya en otros). Impacto: cuántos módulos dependen de él, "
+        "directa o indirectamente.",
         Lang.EN: "The top {top}% of modules by Ca + Ce. Ca: how many modules import it. "
         "Ce: how many it imports. Instability: Ce / (Ca + Ce), from 0 (others rely on it) "
-        "to 1 (it relies on others).",
+        "to 1 (it relies on others). Impact: how many modules depend on it, directly or "
+        "indirectly.",
     },
     "report.showing": {
         Lang.ES: "Se muestran los {shown} más acoplados de los {total} módulos del {top} % "
@@ -243,6 +265,7 @@ _REPORT: dict[str, dict[Lang, str]] = {
 }
 
 _FINDINGS: dict[str, dict[Lang, str]] = {
+    "finding.impact": {Lang.ES: "impacto {impact}", Lang.EN: "impact {impact}"},
     "finding.unstable_dependency.title": {
         Lang.ES: "Dependencia inestable",
         Lang.EN: "Unstable dependency",
