@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `unskein untangle [PATH]`: for each tangle, the imports to cut, the cheapest
+  refactoring step for each one (move under `TYPE_CHECKING`, import from the defining
+  module, lazy import, move the symbol, extract a shared module, review the package
+  structure) with its evidence, and a simulation of tangles, cycles and coupling before
+  and after. `--all-edges` includes hidden coupling. The `scan` summary points to it
+  when there are tangles.
 - Hidden coupling: the report lists groups of modules that depend on each other only
   through imports inside functions or under `TYPE_CHECKING`, with their own summary
   line and a "Hidden tangles" metric.

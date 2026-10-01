@@ -759,6 +759,54 @@ find_high_coupling → find_findings → summarize_project_packages → find_tan
 impact_radius` y espera un `ParseResult` ya pasado por `resolve_indirection`. Este objeto es
 el punto de unión entre el análisis determinista y la interpretación por IA/reporte.
 
+### `unskein untangle` (`untangle.py`, `graph/steps.py`, `graph/untangle.py`, `report/untangle.py`)
+
+Para cada maraña, propone qué imports cortar y con qué refactor, y simula el resultado.
+
+- **Alcance.** Por defecto el grafo es el de imports que se ejecutan al importar (el mismo
+  de las marañas del escaneo). Con `--all-edges` se usa el grafo completo e incluye el
+  acoplamiento oculto (imports dentro de funciones o bajo `TYPE_CHECKING`). Se atienden como
+  mucho `--max-tangles` marañas (`DEFAULT_MAX_TANGLES = 5`). `scan.parse_project` comparte el
+  parseo con `scan`.
+- **Evidencia** (`parsers/usage.py`). `collect_import_evidence(module, pairs, *, kinds,
+  encoding)` vuelve a leer **solo los módulos que están dentro de una maraña** y devuelve un
+  `ImportEvidence(file_path, lines, symbols, contexts)`: líneas del import, símbolos usados y
+  `UseContext` de cada uso (`ANNOTATION`, `FUNCTION`, `MODULE`). Un conjunto vacío de
+  contextos significa «desconocido» (`NO_EVIDENCE`) y nunca habilita un paso que lo exija.
+  Releer todo es lo que domina el tiempo (8 s en litellm), de ahí que se limite a las marañas.
+- **Pasos y costes** (`StepKind`, `STEP_COSTS`). `choose_step` elige el aplicable más barato:
+
+  | Paso | Coste | Cuándo aplica |
+  |---|---|---|
+  | `TYPE_CHECKING` | 1 | todos los usos son anotaciones |
+  | `BYPASS_FACADE` | 2 | el símbolo se importa vía una fachada y lo define otro módulo |
+  | `LAZY` | 3 | todos los usos están dentro de funciones |
+  | `MOVE_SYMBOL` | 4 | a lo sumo `MAX_MOVABLE_SYMBOLS = 2` símbolos |
+  | `EXTRACT_SHARED` | 6 | hay símbolos compartidos que extraer |
+  | `PACKAGE_STRUCTURE` | 1000 | revisar la estructura de paquetes |
+
+  Un import que ya es perezoso o está bajo `TYPE_CHECKING` no vuelve a ofrecer esos pasos con
+  `--all-edges`. Una fachada que importa a su propio descendiente solo admite
+  `PACKAGE_STRUCTURE`.
+- **Por qué `PACKAGE_STRUCTURE` es prohibitivo y por qué existe `BYPASS_FACADE`.** En networkx,
+  14 de 15 cortes eran aristas fachada a hijo propio y con costes planos el algoritmo las
+  elegía porque todas cuestan igual. Con coste 1000 solo quedan las inevitables (3). Esas
+  aristas se resuelven casi siempre importando desde el módulo que define el símbolo, así que
+  se añadió `BYPASS_FACADE`: 29 de 32 cortes en networkx y 3 de 3 en aiohttp.
+- **Cortes** (`find_cuts`). Conjunto de aristas de realimentación de coste mínimo:
+  Eades–Lin–Smyth ponderado (ordenación de nodos) más una pasada que reañade las aristas
+  cortadas que no reabren ningún ciclo. Es una **heurística**, no el óptimo (el problema es
+  NP-difícil), pero **determinista**: mismo grafo, mismos cortes. `plan_tangles` lo aplica a
+  cada maraña.
+- **Simulación** (`simulate`). Quita los cortes y recalcula marañas y ciclos sobre el grafo
+  del alcance, y el acoplamiento sobre todas las dependencias. Es **optimista**: supone que
+  cada paso se aplica sin crear dependencias nuevas.
+- **Informe** (`render_untangle`). Texto «etiqueta: valor», coste por corte y nota de
+  heurística tras la simulación. Límites: `MAX_CUTS_SHOWN = 30`, `MAX_CHANGES_SHOWN = 15`,
+  `MAX_MEMBERS_SHOWN = 10`, `MAX_SYMBOLS_SHOWN = 3`; sugiere `--all-edges` si no se usó.
+- **Calibración medida.** rich: unos 30 cortes; litellm: 172 a 220; los cortes cuestan
+  menos de 35 ms; el tiempo lo domina la relectura de evidencia.
+
 ---
 
 ## 5. Pipeline de IA (`ai/client.py`, `ai/prompts.py`)

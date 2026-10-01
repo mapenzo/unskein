@@ -71,6 +71,9 @@ Architecture health: fair.
   layers you declare.
 - **Package overview and impact**: coupling measured between packages, and for each
   coupled module how many others depend on it, directly or indirectly.
+- **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
+  cheapest refactoring step for each (with file, line and symbols) and a before/after
+  simulation. No other open-source Python tool proposes cuts.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
   Only imports that run when the code is imported count; those inside functions or under
   `TYPE_CHECKING` are reported apart as hidden coupling.
