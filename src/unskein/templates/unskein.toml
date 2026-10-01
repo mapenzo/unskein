@@ -76,6 +76,10 @@
 # orchestrator_percentile = 95
 # orchestrator_min_efferent = 10
 
+# How many dotted segments name a package in the "Packages" section of the
+# report: 1 groups core.db and core.http under "core", 2 keeps them apart.
+# package_depth = 1
+
 # Modules that are run from outside the code and so never count as orphans
 # (names or patterns). Scripts in pyproject.toml and __main__ modules are
 # detected on their own.

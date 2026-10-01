@@ -272,3 +272,24 @@ def test_unknown_findings_key_is_a_config_error(tmp_path: Path) -> None:
         load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
 
     assert raised.value.key == ErrorKey.UNKNOWN_KEY
+
+
+def test_package_depth_defaults_to_one() -> None:
+    assert FindingsConfig().package_depth == 1
+
+
+def test_package_depth_comes_from_the_toml(tmp_path: Path) -> None:
+    write(tmp_path / ".unskein.toml", "[findings]\npackage_depth = 2\n")
+    toml = load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert resolve_findings_config(toml, None).package_depth == 2
+
+
+@pytest.mark.parametrize("line", ["package_depth = 0", "package_depth = -1"])
+def test_package_depth_must_be_positive(tmp_path: Path, line: str) -> None:
+    write(tmp_path / ".unskein.toml", f"[findings]\n{line}\n")
+
+    with pytest.raises(ConfigError) as raised:
+        load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
+
+    assert raised.value.key == ErrorKey.INVALID_VALUE
