@@ -9,6 +9,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from unskein.parsers.discovery import detect_encoding
+from unskein.parsers.indirection import walk_submodules
 from unskein.parsers.models import ImportKind, ModuleInfo, ParseResult
 
 
@@ -433,10 +434,12 @@ class _ReadThroughCollector:
 
     Args:
         wanted: Names of interest per module.
+        modules: Names of the project modules.
     """
 
-    def __init__(self, wanted: Mapping[str, Collection[str]]):
+    def __init__(self, wanted: Mapping[str, Collection[str]], modules: frozenset[str]):
         self.wanted = {module: frozenset(names) for module, names in wanted.items()}
+        self.modules = modules
         self.below: dict[str, list[str]] = {}
         for module in self.wanted:
             for ancestor in _ancestors_and_self(module):
@@ -463,20 +466,45 @@ class _ReadThroughCollector:
             self.found.setdefault(module, set()).add(symbol)
 
     def add_chains(self, module: str, chains: Collection[str]) -> None:
-        """Count the wanted names that appear in attribute chains read through a module.
+        """Count the wanted names read through a module by attribute chains.
 
-        A segment matching a wanted name of the module or of one of its submodules
-        counts, wherever it sits in the chain: over-counting only costs a cheap step.
+        Each chain is walked down the project's submodules; the attribute after the last
+        submodule is a name read from that submodule.
 
         Args:
             module: Module the chains are read through.
             chains: Dotted attribute chains, e.g. ``sub.Thing``.
         """
-        segments = {segment for chain in chains for segment in chain.split(".")}
-        for inner in self.below.get(module, ()):
-            read = segments & self.wanted[inner]
-            if read:
-                self.found.setdefault(inner, set()).update(read)
+        for chain in chains:
+            reached, symbol = walk_submodules(module, chain, self.modules)
+            if symbol is not None:
+                self.add_symbol(reached, symbol)
+
+
+def _alias_refers_to(node: ast.Import | ast.ImportFrom, module: str) -> tuple[str, str] | None:
+    """Find the name an import statement binds for a module and the module that name refers to.
+
+    ``import a.b`` binds ``a``, which refers to the package ``a``, not to ``a.b``.
+
+    Args:
+        node: The import statement.
+        module: Absolute module the statement imports as a whole.
+
+    Returns:
+        ``(bound name, module it refers to)``, or None when no alias of the statement
+        imports that module (a star import, or a target that fell back to an ancestor).
+    """
+    for alias in node.names:
+        if isinstance(node, ast.Import):
+            if alias.name != module:
+                continue
+            if alias.asname:
+                return alias.asname, module
+            top = module.split(".")[0]
+            return top, top
+        if alias.name != "*" and (module == alias.name or module.endswith(f".{alias.name}")):
+            return alias.asname or alias.name, module
+    return None
 
 
 def _whole_module_reads(
@@ -493,14 +521,29 @@ def _whole_module_reads(
         for _, module in imports:
             collector.add_all(module)
         return
-    bound = bound_names_by_line(tree)
-    usages = collect_name_usage(tree, {name for line, _ in imports for name in bound.get(line, ())})
+    by_line: dict[int, list[str]] = {}
     for line, module in imports:
-        names = bound.get(line, ())
-        if not names or any(usages[name].escapes for name in names):
-            collector.add_all(module)
+        by_line.setdefault(line, []).append(module)
+    refers: dict[str, set[str]] = {}
+    matched: set[tuple[int, str]] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
             continue
-        collector.add_chains(module, {chain for name in names for chain in usages[name].chains})
+        for module in by_line.get(node.lineno, ()):
+            binding = _alias_refers_to(node, module)
+            if binding is not None:
+                refers.setdefault(binding[0], set()).add(binding[1])
+                matched.add((node.lineno, module))
+    # Star imports, targets that fell back to an ancestor, or a file changed since the scan.
+    for line, module in imports:
+        if (line, module) not in matched:
+            collector.add_all(module)
+    usages = collect_name_usage(tree, refers)
+    for name, modules in refers.items():
+        for module in modules:
+            if usages[name].escapes:
+                collector.add_all(module)
+            collector.add_chains(module, usages[name].chains)
 
 
 def collect_names_read_from(
@@ -522,7 +565,7 @@ def collect_names_read_from(
     Returns:
         The wanted names read from each module that has any.
     """
-    collector = _ReadThroughCollector(wanted)
+    collector = _ReadThroughCollector(wanted, frozenset(module.name for module in parsed.modules))
     for module in parsed.modules:
         pending: list[tuple[int, str]] = []
         for edge in module.imports:

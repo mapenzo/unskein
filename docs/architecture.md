@@ -801,9 +801,13 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   apuntarían `c` al módulo que define el nombre y ocultarían el paso por `a`); los imports
   bajo `TYPE_CHECKING` no cuentan. Los accesos por atributo que el parser no analizó (import
   de un módulo entero que no es paquete) se buscan releyendo solo esos importadores; un
-  importador ilegible cuenta como si leyera todos los nombres. Es conservador: un segmento
-  de la cadena con el nombre basta. Límite: un paquete antecesor usado suelto
-  (`getattr(pkg, n)`) no se sigue hasta sus submódulos.
+  importador ilegible cuenta como si leyera todos los nombres. Cada cadena se recorre por los
+  submódulos del proyecto (`walk_submodules`, compartido con `resolve_access`) y el nombre
+  enlazado se atribuye al módulo al que apunta (`import pkg.a` enlaza `pkg`, no `pkg.a`).
+  Límites: un paquete antecesor usado suelto (`getattr(pkg, n)`) no se sigue hasta sus
+  submódulos; y una cadena literal igual al nombre (`provider="ollama"`) cuenta como uso
+  suelto, el mismo criterio conservador de la fase 0b (en litellm, 2 pasos `LAZY` pasan a
+  `MOVE_SYMBOL` por esto).
 - **Por qué `PACKAGE_STRUCTURE` es prohibitivo y por qué existe `BYPASS_FACADE`.** En networkx,
   14 de 15 cortes eran aristas fachada a hijo propio y con costes planos el algoritmo las
   elegía porque todas cuestan igual. Con coste 1000 solo quedan las inevitables (3). Esas

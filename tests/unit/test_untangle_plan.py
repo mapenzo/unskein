@@ -243,6 +243,17 @@ def test_no_lazy_step_for_a_name_other_modules_import_from_the_source(
         ),
         ({"reexp/c.py": "from reexp import a\n\nY = a.make\n"}, StepKind.LAZY),
         (
+            {"reexp/c.py": "import reexp.a\n\nY = reexp.a.make\nZ = getattr(reexp, 'b')\n"},
+            StepKind.LAZY,
+        ),
+        (
+            {
+                "reexp/__init__.py": "from reexp.b import Thing\n",
+                "reexp/c.py": "import reexp as r\n\nY = r.Thing\n",
+            },
+            StepKind.LAZY,
+        ),
+        (
             {
                 "reexp/c.py": "from typing import TYPE_CHECKING\n\n"
                 "if TYPE_CHECKING:\n    from reexp.a import Thing\n"
@@ -258,6 +269,8 @@ def test_no_lazy_step_for_a_name_other_modules_import_from_the_source(
         "module_used_by_itself",
         "attribute_of_a_package_re_export",
         "other_attribute_only",
+        "package_name_used_by_itself",
+        "same_name_read_from_the_package",
         "type_only_import",
     ],
 )
