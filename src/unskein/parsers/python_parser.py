@@ -2,6 +2,7 @@
 
 import ast
 import os
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from unskein.parsers.models import (
     ReExport,
     WarningCode,
 )
+from unskein.parsers.usage import collect_name_usage
 
 # Import statements only occur in statement lists; ``handlers`` holds ExceptHandler
 # nodes and ``cases`` holds match_case nodes, each with its own ``body``. The order
@@ -100,10 +102,12 @@ class ProjectIndex:
     Attributes:
         modules: Dotted names of all project modules.
         top_level: First segments of those names (the project's top-level packages).
+        packages: Modules that have submodules, i.e. the package facades (their ``__init__.py``).
     """
 
     modules: frozenset[str]
     top_level: frozenset[str]
+    packages: frozenset[str]
 
     @classmethod
     def from_names(cls, names: set[str]) -> "ProjectIndex":
@@ -115,7 +119,20 @@ class ProjectIndex:
         Returns:
             The index over those names.
         """
-        return cls(frozenset(names), frozenset(n.split(".")[0] for n in names))
+        parents = {name.rpartition(".")[0] for name in names}
+        top_level = frozenset(name.split(".")[0] for name in names)
+        return cls(frozenset(names), top_level, frozenset(parents & names))
+
+    def is_package(self, name: str) -> bool:
+        """Return whether a project module has submodules.
+
+        Args:
+            name: Dotted module name.
+
+        Returns:
+            True when some other project module lives under it.
+        """
+        return name in self.packages
 
     def is_external(self, name: str) -> bool:
         """Return whether a module name lies outside the project.
@@ -207,6 +224,20 @@ def module_name(file_path: Path, source_roots: list[Path]) -> str:
     raise ValueError(f"{file_path} is outside every source root")
 
 
+@dataclass(frozen=True, slots=True)
+class Binding:
+    """A name an import statement binds in the module.
+
+    Attributes:
+        name: The bound name.
+        is_module: Whether the name refers to the imported module itself; ``import a.b``
+            binds ``a``, not ``a.b``.
+    """
+
+    name: str
+    is_module: bool
+
+
 class _ImportCollector:
     """Collect the imports, re-exports and warnings of one parsed module.
 
@@ -214,6 +245,10 @@ class _ImportCollector:
         file_path: Source file being parsed (used in warnings).
         source: Dotted name of the module being parsed.
         index: Index of all project modules.
+
+    Attributes:
+        package_bindings: Bound name to the index of the edge of the package it refers to.
+        bound_counts: How many import statements bind each name.
     """
 
     def __init__(self, file_path: Path, source: str, index: ProjectIndex):
@@ -224,6 +259,8 @@ class _ImportCollector:
         self.edges: list[ImportEdge] = []
         self.re_exports: list[ReExport] = []
         self.warnings: list[ParseWarning] = []
+        self.package_bindings: dict[str, int] = {}
+        self.bound_counts: Counter[str] = Counter()
 
     def warn(self, code: WarningCode, line: int, detail: str) -> None:
         """Record a warning located at a line of the current file.
@@ -236,7 +273,13 @@ class _ImportCollector:
         self.warnings.append(ParseWarning(code, self.file_path, line, detail))
 
     def add(
-        self, name: str, symbol: str | None, line: int, *, kind: ImportKind = ImportKind.MODULE
+        self,
+        name: str,
+        symbol: str | None,
+        line: int,
+        *,
+        kind: ImportKind = ImportKind.MODULE,
+        binding: Binding | None = None,
     ) -> str | None:
         """Record an import edge towards a module.
 
@@ -248,10 +291,13 @@ class _ImportCollector:
             symbol: Imported symbol, or None for a whole-module import.
             line: Line of the import statement.
             kind: Where the statement sits.
+            binding: The name the statement binds, when it binds one.
 
         Returns:
             The internal target module, or None if external or unresolved.
         """
+        if binding is not None:
+            self.bound_counts[binding.name] += 1
         if self.index.is_external(name):
             self.edges.append(ImportEdge(self.source, name, True, symbol, line, kind))
             return None
@@ -263,7 +309,33 @@ class _ImportCollector:
             self.warn(WarningCode.UNRESOLVED_IMPORT, line, f"{name} -> {target}")
         if target != self.source:
             self.edges.append(ImportEdge(self.source, target, False, symbol, line, kind))
+            if binding is not None and self.binds_package(
+                binding, symbol, target, is_exact=target == name
+            ):
+                self.package_bindings[binding.name] = len(self.edges) - 1
         return target
+
+    def binds_package(
+        self, binding: Binding | None, symbol: str | None, target: str, *, is_exact: bool
+    ) -> bool:
+        """Tell whether an import binds a name to a package worth analyzing.
+
+        Args:
+            binding: The name the statement binds, if any.
+            symbol: Imported symbol, or None for a whole-module import.
+            target: Internal module the edge points to.
+            is_exact: Whether the target is the module the statement names, not a fallback ancestor.
+
+        Returns:
+            True when the bound name is the package ``target`` itself.
+        """
+        return (
+            binding is not None
+            and binding.is_module
+            and symbol is None
+            and is_exact
+            and self.index.is_package(target)
+        )
 
     def relative_base(self, node: ast.ImportFrom) -> str | None:
         """Return the absolute module a relative `from` import refers to.
@@ -295,7 +367,9 @@ class _ImportCollector:
         for node, kind in iter_statements(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    self.add(alias.name, None, node.lineno, kind=kind)
+                    top, _, rest = alias.name.partition(".")
+                    bound = Binding(alias.asname, True) if alias.asname else Binding(top, not rest)
+                    self.add(alias.name, None, node.lineno, kind=kind, binding=bound)
             elif isinstance(node, ast.ImportFrom):
                 base = self.relative_base(node) if node.level else node.module
                 if base:
@@ -318,14 +392,38 @@ class _ImportCollector:
                 self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
                 self.add(base, None, node.lineno, kind=kind)
                 continue
+            binding = Binding(alias.asname or alias.name, True)
             submodule = f"{base}.{alias.name}"
             if submodule in self.index.modules:
-                self.add(submodule, None, node.lineno, kind=kind)
+                self.add(submodule, None, node.lineno, kind=kind, binding=binding)
                 continue
-            target = self.add(base, alias.name, node.lineno, kind=kind)
+            target = self.add(base, alias.name, node.lineno, kind=kind, binding=binding)
             if self.is_package and target is not None and target != self.source:
                 exported = alias.asname or alias.name
                 self.re_exports.append(ReExport(self.source, target, exported))
+
+    def attach_usage(self, tree: ast.Module) -> None:
+        """Record on each package import how the module uses the name it binds.
+
+        Only names bound by exactly one import are analyzed: a second binding could
+        make the attribute uses belong to another module. The tree is walked only
+        when the module imports at least one package.
+
+        Args:
+            tree: Parsed module the collector visited.
+        """
+        tracked = {
+            name: index
+            for name, index in self.package_bindings.items()
+            if self.bound_counts[name] == 1
+        }
+        if not tracked:
+            return
+        usages = collect_name_usage(tree, tracked)
+        for name, index in tracked.items():
+            edge = self.edges[index]
+            edge.accessed = tuple(sorted(usages[name].chains))
+            edge.escapes = usages[name].escapes
 
 
 def parse_file(
@@ -360,6 +458,7 @@ def parse_file(
         return FileParseResult(None, warnings=[warning])
     collector = _ImportCollector(file_path, name, index)
     collector.visit(tree)
+    collector.attach_usage(tree)
     return FileParseResult(
         ModuleInfo(name, file_path, collector.edges), collector.re_exports, collector.warnings
     )
