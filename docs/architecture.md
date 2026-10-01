@@ -773,13 +773,13 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   `ImportEvidence(file_path, lines, symbols, contexts)`: líneas del import, símbolos usados y
   `UseContext` de cada uso (`ANNOTATION`, `FUNCTION`, `MODULE`). Un conjunto vacío de
   contextos significa «desconocido» (`NO_EVIDENCE`) y nunca habilita un paso que lo exija.
-  Releer todo es lo que domina el tiempo (8 s en litellm), de ahí que se limite a las marañas.
+  Releer todo es lo que domina el tiempo: durante la calibración, releer todos los módulos de litellm costaba 8 s; releer solo los de las marañas deja la ejecución completa de `untangle` en litellm en unos 3,4 s.
 - **Pasos y costes** (`StepKind`, `STEP_COSTS`). `choose_step` elige el aplicable más barato:
 
   | Paso | Coste | Cuándo aplica |
   |---|---|---|
   | `TYPE_CHECKING` | 1 | todos los usos son anotaciones |
-  | `BYPASS_FACADE` | 2 | el símbolo se importa vía una fachada y lo define otro módulo |
+  | `BYPASS_FACADE` | 2 | el destino del import es una fachada de paquete (`target in facades`) |
   | `LAZY` | 3 | todos los usos están dentro de funciones |
   | `MOVE_SYMBOL` | 4 | a lo sumo `MAX_MOVABLE_SYMBOLS = 2` símbolos |
   | `EXTRACT_SHARED` | 6 | hay símbolos compartidos que extraer |
@@ -804,8 +804,12 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
 - **Informe** (`render_untangle`). Texto «etiqueta: valor», coste por corte y nota de
   heurística tras la simulación. Límites: `MAX_CUTS_SHOWN = 30`, `MAX_CHANGES_SHOWN = 15`,
   `MAX_MEMBERS_SHOWN = 10`, `MAX_SYMBOLS_SHOWN = 3`; sugiere `--all-edges` si no se usó.
-- **Calibración medida.** rich: unos 30 cortes; litellm: 172 a 220; los cortes cuestan
-  menos de 35 ms; el tiempo lo domina la relectura de evidencia.
+- **Calibración medida.** Con costes planos, 14 de 15 cortes de networkx eran aristas
+  fachada a hijo propio (de ahí el coste de `PACKAGE_STRUCTURE` y `BYPASS_FACADE`). Resultado
+  final de esta rama, sin `--all-edges`: networkx 32 cortes (29 `BYPASS_FACADE` y 3
+  `PACKAGE_STRUCTURE`), rich 28, aiohttp 3, botocore 2 y litellm 228; todos con 0 marañas y
+  0 ciclos tras la simulación. Los cortes cuestan menos de 35 ms; el tiempo lo domina la
+  relectura de evidencia.
 
 ---
 
