@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Monorepos without configuration: every `pyproject.toml`, `setup.py` or `setup.cfg`
+  marks a distribution, and its files take the name Python imports them by (uv,
+  maturin, hatch, poetry and setuptools declarations are read; `setup.py` is never
+  run). Imports between workspace members are internal now.
+- Scripts: code no distribution ships and nothing imports (CI, examples, tooling) is
+  listed in its own report section and counts as *consumers* of the modules it uses,
+  not in Ca, metrics or findings (except layers).
+- Warnings for unreadable manifests, declared packages that do not exist and repeated
+  module names.
+
+### Changed
+
+- In projects with nested manifests, module names follow the distribution that ships
+  each file (`enterprise/litellm_enterprise/x.py` is `litellm_enterprise.x`). Set
+  `[analysis] source_roots` to keep the previous naming.
+- Entry points are read from the scripts of every distribution, not only the root one.
+
 ## [0.3.0] - 2026-10-01
 
 ### Added

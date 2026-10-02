@@ -131,6 +131,7 @@ src/unskein/
 │   ├── models.py           # ImportEdge, ModuleInfo, ReExport, ParseResult
 │   ├── base.py             # interfaz LanguageAdapter (el "adapter")
 │   ├── discovery.py        # os.walk, excludes, encoding
+│   ├── layout.py           # distribuciones desde manifiestos y nombre de cada archivo
 │   ├── indirection.py      # resolución de re-exports
 │   ├── usage.py            # uso de nombres importados: acceso por atributo y evidencia para `untangle`
 │   ├── exports.py          # nombres que un módulo expone a `import *`
@@ -140,6 +141,7 @@ src/unskein/
 │   ├── coupling.py          # CouplingMetrics (módulo aparte: evita el ciclo metrics ↔ findings)
 │   ├── metrics.py           # Ca, Ce, inestabilidad, ciclos
 │   ├── findings.py          # hallazgos: reglas deterministas sobre el grafo
+│   ├── scripts.py           # scripts (no empaquetados y sin importadores) y consumidores
 │   ├── impact.py            # radio de impacto transitivo (impact_radius)
 │   ├── steps.py             # pasos de refactor y sus costes (choose_step)
 │   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
@@ -173,6 +175,10 @@ para paquetes Python distribuibles).
   sentencias. `cycles` y `tangles` solo usan aristas `MODULE`; las marañas que solo
   existen con imports perezosos o de tipos son `hidden_tangles`. Ca/Ce, hallazgos,
   capas e impacto cuentan todas las aristas.
+- **Ca solo dentro del sistema.** El layout (`parsers/layout.py`) nombra cada archivo por
+  la distribución que lo empaqueta; lo no empaquetado que nadie importa es *script*: fuera
+  de Ca/Ce, marañas, impacto, paquetes y hallazgos (salvo capas), y cuenta como
+  *consumidor* de lo que importa. `source_roots` desactiva la detección.
 - **Resolución de re-exports (indirección) es parte de v0.1**, no se pospuso.
   Ver `docs/architecture.md` para el algoritmo completo (incluye límite de
   profundidad y detección de ciclos de re-export). Incluye el acceso por atributo
