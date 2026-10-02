@@ -227,3 +227,11 @@ def test_findings_section_is_shown_by_default(circular_imports: Path) -> None:
 
     assert result.exit_code == 0
     assert "Findings" in plain(result.output)
+
+
+def test_scan_of_a_workspace_counts_member_imports_as_internal() -> None:
+    root = Path(__file__).parent.parent / "fixtures" / "workspace_monorepo"
+    result = runner.invoke(app, ["scan", str(root), "--no-ai", "--lang", "en"])
+    assert result.exit_code == 0
+    assert "core_enterprise" in result.output
+    assert ".circleci.scripts" not in result.output

@@ -20,6 +20,11 @@ class WarningCode(StrEnum):
         PARSE_TIMEOUT: Parsing a file exceeded ``per_file_timeout_seconds``; it was skipped.
         REEXPORT_CYCLE: Re-exports of a symbol form a cycle.
         REEXPORT_DEPTH_EXCEEDED: A re-export chain is longer than the resolution limit.
+        MANIFEST_UNREADABLE: A ``pyproject.toml`` or ``setup.cfg`` could not be read or
+            parsed; its distribution is detected with the heuristic.
+        DECLARED_PACKAGE_MISSING: A manifest declares a package that does not exist on disk.
+        MODULE_NAME_COLLISION: Two files would take the same module name; the one in the
+            shallower distribution is named by its path.
     """
 
     STAR_IMPORT = "star_import"
@@ -30,6 +35,9 @@ class WarningCode(StrEnum):
     PARSE_TIMEOUT = "parse_timeout"
     REEXPORT_CYCLE = "reexport_cycle"
     REEXPORT_DEPTH_EXCEEDED = "reexport_depth_exceeded"
+    MANIFEST_UNREADABLE = "manifest_unreadable"
+    DECLARED_PACKAGE_MISSING = "declared_package_missing"
+    MODULE_NAME_COLLISION = "module_name_collision"
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +142,8 @@ class ModuleInfo:
         public_names: Names the module exposes to ``from module import *``, sorted.
         declares_all: Whether those names come from a literal ``__all__``.
         bound_names: Every name the module binds at module level, sorted.
+        is_packaged: Whether a distribution ships the module; unpackaged modules that
+            nothing imports are scripts.
     """
 
     name: str
@@ -142,6 +152,7 @@ class ModuleInfo:
     public_names: tuple[str, ...] = ()
     declares_all: bool = False
     bound_names: tuple[str, ...] = ()
+    is_packaged: bool = True
 
 
 # Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.
@@ -193,10 +204,14 @@ class ParsePlan:
             must be combined.
         shared: Read-only data every task needs (for Python, the project index);
             must be picklable.
+        warnings: Problems found while naming the files (manifests, collisions).
+        entry_points: Modules the project's distributions declare as scripts.
     """
 
     tasks: list[ParseTask]
     shared: Any
+    warnings: list[ParseWarning] = field(default_factory=list)
+    entry_points: tuple[str, ...] = ()
 
 
 @dataclass
@@ -209,25 +224,38 @@ class ParseResult:
         re_exports: Re-exports detected in package facades.
         warnings: Problems that skipped a file or an import without stopping
             the analysis.
+        entry_points: Modules the project's distributions declare as scripts.
     """
 
     modules: list[ModuleInfo]
     language: str
     re_exports: list[ReExport] = field(default_factory=list)
     warnings: list[ParseWarning] = field(default_factory=list)
+    entry_points: tuple[str, ...] = ()
 
     @classmethod
-    def from_file_results(cls, language: str, file_results: Iterable[FileParseResult]) -> Self:
+    def from_file_results(
+        cls,
+        language: str,
+        file_results: Iterable[FileParseResult],
+        *,
+        plan: ParsePlan | None = None,
+    ) -> Self:
         """Combine per-file results, in the order given, into one project result.
 
         Args:
             language: Name of the language the modules are written in.
             file_results: One result per parsed file.
+            plan: The plan the files were parsed from; its warnings come first and its
+                entry points are kept.
 
         Returns:
             The combined result; skipped files contribute only their warnings.
         """
         result = cls(modules=[], language=language)
+        if plan is not None:
+            result.warnings.extend(plan.warnings)
+            result.entry_points = plan.entry_points
         for file_result in file_results:
             if file_result.module is not None:
                 result.modules.append(file_result.module)

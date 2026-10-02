@@ -27,6 +27,15 @@ unskein scan ruta/al/proyecto --no-ai
 hace falta ningún archivo de configuración: todas las opciones tienen un valor
 por defecto.
 
+En monorepos no hace falta configurar nada: cada `pyproject.toml`, `setup.py` o
+`setup.cfg` marca una distribución y sus archivos se nombran como los importa Python
+(`enterprise/litellm_enterprise/x.py` es `litellm_enterprise.x`), así que los imports
+entre miembros del workspace cuentan como internos. El código que ninguna distribución
+empaqueta y nadie importa (CI, ejemplos, utilidades) se lista aparte como *scripts*: no
+cuenta en Ca, métricas ni hallazgos (salvo capas) y aparece como *consumidores* de lo que
+importa. Si prefieres el nombrado por carpetas, `[analysis] source_roots` desactiva la
+detección.
+
 ## Cómo leer el informe
 
 - **Resumen**: módulos, dependencias internas y ciclos, el módulo más acoplado

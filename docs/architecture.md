@@ -298,6 +298,58 @@ default_encoding`) es solo el *fallback* para cuando el archivo no declara
 cookie y la detección automática falla — nunca fuerza un encoding sobre un
 archivo que ya lo declara explícitamente.
 
+## 2.6. Layout del proyecto (`parsers/layout.py`)
+
+Un monorepo tiene varias distribuciones, y cada archivo debe nombrarse como lo
+importa Python según la que lo empaqueta. `ProjectLayout` se calcula una vez dentro
+de `plan_parse` y solo se usa ahí (`build_layout` + `name_files`); el `ParsePlan` que llega
+a los workers lleva las tareas ya nombradas, el `ProjectIndex` compartido (con los archivos
+no empaquetados), los warnings y los entry points. Sin configuración.
+
+**Detección.** Una distribución es un directorio con `pyproject.toml`, `setup.py` o
+`setup.cfg`; la raíz del proyecto lo es siempre, aunque no tenga manifiesto. Los
+manifiestos se buscan en los directorios que el recorrido de discovery ya alcanzó (con
+sus excludes y su política de symlinks): no hay un segundo `os.walk`. `setup.py` nunca
+se ejecuta, solo marca la distribución.
+
+**Raíz de import**: `src/` si existe y no es paquete, o el override del backend
+(`[tool.uv.build-backend] module-root`, donde `""` es la raíz de la distribución,
+`[tool.maturin] python-source`, `[tool.setuptools] package-dir`, `package_dir` de
+`setup.cfg`).
+
+**Paquetes que empaqueta**, por precedencia: (1) los declarados (`module-name` de uv y
+maturin, `packages` de hatch, poetry y setuptools, `[options] packages` de
+`setup.cfg`); (2) lo que empaqueta el backend cuando no declara nada, que depende de él: con
+setuptools (`build-backend` que empieza por `setuptools`; o sin `[build-system]` ni
+tabla de uv, maturin, hatch o poetry que declare raíz o paquetes; o solo `setup.py` /
+`setup.cfg`) rige el autodescubrimiento: el directorio con el nombre normalizado de la
+distribución (`litellm-enterprise` → `litellm_enterprise`) **más** todo paquete regular;
+con cualquier otro backend, solo el del nombre normalizado y, si no existe, todo
+subdirectorio de la raíz de import que sea identificador y tenga `__init__.py`. Si nada
+de eso encuentra paquetes, o la raíz no tiene manifiesto, la distribución empaqueta todo
+lo que contiene (el nombrado de siempre).
+
+**Nombrado** (`ProjectLayout.name_of`): lo nombra la distribución más profunda cuyo
+`import_root` contiene el archivo y cuyo primer segmento está en `packages`
+(`is_packaged=True`). Si ninguna lo empaqueta, el nombre es relativo a la raíz del
+proyecto (`is_packaged=False`); si algún segmento no es identificador (`.circleci`,
+`e2e-stack`), se nombra por ruta POSIX, que contiene `/` y por tanto nunca coincide con
+un import. `__init__.py` colapsa al paquete.
+
+**Colisiones** (`name_files`): con el mismo nombre con punto gana el archivo nombrado por la
+raíz de import más profunda (uno que ninguna distribución empaqueta pierde ante cualquiera);
+el empate se resuelve por ruta, la menor en orden alfabético. Los demás se nombran por ruta y se emite `MODULE_NAME_COLLISION`. Manifiesto ilegible
+(`MANIFEST_UNREADABLE`, usa la heurística) y paquete declarado inexistente
+(`DECLARED_PACKAGE_MISSING`, se ignora esa entrada) también son warnings: el análisis
+nunca se aborta por un manifiesto del usuario.
+
+**`source_roots`** configurado desactiva la detección: un `Distribution` por raíz
+configurada más la raíz del proyecto, cada uno empaqueta todo lo que contiene.
+
+`ProjectIndex.from_names` construye `top_level` solo con nombres importables (sin `/`),
+así que los imports entre miembros del workspace son internos. Los entry points se leen
+de los scripts de todas las distribuciones, no solo de la raíz.
+
 ## 3. Parser de Python (`parsers/python_parser.py`)
 
 Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
@@ -714,6 +766,21 @@ aplicados) y construye el grafo real.
   los módulos que definen cada símbolo. Los usos que no se pueden resolver siguen
   apuntando a la fachada, y ahí sí es un dato real.
 
+### Ca interno y consumidores (`graph/scripts.py`)
+
+Ca cuenta dependencias desde dentro del sistema medido (Martin): un consumidor externo
+no forma parte de él. Un *script* es un archivo que ninguna distribución empaqueta
+(`is_packaged=False`) y que nadie importa (Ca = 0 contando todos los `ImportKind`); los
+nombrados por ruta lo son siempre. Los entry points declarados nunca son huérfanos. El
+grafo completo conserva las aristas script → módulo, pero Ca, Ce,
+inestabilidad, impacto, marañas, ciclos, percentil y tabla de paquetes se calculan sobre
+el subgrafo de módulos (`nx.subgraph_view`, sin copia). `CouplingMetrics.consumers` es el
+número de scripts distintos que importan el módulo. Los scripts no se evalúan en
+huérfano, orquestador, cuello de botella ni dependencia inestable; la violación de capas
+sí los evalúa, y la comprobación de que las capas declaradas coinciden con algún módulo
+también los cuenta. Un módulo que solo importan scripts sigue siendo módulo y nunca es
+huérfano.
+
 ### Impacto transitivo y paquetes (`graph/impact.py`, `graph/packages.py`)
 
 - **Radio de impacto** (`impact_radius(graph, modules)`): para cada módulo, cuántos módulos
@@ -1025,7 +1092,11 @@ Estructura del reporte:
 ## Resumen                          (con o sin IA — nunca vacío)
 ## Métricas generales
 ## Ciclos de dependencia
-## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado)
+## Paquetes                         (si hay resumen por paquetes)
+## Scripts                          (solo si hay scripts: por directorio de primer nivel,
+                                    con recuento y paquetes que usan)
+## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado; columna
+                                    Consumidores solo si algún módulo tiene)
 ## Problemas señalados (IA)         (siempre presente: los problemas si hay AIReport;
                                     si no, el aviso de por qué no hay: DISABLED,
                                     NOT_CONFIGURED o FAILED)

@@ -82,7 +82,9 @@ class LanguageAdapter(ABC):
         """
         plan = self.plan_parse(files, root)
         return ParseResult.from_file_results(
-            self.language_name, (self.parse_task(task, plan.shared) for task in plan.tasks)
+            self.language_name,
+            (self.parse_task(task, plan.shared) for task in plan.tasks),
+            plan=plan,
         )
 
     @abstractmethod

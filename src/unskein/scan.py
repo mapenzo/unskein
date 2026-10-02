@@ -22,7 +22,6 @@ from unskein.config import (
     resolve_analysis_config,
     resolve_findings_config,
 )
-from unskein.entry_points import read_script_modules
 from unskein.errors import ErrorKey, UnskeinError
 from unskein.graph.findings import unmatched_layers
 from unskein.graph.metrics import AnalysisResult, analyze
@@ -147,7 +146,7 @@ def prepare_scan(
         ai_config=ai_config,
         ai_disabled=options.no_ai,
         min_severity=options.min_severity,
-        findings=resolve_findings_config(toml, options.findings, read_script_modules(options.path)),
+        findings=resolve_findings_config(toml, options.findings),
     )
 
 
@@ -222,9 +221,11 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
     Raises:
         UnskeinError: If the path is not a directory or holds no Python files.
     """
-    result = analyze(parse_project(context), context.findings)
+    parsed = parse_project(context)
+    result = analyze(parsed, context.findings)
     if context.findings.enabled:
-        for layer in unmatched_layers(result.graph.nodes, context.findings.layers):
+        known_modules = [*result.graph.nodes, *result.scripts]
+        for layer in unmatched_layers(known_modules, context.findings.layers):
             logger.warning("Layer %s in [layers] matches no module of the project", layer)
     logger.debug(
         "Analyzed %d modules, %d dependencies",

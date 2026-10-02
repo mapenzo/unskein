@@ -237,13 +237,13 @@ def test_findings_flag_beats_the_toml(
     assert resolve_findings_config(toml, flag).enabled is expected
 
 
-def test_script_entry_points_come_before_the_configured_ones(tmp_path: Path) -> None:
+def test_findings_entry_points_come_only_from_the_toml(tmp_path: Path) -> None:
     write(tmp_path / ".unskein.toml", '[findings]\nentry_points = ["app.cli"]\n')
     toml = load_toml_config(tmp_path, user_config=tmp_path / "nope.toml")
 
-    config = resolve_findings_config(toml, None, ("pkg.main",))
+    config = resolve_findings_config(toml, None)
 
-    assert config.entry_points == ("pkg.main", "app.cli")
+    assert config.entry_points == ("app.cli",)
 
 
 @pytest.mark.parametrize(

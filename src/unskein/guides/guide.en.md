@@ -25,6 +25,14 @@ unskein scan path/to/project --no-ai
 `--no-ai` gives the full deterministic report without calling any model. No
 config file is needed: every setting has a default.
 
+Monorepos need no configuration: every `pyproject.toml`, `setup.py` or `setup.cfg`
+marks a distribution and its files are named the way Python imports them
+(`enterprise/litellm_enterprise/x.py` is `litellm_enterprise.x`), so imports between
+workspace members count as internal. Code that no distribution ships and nothing imports
+(CI, examples, tooling) is listed apart as *scripts*: it does not count in Ca, metrics or
+findings (except layers) and shows up as *consumers* of the modules it uses. To keep
+folder-based naming, `[analysis] source_roots` turns the detection off.
+
 ## Reading the report
 
 - **Summary**: modules, internal dependencies and cycles, the most coupled

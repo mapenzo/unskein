@@ -10,7 +10,7 @@ from unskein.ai.models import AIFailure, AIReport, Problem
 from unskein.errors import ConfigError, ErrorKey, UnskeinError
 from unskein.i18n import Lang
 from unskein.report.markdown import AIStatus
-from unskein.scan import ScanOptions, execute_scan, prepare_scan
+from unskein.scan import ScanOptions, execute_scan, parse_project, prepare_scan
 
 MakeProject = Callable[[dict[str, str]], Path]
 
@@ -237,14 +237,14 @@ def test_findings_flag_beats_the_toml(make_project: MakeProject) -> None:
     assert context.findings.enabled is False
 
 
-def test_pyproject_scripts_are_entry_points_of_the_scan(make_project: MakeProject) -> None:
+def test_pyproject_scripts_are_entry_points_of_the_parse(make_project: MakeProject) -> None:
     root = make_project(
         {"tool.py": "", "pyproject.toml": '[project.scripts]\ntool = "tool:main"\n'}
     )
 
-    context = prepare(ScanOptions(path=root))
+    parsed = parse_project(prepare(ScanOptions(path=root)))
 
-    assert context.findings.entry_points == ("tool",)
+    assert parsed.entry_points == ("tool",)
 
 
 def test_scan_reports_orphans_except_entry_points(make_project: MakeProject) -> None:
@@ -276,3 +276,25 @@ def test_scan_warns_about_a_declared_layer_that_matches_no_module(
     assert [record.getMessage() for record in caplog.records] == [
         "Layer cor in [layers] matches no module of the project"
     ]
+
+
+def test_scan_does_not_warn_about_a_declared_layer_that_only_scripts_match(
+    make_project: MakeProject, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "lib"\n[tool.setuptools]\npackages = ["lib"]\n',
+            "lib/__init__.py": "",
+            "lib/api.py": "",
+            "cookbook/demo.py": "from lib import api\n",
+            ".unskein.toml": '[layers]\norder = ["cookbook", "lib"]\n',
+        }
+    )
+    logger = logging.getLogger("unskein")
+    monkeypatch.setattr(logger, "handlers", [])
+    monkeypatch.setattr(logger, "propagate", True)
+
+    with caplog.at_level(logging.WARNING, logger="unskein"):
+        execute_scan(prepare(ScanOptions(path=root, no_ai=True)))
+
+    assert caplog.records == []

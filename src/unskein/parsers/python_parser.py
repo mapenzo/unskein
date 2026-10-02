@@ -1,7 +1,6 @@
 """Parse Python source files with `ast` into modules, imports and re-exports."""
 
 import ast
-import os
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -13,6 +12,7 @@ from unskein.config import AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
 from unskein.parsers.exports import module_exports
+from unskein.parsers.layout import build_layout, name_files
 from unskein.parsers.models import (
     STAR_EXPORT,
     FileParseResult,
@@ -35,6 +35,8 @@ STATEMENT_LIST_FIELDS = ("body", "handlers", "cases", "orelse", "finalbody")
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 TYPE_CHECKING_NAME = "TYPE_CHECKING"
+# Names of non-importable files are POSIX paths; "/" never appears in a dotted name.
+PATH_SEPARATOR = "/"
 
 
 def is_type_checking_test(test: ast.expr) -> bool:
@@ -105,25 +107,34 @@ class ProjectIndex:
         modules: Dotted names of all project modules.
         top_level: First segments of those names (the project's top-level packages).
         packages: Modules that have submodules, i.e. the package facades (their ``__init__.py``).
+        unpackaged: Modules no distribution ships (named by path or by their place under the root).
     """
 
     modules: frozenset[str]
     top_level: frozenset[str]
     packages: frozenset[str]
+    unpackaged: frozenset[str] = frozenset()
 
     @classmethod
-    def from_names(cls, names: set[str]) -> "ProjectIndex":
+    def from_names(
+        cls, names: set[str], unpackaged: frozenset[str] = frozenset()
+    ) -> "ProjectIndex":
         """Build the index from the project's module names.
 
+        Names that are paths (files no import can reach) are kept as modules but
+        never become top-level packages, so they cannot make an import internal.
+
         Args:
-            names: Dotted names of all project modules.
+            names: Names of all project modules.
+            unpackaged: Those of them no distribution ships.
 
         Returns:
             The index over those names.
         """
-        parents = {name.rpartition(".")[0] for name in names}
-        top_level = frozenset(name.split(".")[0] for name in names)
-        return cls(frozenset(names), top_level, frozenset(parents & names))
+        importable = {name for name in names if PATH_SEPARATOR not in name}
+        parents = {name.rpartition(".")[0] for name in importable}
+        top_level = frozenset(name.split(".")[0] for name in importable)
+        return cls(frozenset(names), top_level, frozenset(parents & importable), unpackaged)
 
     def is_package(self, name: str) -> bool:
         """Return whether a project module has submodules.
@@ -162,68 +173,6 @@ class ProjectIndex:
             if candidate in self.modules:
                 return candidate
         return None
-
-
-def _absolute(path: Path) -> Path:
-    """Return an absolute path without resolving symlinks.
-
-    Args:
-        path: Path to make absolute.
-
-    Returns:
-        The absolute, normalized path.
-    """
-    # abspath, not resolve(): a followed symlink must keep its in-project link path.
-    return Path(os.path.abspath(path))
-
-
-def resolve_source_roots(root: Path, configured: list[str] | None) -> list[Path]:
-    """Return the source roots module names are computed from, most specific first.
-
-    Without configuration, a `src/` directory that is not itself a package is
-    detected as a source root. The project root is always the last fallback.
-
-    Args:
-        root: Project directory.
-        configured: Source roots relative to root, or None to auto-detect.
-
-    Returns:
-        Absolute source roots, deepest first.
-    """
-    if configured is None:
-        src = root / "src"
-        configured = ["src"] if src.is_dir() and not (src / "__init__.py").exists() else []
-    roots = [_absolute(root / r) for r in configured]
-    absolute_root = _absolute(root)
-    if absolute_root not in roots:
-        roots.append(absolute_root)
-    return sorted(roots, key=lambda p: len(p.parts), reverse=True)
-
-
-def module_name(file_path: Path, source_roots: list[Path]) -> str:
-    """Return the dotted module name of a file relative to its source root.
-
-    `__init__.py` collapses to its package name; a package at the source root
-    itself takes the root directory's name.
-
-    Args:
-        file_path: Python source file.
-        source_roots: Roots from `resolve_source_roots`, deepest first.
-
-    Returns:
-        The dotted module name, e.g. "app.services.user".
-
-    Raises:
-        ValueError: If the file is outside every source root.
-    """
-    absolute = _absolute(file_path)
-    for source_root in source_roots:
-        if absolute.is_relative_to(source_root):
-            parts = list(absolute.relative_to(source_root).with_suffix("").parts)
-            if parts and parts[-1] == "__init__":
-                parts.pop()
-            return ".".join(parts) or source_root.name
-    raise ValueError(f"{file_path} is outside every source root")
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,7 +420,13 @@ def parse_file(
     collector.attach_usage(tree)
     exports = module_exports(tree)
     module = ModuleInfo(
-        name, file_path, collector.edges, exports.names, exports.declares_all, exports.bound_names
+        name,
+        file_path,
+        collector.edges,
+        exports.names,
+        exports.declares_all,
+        exports.bound_names,
+        is_packaged=name not in index.unpackaged,
     )
     return FileParseResult(module, collector.re_exports, collector.warnings)
 
@@ -512,16 +467,21 @@ class PythonAdapter(LanguageAdapter):
         return walk_files(root, tuple(self.file_extensions), exclude_spec, follow_symlinks)
 
     def normalize_module_name(self, file_path: Path, root: Path) -> str:
-        """Return the dotted module name of a file, relative to its source root.
+        """Return the module name of a file, from the distribution that ships it.
+
+        The layout is built from that single file, so in a workspace with name collisions
+        the result may differ from the names ``plan_parse`` gives.
 
         Args:
             file_path: Python source file.
             root: Project directory the file belongs to.
 
         Returns:
-            The dotted module name, e.g. "pkg.core" for "src/pkg/core.py".
+            The dotted module name, e.g. "pkg.core" for "src/pkg/core.py", or the
+            file's path when no import can reach it.
         """
-        return module_name(file_path, resolve_source_roots(root, self.config.source_roots))
+        layout, _ = build_layout(root, [file_path], self.config.source_roots)
+        return layout.name_of(file_path).name
 
     def plan_parse(self, files: list[Path], root: Path) -> ParsePlan:
         """Name every file first, so imports can be classified against the whole project.
@@ -531,11 +491,15 @@ class PythonAdapter(LanguageAdapter):
             root: Project directory the files belong to.
 
         Returns:
-            One task per file, in the given order, sharing the project index.
+            One task per file, in the given order, sharing the project index, plus the
+            layout warnings and the entry points its distributions declare.
         """
-        source_roots = resolve_source_roots(root, self.config.source_roots)
-        tasks = [(path, module_name(path, source_roots)) for path in files]
-        return ParsePlan(tasks, ProjectIndex.from_names({name for _, name in tasks}))
+        layout, warnings = build_layout(root, files, self.config.source_roots)
+        named, collisions = name_files(layout, files)
+        tasks = [(path, name.name) for path, name in named]
+        unpackaged = frozenset(name.name for _, name in named if not name.is_packaged)
+        index = ProjectIndex.from_names({name for _, name in tasks}, unpackaged)
+        return ParsePlan(tasks, index, [*warnings, *collisions], layout.script_modules)
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:
         """Parse one Python file against the project index.

@@ -113,16 +113,67 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Cadenas de re-exports demasiado largas",
         Lang.EN: "Re-export chains too long",
     },
+    "warning.manifest_unreadable": {
+        Lang.ES: "Manifiesto ilegible, se detectan sus paquetes por convención: {detail}",
+        Lang.EN: "Unreadable manifest, its packages are detected by convention: {detail}",
+    },
+    "warning_title.manifest_unreadable": {
+        Lang.ES: "Manifiestos ilegibles",
+        Lang.EN: "Unreadable manifests",
+    },
+    "warning.declared_package_missing": {
+        Lang.ES: "El manifiesto declara el paquete '{detail}', que no existe",
+        Lang.EN: "The manifest declares package '{detail}', which does not exist",
+    },
+    "warning_title.declared_package_missing": {
+        Lang.ES: "Paquetes declarados inexistentes",
+        Lang.EN: "Declared packages that do not exist",
+    },
+    "warning.module_name_collision": {
+        Lang.ES: "Nombre de módulo repetido, este archivo se nombra por su ruta: {detail}",
+        Lang.EN: "Repeated module name, this file is named by its path: {detail}",
+    },
+    "warning_title.module_name_collision": {
+        Lang.ES: "Nombres de módulo repetidos",
+        Lang.EN: "Repeated module names",
+    },
 }
 
 _REPORT: dict[str, dict[Lang, str]] = {
     "report.title": {Lang.ES: "Análisis de {project}", Lang.EN: "Analysis of {project}"},
     "report.summary": {Lang.ES: "Resumen", Lang.EN: "Summary"},
     "report.summary_counts": {
-        Lang.ES: "{modules} módulos, {dependencies} dependencias internas, "
+        Lang.ES: "{modules} módulos{scripts}, {dependencies} dependencias internas, "
         "{cycles} ciclos de dependencia.",
-        Lang.EN: "{modules} modules, {dependencies} internal dependencies, "
+        Lang.EN: "{modules} modules{scripts}, {dependencies} internal dependencies, "
         "{cycles} dependency cycles.",
+    },
+    "report.summary_scripts.one": {Lang.ES: " + {count} script", Lang.EN: " + {count} script"},
+    "report.summary_scripts.other": {Lang.ES: " + {count} scripts", Lang.EN: " + {count} scripts"},
+    "report.metric.scripts": {Lang.ES: "Scripts", Lang.EN: "Scripts"},
+    "report.consumers": {Lang.ES: "Consumidores", Lang.EN: "Consumers"},
+    "report.coupled_consumers_note": {
+        Lang.ES: "Consumidores: scripts, ejemplos o CI del repositorio que importan el "
+        "módulo; no cuentan en Ca.",
+        Lang.EN: "Consumers: scripts, examples or CI in the repository that import the "
+        "module; they do not count in Ca.",
+    },
+    "report.scripts": {Lang.ES: "Scripts", Lang.EN: "Scripts"},
+    "report.scripts_intro": {
+        Lang.ES: "Código que ninguna distribución empaqueta y que nadie importa: scripts, "
+        "ejemplos, CI. Usan el proyecto pero no forman parte de él, así que no cuentan en "
+        "las métricas ni en los hallazgos (salvo las capas).",
+        Lang.EN: "Code no distribution ships and nothing imports: scripts, examples, CI. "
+        "They use the project but are not part of it, so they count in no metric and no "
+        "finding (except layers).",
+    },
+    "report.script_group.one": {
+        Lang.ES: "- `{directory}/` ({count} script) → {uses}",
+        Lang.EN: "- `{directory}/` ({count} script) → {uses}",
+    },
+    "report.script_group.other": {
+        Lang.ES: "- `{directory}/` ({count} scripts) → {uses}",
+        Lang.EN: "- `{directory}/` ({count} scripts) → {uses}",
     },
     "report.summary_top_module": {
         Lang.ES: "Módulo más acoplado: `{module}` (Ca {ca}, Ce {ce}).",

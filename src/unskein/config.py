@@ -386,18 +386,15 @@ def resolve_analysis_config(toml: TomlConfig, flags: AnalysisFlags) -> AnalysisC
     return AnalysisConfig(**overrides, exclude=exclude)
 
 
-def resolve_findings_config(
-    toml: TomlConfig, enabled: bool | None, script_entry_points: tuple[str, ...] = ()
-) -> FindingsConfig:
+def resolve_findings_config(toml: TomlConfig, enabled: bool | None) -> FindingsConfig:
     """Resolve the findings settings with precedence flag > .unskein.toml > default.
 
-    Entry points and layers are the exceptions: the ones read from ``pyproject.toml`` and
-    the configured ones are combined; layers come from ``[layers]``.
+    Entry points and layers are the exceptions: entry points declared by the project's
+    distributions are added during analysis; layers come from ``[layers]``.
 
     Args:
         toml: Validated, merged TOML configuration.
         enabled: ``--findings`` / ``--no-findings``; None when not given.
-        script_entry_points: Modules that ``pyproject.toml`` declares as scripts.
 
     Returns:
         The resolved findings settings.
@@ -405,7 +402,7 @@ def resolve_findings_config(
     overrides = toml.findings.model_dump(exclude_none=True, exclude={"entry_points"})
     if enabled is not None:
         overrides["enabled"] = enabled
-    entry_points = (*script_entry_points, *(toml.findings.entry_points or ()))
+    entry_points = tuple(toml.findings.entry_points or ())
     layers = tuple(toml.layers.order or ())
     return FindingsConfig(**overrides, entry_points=entry_points, layers=layers)
 

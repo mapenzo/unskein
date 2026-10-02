@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
+from unskein.config import AnalysisConfig
 from unskein.parsers.models import FileParseResult, ParseResult, ParseWarning, WarningCode
 from unskein.parsers.python_parser import ProjectIndex, PythonAdapter
 
@@ -46,3 +47,20 @@ def test_from_file_results_keeps_task_order_and_skips_failed_files(tmp_path: Pat
     assert combined.modules == []
     assert combined.warnings == [warning]
     assert combined.language == "python"
+
+
+FIXTURES = Path(__file__).parent.parent / "fixtures"
+
+
+def test_plan_names_workspace_members_by_import_name() -> None:
+    root = FIXTURES / "workspace_monorepo"
+    files = sorted(root.rglob("*.py"))
+    plan = PythonAdapter(AnalysisConfig()).plan_parse(files, root)
+    names = {path.relative_to(root).as_posix(): name for path, name in plan.tasks}
+    assert names["enterprise/core_enterprise/hooks.py"] == "core_enterprise.hooks"
+    assert names["enterprise/legacy/banned.py"] == "enterprise.legacy.banned"
+    assert names[".circleci/scripts/run.py"] == ".circleci/scripts/run.py"
+    assert plan.shared.top_level == frozenset({"core", "core_enterprise", "enterprise", "cookbook"})
+    assert "cookbook.demo" in plan.shared.unpackaged
+    assert "core.engine" not in plan.shared.unpackaged
+    assert plan.entry_points == ("core.cli",)
