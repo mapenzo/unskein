@@ -313,16 +313,21 @@ sus excludes y su política de symlinks): no hay un segundo `os.walk`. `setup.py
 se ejecuta, solo marca la distribución.
 
 **Raíz de import**: `src/` si existe y no es paquete, o el override del backend
-(`[tool.uv.build-backend] module-root`, `[tool.maturin] python-source`,
-`[tool.setuptools] package-dir`, `package_dir` de `setup.cfg`).
+(`[tool.uv.build-backend] module-root`, donde `""` es la raíz de la distribución,
+`[tool.maturin] python-source`, `[tool.setuptools] package-dir`, `package_dir` de
+`setup.cfg`).
 
 **Paquetes que empaqueta**, por precedencia: (1) los declarados (`module-name` de uv y
 maturin, `packages` de hatch, poetry y setuptools, `[options] packages` de
-`setup.cfg`); (2) el directorio con el nombre normalizado de la distribución
-(`litellm-enterprise` → `litellm_enterprise`); (3) todo subdirectorio de la raíz de
-import que sea identificador y tenga `__init__.py`. Si la heurística no encuentra
-ningún paquete, o la raíz no tiene manifiesto, la distribución empaqueta todo lo que
-contiene (el nombrado de siempre).
+`setup.cfg`); (2) lo que empaqueta el backend cuando no declara nada, que depende de él: con
+setuptools (`build-backend` que empieza por `setuptools`; o sin `[build-system]` ni
+tabla de uv, maturin, hatch o poetry que declare raíz o paquetes; o solo `setup.py` /
+`setup.cfg`) rige el autodescubrimiento: el directorio con el nombre normalizado de la
+distribución (`litellm-enterprise` → `litellm_enterprise`) **más** todo paquete regular;
+con cualquier otro backend, solo el del nombre normalizado y, si no existe, todo
+subdirectorio de la raíz de import que sea identificador y tenga `__init__.py`. Si nada
+de eso encuentra paquetes, o la raíz no tiene manifiesto, la distribución empaqueta todo
+lo que contiene (el nombrado de siempre).
 
 **Nombrado** (`ProjectLayout.name_of`): lo nombra la distribución más profunda cuyo
 `import_root` contiene el archivo y cuyo primer segmento está en `packages`
