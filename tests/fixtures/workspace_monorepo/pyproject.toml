@@ -1,0 +1,6 @@
+[project]
+name = "core"
+[project.scripts]
+core = "core.cli:main"
+[tool.uv.workspace]
+members = ["enterprise"]

@@ -1,0 +1,4 @@
+[project]
+name = "core-enterprise"
+[tool.uv.build-backend]
+module-root = ""

@@ -10,7 +10,7 @@ from unskein.ai.models import AIFailure, AIReport, Problem
 from unskein.errors import ConfigError, ErrorKey, UnskeinError
 from unskein.i18n import Lang
 from unskein.report.markdown import AIStatus
-from unskein.scan import ScanOptions, execute_scan, prepare_scan
+from unskein.scan import ScanOptions, execute_scan, parse_project, prepare_scan
 
 MakeProject = Callable[[dict[str, str]], Path]
 
@@ -237,14 +237,14 @@ def test_findings_flag_beats_the_toml(make_project: MakeProject) -> None:
     assert context.findings.enabled is False
 
 
-def test_pyproject_scripts_are_entry_points_of_the_scan(make_project: MakeProject) -> None:
+def test_pyproject_scripts_are_entry_points_of_the_parse(make_project: MakeProject) -> None:
     root = make_project(
         {"tool.py": "", "pyproject.toml": '[project.scripts]\ntool = "tool:main"\n'}
     )
 
-    context = prepare(ScanOptions(path=root))
+    parsed = parse_project(prepare(ScanOptions(path=root)))
 
-    assert context.findings.entry_points == ("tool",)
+    assert parsed.entry_points == ("tool",)
 
 
 def test_scan_reports_orphans_except_entry_points(make_project: MakeProject) -> None:

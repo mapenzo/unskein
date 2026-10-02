@@ -5,7 +5,6 @@ Independent of the CLI so it can be tested directly and reused as a library.
 
 import logging
 import os
-import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -23,13 +22,11 @@ from unskein.config import (
     resolve_analysis_config,
     resolve_findings_config,
 )
-from unskein.entry_points import script_modules_of
 from unskein.errors import ErrorKey, UnskeinError
 from unskein.graph.findings import unmatched_layers
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
 from unskein.parsers.discovery import load_exclude_spec
-from unskein.parsers.layout import PYPROJECT_NAME
 from unskein.parsers.models import ParseResult
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.pipeline import parse_all
@@ -149,9 +146,7 @@ def prepare_scan(
         ai_config=ai_config,
         ai_disabled=options.no_ai,
         min_severity=options.min_severity,
-        findings=resolve_findings_config(
-            toml, options.findings, _root_script_modules(options.path)
-        ),
+        findings=resolve_findings_config(toml, options.findings),
     )
 
 
@@ -226,7 +221,11 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
     Raises:
         UnskeinError: If the path is not a directory or holds no Python files.
     """
-    result = analyze(parse_project(context), context.findings)
+    parsed = parse_project(context)
+    findings = replace(
+        context.findings, entry_points=(*parsed.entry_points, *context.findings.entry_points)
+    )
+    result = analyze(parsed, findings)
     if context.findings.enabled:
         for layer in unmatched_layers(result.graph.nodes, context.findings.layers):
             logger.warning("Layer %s in [layers] matches no module of the project", layer)
@@ -284,20 +283,3 @@ def execute_scan(context: ScanContext) -> ScanOutcome:
         UnskeinError: If the path is not a directory or holds no Python files.
     """
     return interpret(analyze_project(context), context)
-
-
-def _root_script_modules(root: Path) -> tuple[str, ...]:
-    """Return the script modules of the root ``pyproject.toml``, ignoring unreadable files.
-
-    Args:
-        root: Project root.
-
-    Returns:
-        Script modules; empty when the manifest is missing or unreadable.
-    """
-    path = root / PYPROJECT_NAME
-    try:
-        with path.open("rb") as file:
-            return script_modules_of(tomllib.load(file).get("project"))
-    except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError):
-        return ()

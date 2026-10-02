@@ -262,3 +262,25 @@ def test_worker_count_defaults_to_the_cores_up_to_a_cap(
 
 def test_default_threshold_is_where_a_pool_starts_to_pay_off() -> None:
     assert AnalysisConfig().parallel_threshold == 500
+
+
+def test_parallel_parse_keeps_layout_warnings_and_packaging(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": "broken = [",
+            "pkg/__init__.py": "",
+            "pkg/a.py": "import pkg",
+            "tools/run.py": "import pkg.a",
+        }
+    )
+    files = sorted(root.rglob("*.py"))
+    config = AnalysisConfig(max_workers=2)
+    adapter = PythonAdapter(config)
+    parallel = pipeline._parse_parallel(files, adapter, root, config)
+    sequential = adapter.parse(files, root)
+    assert [w.code for w in parallel.warnings] == [WarningCode.MANIFEST_UNREADABLE]
+    assert parallel.warnings == sequential.warnings
+    assert {m.name: m.is_packaged for m in parallel.modules} == {
+        m.name: m.is_packaged for m in sequential.modules
+    }
+    assert {m.name: m.is_packaged for m in parallel.modules}["tools.run"] is False

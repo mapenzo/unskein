@@ -122,3 +122,15 @@ def test_detect_encoding_respects_pep263_cookie(tmp_path: Path) -> None:
     f = tmp_path / "latin.py"
     f.write_bytes(b"# -*- coding: latin-1 -*-\nx = '\xe9'\n")
     assert detect_encoding(f, config_default="utf-8") == "iso-8859-1"
+
+
+def test_imports_of_a_workspace_member_are_internal() -> None:
+    root = Path(__file__).parent.parent / "fixtures" / "workspace_monorepo"
+    adapter = PythonAdapter(AnalysisConfig())
+    result = adapter.parse(sorted(root.rglob("*.py")), root)
+    engine = next(m for m in result.modules if m.name == "core.engine")
+    assert [(e.target, e.is_external) for e in engine.imports] == [("core_enterprise.hooks", False)]
+    demo = next(m for m in result.modules if m.name == "cookbook.demo")
+    assert demo.is_packaged is False
+    assert engine.is_packaged is True
+    assert result.entry_points == ("core.cli",)
