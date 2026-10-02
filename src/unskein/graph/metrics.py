@@ -1,6 +1,6 @@
 """Coupling metrics, cycle detection and the consolidated analysis result."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import islice
 
 import networkx as nx
@@ -12,6 +12,7 @@ from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
+from unskein.graph.scripts import ScriptGroup, count_consumers, find_scripts, group_scripts
 from unskein.parsers.models import ImportKind, ParseResult, ParseWarning
 
 MAX_CYCLES = 100
@@ -27,7 +28,7 @@ class AnalysisResult:
     """Deterministic analysis output; the handoff point to the AI and report layers.
 
     Attributes:
-        graph: Internal module dependency graph.
+        graph: Internal module dependency graph, scripts excluded.
         coupling_metrics: Metrics per module name.
         cycles: Dependency cycles that exist at import time (module-level imports
             only), each as a list of module names.
@@ -43,6 +44,8 @@ class AnalysisResult:
         package_edges: Dependencies between packages, with the most imports first.
         hidden_tangles: Groups that depend on each other only once lazy and
             type-only imports are counted, largest first.
+        scripts: Unpackaged modules nothing imports; outside every metric.
+        script_groups: Scripts by top-level directory, most first.
     """
 
     graph: nx.DiGraph
@@ -58,6 +61,8 @@ class AnalysisResult:
     packages: list[PackageMetrics] = field(default_factory=list)
     package_edges: list[PackageEdge] = field(default_factory=list)
     hidden_tangles: list[list[str]] = field(default_factory=list)
+    scripts: frozenset[str] = field(default_factory=frozenset)
+    script_groups: list[ScriptGroup] = field(default_factory=list)
 
 
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
@@ -228,14 +233,24 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     """
     if findings_config is None:
         findings_config = FindingsConfig()
-    graph = build_graph(result)
+    findings_config = replace(
+        findings_config, entry_points=(*result.entry_points, *findings_config.entry_points)
+    )
+    full_graph = build_graph(result)
+    unpackaged = {m.name for m in result.modules if not m.is_packaged}
+    scripts = find_scripts(full_graph, unpackaged)
+    graph = nx.subgraph_view(full_graph, filter_node=lambda node: node not in scripts)
     coupling = compute_coupling(graph)
+    for module, consumers in count_consumers(full_graph, scripts).items():
+        coupling[module].consumers = consumers
     import_graph = import_time_graph(graph)
     cycles, cycles_truncated = find_cycles(import_graph)
     tangles = find_tangles(import_graph)
     facades = {m.name for m in result.modules if m.file_path.name == PACKAGE_INIT_FILE}
     high_coupling = find_high_coupling(coupling)
-    findings = find_findings(graph, coupling, findings_config, packages=facades)
+    findings = find_findings(
+        full_graph, coupling, findings_config, packages=facades, scripts=scripts
+    )
     package_metrics, package_edges = summarize_project_packages(
         graph, findings_config.package_depth, facades=facades
     )
@@ -253,4 +268,6 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         packages=package_metrics,
         package_edges=package_edges,
         hidden_tangles=find_hidden_tangles(graph, tangles),
+        scripts=scripts,
+        script_groups=group_scripts(full_graph, scripts),
     )

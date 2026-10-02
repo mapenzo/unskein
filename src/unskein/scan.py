@@ -222,10 +222,7 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
         UnskeinError: If the path is not a directory or holds no Python files.
     """
     parsed = parse_project(context)
-    findings = replace(
-        context.findings, entry_points=(*parsed.entry_points, *context.findings.entry_points)
-    )
-    result = analyze(parsed, findings)
+    result = analyze(parsed, context.findings)
     if context.findings.enabled:
         for layer in unmatched_layers(result.graph.nodes, context.findings.layers):
             logger.warning("Layer %s in [layers] matches no module of the project", layer)

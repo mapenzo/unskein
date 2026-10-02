@@ -59,6 +59,7 @@ def find_findings(
     config: FindingsConfig,
     *,
     packages: Collection[str] = frozenset(),
+    scripts: Collection[str] = frozenset(),
 ) -> list[Finding]:
     """Apply every rule to the graph and its coupling metrics.
 
@@ -70,6 +71,7 @@ def find_findings(
         metrics: Coupling metrics keyed by module name.
         config: Thresholds, entry points and declared layers.
         packages: Names of modules that are package ``__init__`` files.
+        scripts: Scripts: no metrics of their own, evaluated only by the layer rule.
 
     Returns:
         The findings, ordered by kind and then by module; empty when disabled.
@@ -82,7 +84,7 @@ def find_findings(
         *_bottlenecks(candidates, config),
         *_orchestrators(candidates, config),
         *_orphans(candidates, config),
-        *_layer_violations(graph, candidates, config),
+        *_layer_violations(graph, candidates, config, scripts=scripts),
     ]
 
 
@@ -172,7 +174,7 @@ def _orchestrators(metrics: Mapping[str, CouplingMetrics], config: FindingsConfi
 
 
 def _orphans(metrics: Mapping[str, CouplingMetrics], config: FindingsConfig) -> list[Finding]:
-    """Find modules that neither import nor are imported and are no entry point.
+    """Find modules that neither import nor are imported, no script uses and are no entry point.
 
     Args:
         metrics: Coupling metrics of the modules under analysis.
@@ -184,13 +186,20 @@ def _orphans(metrics: Mapping[str, CouplingMetrics], config: FindingsConfig) -> 
     found = [
         Finding(FindingKind.ORPHAN, (m.module,), {})
         for m in metrics.values()
-        if m.afferent == 0 and m.efferent == 0 and not _is_entry_point(m.module, config)
+        if m.afferent == 0
+        and m.efferent == 0
+        and m.consumers == 0
+        and not _is_entry_point(m.module, config)
     ]
     return sorted(found, key=lambda finding: finding.modules)
 
 
 def _layer_violations(
-    graph: nx.DiGraph, metrics: Mapping[str, CouplingMetrics], config: FindingsConfig
+    graph: nx.DiGraph,
+    metrics: Mapping[str, CouplingMetrics],
+    config: FindingsConfig,
+    *,
+    scripts: Collection[str] = frozenset(),
 ) -> list[Finding]:
     """Find imports from a lower declared layer into a higher one.
 
@@ -198,6 +207,7 @@ def _layer_violations(
         graph: Internal module dependency graph.
         metrics: Coupling metrics of the modules under analysis; only their names are used.
         config: Declared layers, highest first.
+        scripts: Scripts, which may import from a layer although they have no metrics.
 
     Returns:
         One finding per offending import, sorted by the pair of modules; none without layers.
@@ -208,7 +218,7 @@ def _layer_violations(
     longest_first = sorted(config.layers, key=len, reverse=True)
     found = []
     for source, target in graph.edges:
-        if source not in metrics or target not in metrics:
+        if (source not in metrics and source not in scripts) or target not in metrics:
             continue
         layer_from = _layer_of(source, longest_first)
         layer_to = _layer_of(target, longest_first)

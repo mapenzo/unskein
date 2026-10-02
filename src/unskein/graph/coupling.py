@@ -11,11 +11,14 @@ class CouplingMetrics:
         module: Dotted module name.
         afferent: Ca, number of modules that depend on this one.
         efferent: Ce, number of modules this one depends on.
+        consumers: Scripts (code no distribution ships and nothing imports) that
+            import it; not part of Ca.
     """
 
     module: str
     afferent: int
     efferent: int
+    consumers: int = 0
 
     @property
     def instability(self) -> float:

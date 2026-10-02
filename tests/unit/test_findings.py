@@ -7,6 +7,7 @@ import networkx as nx
 import pytest
 
 from unskein.config import FindingsConfig
+from unskein.graph.coupling import CouplingMetrics
 from unskein.graph.findings import Finding, FindingKind, find_findings, unmatched_layers
 from unskein.graph.metrics import compute_coupling
 from unskein.graph.percentile import nearest_rank_percentile
@@ -337,3 +338,11 @@ def test_unmatched_layers_matches_whole_segments_only() -> None:
 
 def test_unmatched_layers_keeps_the_declared_order() -> None:
     assert unmatched_layers(["core"], ["zeta", "core", "alpha"]) == ["zeta", "alpha"]
+
+
+def test_a_module_used_only_by_scripts_is_not_an_orphan() -> None:
+    graph = nx.DiGraph()
+    graph.add_node("lib.x")
+    metrics = {"lib.x": CouplingMetrics("lib.x", 0, 0, consumers=1)}
+    findings = find_findings(graph, metrics, FindingsConfig())
+    assert [f for f in findings if f.kind is FindingKind.ORPHAN] == []
