@@ -1,7 +1,13 @@
 from collections.abc import Callable
 from pathlib import Path
 
-from unskein.parsers.layout import Distribution, detect_distributions
+from unskein.parsers.layout import (
+    Distribution,
+    ModuleName,
+    build_layout,
+    detect_distributions,
+    name_files,
+)
 from unskein.parsers.models import WarningCode
 
 MakeProject = Callable[[dict[str, str]], Path]
@@ -216,3 +222,114 @@ def test_setup_cfg_with_percent_does_not_abort(make_project: MakeProject) -> Non
     assert dist.import_root == root / "src%x"
     assert dist.packages == frozenset({"pct"})
     assert warnings == []
+
+
+def _names(root: Path, configured: list[str] | None = None) -> dict[str, ModuleName]:
+    """Name every .py file of a project, keyed by its path relative to the root."""
+    files = sorted(root.rglob("*.py"))
+    layout, _ = build_layout(root, files, configured)
+    named, _ = name_files(layout, files)
+    return {path.relative_to(root).as_posix(): name for path, name in named}
+
+
+def _litellm_like(make_project: MakeProject) -> Path:
+    """Write a small monorepo shaped like litellm: root package, uv member, legacy dir."""
+    return make_project(
+        {
+            "pyproject.toml": '[project]\nname = "core"\n'
+            '[tool.maturin]\nmodule-name = "core._native"\n',
+            "core/__init__.py": "",
+            "core/main.py": "",
+            "enterprise/pyproject.toml": '[project]\nname = "core-enterprise"\n'
+            '[tool.uv.build-backend]\nmodule-root = ""\n',
+            "enterprise/__init__.py": "",
+            "enterprise/core_enterprise/__init__.py": "",
+            "enterprise/core_enterprise/proxy.py": "",
+            "enterprise/hooks/__init__.py": "",
+            "enterprise/hooks/banned.py": "",
+            ".circleci/scripts/run.py": "",
+            "cookbook/demo.py": "",
+            "tool-x/thing.py": "",
+        }
+    )
+
+
+def test_files_take_the_name_of_the_distribution_that_ships_them(make_project: MakeProject) -> None:
+    names = _names(_litellm_like(make_project))
+    assert names["core/main.py"] == ModuleName("core.main", True)
+    assert names["enterprise/core_enterprise/proxy.py"] == ModuleName("core_enterprise.proxy", True)
+    assert names["enterprise/hooks/banned.py"] == ModuleName("enterprise.hooks.banned", False)
+    assert names["cookbook/demo.py"] == ModuleName("cookbook.demo", False)
+
+
+def test_member_init_outside_its_packages_falls_back_to_the_root(make_project: MakeProject) -> None:
+    names = _names(_litellm_like(make_project))
+    assert names["enterprise/__init__.py"] == ModuleName("enterprise", False)
+
+
+def test_non_identifier_paths_are_named_by_path(make_project: MakeProject) -> None:
+    names = _names(_litellm_like(make_project))
+    assert names[".circleci/scripts/run.py"] == ModuleName(".circleci/scripts/run.py", False)
+    assert names["tool-x/thing.py"] == ModuleName("tool-x/thing.py", False)
+
+
+def test_root_without_manifest_names_as_before(make_project: MakeProject) -> None:
+    root = make_project(
+        {"app/__init__.py": "", "app/core.py": "", "main.py": "", "src/lib/x.py": ""}
+    )
+    names = _names(root)
+    assert names["app/core.py"] == ModuleName("app.core", True)
+    assert names["main.py"] == ModuleName("main", True)
+    assert names["src/lib/x.py"] == ModuleName("lib.x", True)
+
+
+def test_configured_roots_name_as_before(make_project: MakeProject) -> None:
+    root = make_project({"lib/pkg/__init__.py": "", "lib/pkg/a.py": "", "tool.py": ""})
+    names = _names(root, ["lib"])
+    assert names["lib/pkg/a.py"] == ModuleName("pkg.a", True)
+    assert names["tool.py"] == ModuleName("tool", True)
+
+
+def test_collision_keeps_the_deepest_and_names_the_other_by_path(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "x"\n[tool.setuptools]\npackages = ["shared"]\n',
+            "shared/__init__.py": "",
+            "member/pyproject.toml": '[project]\nname = "shared"\n',
+            "member/shared/__init__.py": "",
+        }
+    )
+    files = sorted(root.rglob("*.py"))
+    layout, _ = build_layout(root, files, None)
+    named, warnings = name_files(layout, files)
+    by_path = {p.relative_to(root).as_posix(): n for p, n in named}
+    assert by_path["member/shared/__init__.py"] == ModuleName("shared", True)
+    assert by_path["shared/__init__.py"] == ModuleName("shared/__init__.py", False)
+    assert [(w.code, w.path) for w in warnings] == [
+        (WarningCode.MODULE_NAME_COLLISION, root / "shared/__init__.py")
+    ]
+
+
+def test_layout_keeps_symlinked_link_paths(make_project: MakeProject, tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    (outside / "linked").mkdir(parents=True)
+    (outside / "linked" / "__init__.py").write_text("")
+    root = make_project({"app/__init__.py": ""})
+    (root / "linked").symlink_to(outside / "linked", target_is_directory=True)
+    files = [root / "app/__init__.py", root / "linked/__init__.py"]
+    layout, _ = build_layout(root, files, None)
+    named, _ = name_files(layout, files)
+    assert [n.name for _, n in named] == ["app", "linked"]
+
+
+def test_layout_exposes_the_scripts_of_every_distribution(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\n[project.scripts]\na = "a.cli:main"\n',
+            "a/__init__.py": "",
+            "b/pyproject.toml": '[project]\nname = "b"\n[project.scripts]\nb = "b.run"\n',
+            "b/b/__init__.py": "",
+        }
+    )
+    layout, _ = build_layout(root, sorted(root.rglob("*.py")), None)
+    assert layout.script_modules == ("a.cli", "b.run")

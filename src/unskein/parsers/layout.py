@@ -4,7 +4,8 @@ import configparser
 import os
 import re
 import tomllib
-from collections.abc import Iterable
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -437,3 +438,151 @@ def _declaration_from_setup_cfg(path: Path, warnings: list[ParseWarning]) -> _De
         if not key.strip() and value.strip():
             import_root = value.strip()
     return _Declaration(import_root, _first_segments(names))
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleName:
+    """The name a file takes in the dependency graph.
+
+    Attributes:
+        name: Dotted module name, or a POSIX path relative to the project root when
+            the file cannot be imported (a path segment is not an identifier).
+        is_packaged: Whether a distribution ships the file.
+    """
+
+    name: str
+    is_packaged: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectLayout:
+    """The distributions of a project and how they name its files.
+
+    Attributes:
+        root: Absolute project directory.
+        distributions: Distributions, deepest import root first.
+    """
+
+    root: Path
+    distributions: tuple[Distribution, ...]
+
+    def name_of(self, file_path: Path) -> ModuleName:
+        """Return the name a file takes: from the deepest distribution that ships it.
+
+        Args:
+            file_path: Python source file under the project root.
+
+        Returns:
+            The module name and whether a distribution ships it.
+        """
+        name, _ = _name_with_depth(self, _absolute(file_path))
+        return name
+
+    @property
+    def script_modules(self) -> tuple[str, ...]:
+        """Return the modules every distribution's scripts point at, sorted and unique."""
+        return tuple(sorted({m for d in self.distributions for m in d.script_modules}))
+
+
+def _name_with_depth(layout: ProjectLayout, absolute: Path) -> tuple[ModuleName, int]:
+    """Name a file and tell how deep the distribution that named it is.
+
+    Args:
+        layout: Project layout.
+        absolute: Absolute file path.
+
+    Returns:
+        The name plus the depth of the naming import root (-1 when none ships it).
+    """
+    for distribution in layout.distributions:
+        if not absolute.is_relative_to(distribution.import_root):
+            continue
+        parts = _module_parts(absolute.relative_to(distribution.import_root))
+        if distribution.packages is None and not parts:
+            return ModuleName(distribution.import_root.name, True), len(
+                distribution.import_root.parts
+            )
+        if parts and _ships(distribution, parts):
+            return ModuleName(".".join(parts), True), len(distribution.import_root.parts)
+    parts = _module_parts(absolute.relative_to(layout.root))
+    if all(part.isidentifier() for part in parts):
+        return ModuleName(".".join(parts) or layout.root.name, False), -1
+    return ModuleName(absolute.relative_to(layout.root).as_posix(), False), -1
+
+
+def _module_parts(relative: Path) -> list[str]:
+    """Return the dotted segments of a relative file path; ``__init__`` collapses.
+
+    Args:
+        relative: File path relative to an import root.
+
+    Returns:
+        Module name segments.
+    """
+    parts = list(relative.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    return parts
+
+
+def _ships(distribution: Distribution, parts: list[str]) -> bool:
+    """Tell whether a distribution ships the module with these segments.
+
+    Args:
+        distribution: Candidate distribution.
+        parts: Module name segments relative to its import root.
+
+    Returns:
+        True when every segment is an identifier and the first is one of its packages.
+    """
+    if not all(part.isidentifier() for part in parts):
+        return False
+    return distribution.packages is None or parts[0] in distribution.packages
+
+
+def build_layout(
+    root: Path, files: Sequence[Path], configured: list[str] | None
+) -> tuple[ProjectLayout, list[ParseWarning]]:
+    """Detect the distributions of a project and wrap them in a layout.
+
+    Args:
+        root: Project directory.
+        files: Discovered source files.
+        configured: Source roots relative to root, or None to detect them.
+
+    Returns:
+        The layout plus the warnings about unusable manifests.
+    """
+    distributions, warnings = detect_distributions(root, files, configured)
+    return ProjectLayout(_absolute(root), distributions), warnings
+
+
+def name_files(
+    layout: ProjectLayout, files: Sequence[Path]
+) -> tuple[list[tuple[Path, ModuleName]], list[ParseWarning]]:
+    """Name every file; a name taken twice stays with the deepest distribution.
+
+    Args:
+        layout: Project layout.
+        files: Source files, in the order results must keep.
+
+    Returns:
+        Each file with its name, in the given order, plus one warning per renamed file.
+    """
+    named = [_name_with_depth(layout, _absolute(path)) for path in files]
+    holders: dict[str, list[int]] = defaultdict(list)
+    for index, (name, _) in enumerate(named):
+        holders[name.name].append(index)
+    result = [(path, name) for path, (name, _) in zip(files, named, strict=True)]
+    warnings = []
+    for indexes in holders.values():
+        if len(indexes) < 2:
+            continue
+        ranked = sorted(indexes, key=lambda i: (-named[i][1], str(files[i])))
+        for index in ranked[1:]:
+            path = files[index]
+            relative = _absolute(path).relative_to(layout.root).as_posix()
+            result[index] = (path, ModuleName(relative, False))
+            detail = f"{named[index][0].name} -> {relative}"
+            warnings.append(ParseWarning(WarningCode.MODULE_NAME_COLLISION, path, None, detail))
+    return result, warnings
