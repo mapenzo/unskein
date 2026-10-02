@@ -469,6 +469,9 @@ class PythonAdapter(LanguageAdapter):
     def normalize_module_name(self, file_path: Path, root: Path) -> str:
         """Return the module name of a file, from the distribution that ships it.
 
+        The layout is built from that single file, so in a workspace with name collisions
+        the result may differ from the names ``plan_parse`` gives.
+
         Args:
             file_path: Python source file.
             root: Project directory the file belongs to.

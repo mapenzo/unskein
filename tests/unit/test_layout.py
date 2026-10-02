@@ -333,3 +333,75 @@ def test_layout_exposes_the_scripts_of_every_distribution(make_project: MakeProj
     )
     layout, _ = build_layout(root, sorted(root.rglob("*.py")), None)
     assert layout.script_modules == ("a.cli", "b.run")
+
+
+def test_uv_empty_module_root_without_module_name_is_kept(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "pkg"\n'
+            '[tool.uv.build-backend]\nmodule-root = ""\n',
+            "pkg/__init__.py": "",
+            "pkg/a.py": "",
+            "src/other/__init__.py": "",
+        }
+    )
+    distributions, _ = _detect(root)
+    assert distributions[-1].import_root == root
+    assert distributions[-1].packages == frozenset({"pkg"})
+    layout, _ = build_layout(root, sorted(root.rglob("*.py")), None)
+    assert layout.name_of(root / "pkg/a.py") == ModuleName("pkg.a", True)
+
+
+FLAT_DIRS = {"mysite/__init__.py": "", "polls/__init__.py": "", "polls/views.py": ""}
+
+
+def _flat_packages(make_project: MakeProject, pyproject: str) -> frozenset[str] | None:
+    """Return the packages detected for a flat project with the given pyproject."""
+    root = make_project({"pyproject.toml": pyproject, **FLAT_DIRS})
+    distributions, _ = _detect(root)
+    return distributions[-1].packages
+
+
+def test_setuptools_backend_ships_every_regular_package(make_project: MakeProject) -> None:
+    pyproject = (
+        '[build-system]\nbuild-backend = "setuptools.build_meta"\n[project]\nname = "mysite"\n'
+    )
+    assert _flat_packages(make_project, pyproject) == frozenset({"mysite", "polls"})
+
+
+def test_missing_build_system_is_setuptools(make_project: MakeProject) -> None:
+    assert _flat_packages(make_project, '[project]\nname = "mysite"\n') == frozenset(
+        {"mysite", "polls"}
+    )
+
+
+def test_hatchling_backend_ships_only_the_normalized_name(make_project: MakeProject) -> None:
+    pyproject = '[build-system]\nbuild-backend = "hatchling.build"\n[project]\nname = "mysite"\n'
+    assert _flat_packages(make_project, pyproject) == frozenset({"mysite"})
+
+
+def test_equal_depth_collision_keeps_the_smaller_path(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "services/a/pyproject.toml": '[project]\nname = "app"\n',
+            "services/a/app/__init__.py": "",
+            "services/b/pyproject.toml": '[project]\nname = "app"\n',
+            "services/b/app/__init__.py": "",
+        }
+    )
+    files = sorted(root.rglob("*.py"))
+    layout, _ = build_layout(root, files, None)
+    named, warnings = name_files(layout, files)
+    by_path = {p.relative_to(root).as_posix(): n for p, n in named}
+    assert by_path["services/a/app/__init__.py"] == ModuleName("app", True)
+    assert by_path["services/b/app/__init__.py"] == ModuleName("services/b/app/__init__.py", False)
+    assert [w.code for w in warnings] == [WarningCode.MODULE_NAME_COLLISION]
+
+
+def test_no_manifest_with_src_yields_src_then_root(make_project: MakeProject) -> None:
+    root = make_project({"src/app/__init__.py": "", "tool.py": ""})
+    distributions, _ = _detect(root)
+    assert [(d.import_root, d.packages) for d in distributions] == [
+        (root / "src", None),
+        (root, None),
+    ]

@@ -352,10 +352,12 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
     modules = result.high_coupling_modules
     if not modules:
         return [*lines, t("report.no_coupled", lang)]
-    has_consumers = any(result.coupling_metrics[name].consumers for name in modules)
+    has_consumers = any(
+        result.coupling_metrics[name].consumers for name in modules[:MAX_MODULES_IN_TABLE]
+    )
     lines.append(t("report.coupled_intro", lang, top=TOP_COUPLED_SHARE))
     if has_consumers:
-        lines.append(t("report.coupled_consumers_note", lang))
+        lines += ["", t("report.coupled_consumers_note", lang)]
     consumers_header = f" | {t('report.consumers', lang)}" if has_consumers else ""
     lines += [
         "",

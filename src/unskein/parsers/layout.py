@@ -21,6 +21,7 @@ PACKAGE_INIT_FILE = "__init__.py"
 PYTHON_SUFFIX = ".py"
 # PEP 503 normalization, then to an identifier: "Litellm-Enterprise" -> "litellm_enterprise".
 _NAME_SEPARATORS = re.compile(r"[-_.]+")
+SETUPTOOLS_BACKEND_PREFIX = "setuptools"
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,12 +50,15 @@ class _Declaration:
         packages: Declared top-level package names, when declared.
         name: Project name, when declared.
         script_modules: Modules its scripts point at.
+        auto_discovers: Whether the build backend is setuptools (or none is declared),
+            which ships every top-level package it finds when nothing is declared.
     """
 
     import_root: str | None = None
     packages: frozenset[str] | None = None
     name: str | None = None
     script_modules: tuple[str, ...] = ()
+    auto_discovers: bool = False
 
 
 def _absolute(path: Path) -> Path:
@@ -85,8 +89,8 @@ def detect_distributions(
         configured: Source roots relative to root, or None to detect them.
 
     Returns:
-        The distributions, deepest import root first and the project root last, plus the
-        warnings about manifests that could not be used.
+        The distributions, deepest import root first, plus the warnings about manifests
+        that could not be used.
     """
     absolute_root = _absolute(root)
     warnings: list[ParseWarning] = []
@@ -158,7 +162,7 @@ def _distribution_at(directory: Path, warnings: list[ParseWarning]) -> Distribut
         import_root, declaration.packages, warnings
     )
     if not packages:
-        packages = _conventional_packages(import_root, declaration.name)
+        packages = _conventional_packages(import_root, declaration.name, declaration.auto_discovers)
     return Distribution(directory, import_root, packages, declaration.script_modules)
 
 
@@ -201,31 +205,40 @@ def _existing_declared(
     return frozenset(existing)
 
 
-def _conventional_packages(import_root: Path, name: str | None) -> frozenset[str] | None:
-    """Return the package or module named after the distribution, else every regular package.
+def _conventional_packages(
+    import_root: Path, name: str | None, auto_discovers: bool
+) -> frozenset[str] | None:
+    """Return what a distribution ships when its manifest declares no packages.
+
+    Setuptools auto-discovery ships the package named after the distribution plus every
+    regular package; other backends ship the named one, else every regular package.
 
     Args:
         import_root: Directory the packages live in.
         name: Project name, when the manifest declares one.
+        auto_discovers: Whether the backend ships every top-level package it finds.
 
     Returns:
         Top-level names, or None when none is found, so everything under the import root
         is shipped.
     """
+    named: frozenset[str] = frozenset()
     if name is not None:
         normalized = _NAME_SEPARATORS.sub("_", name).lower()
         if (import_root / normalized).is_dir() or (
             import_root / f"{normalized}{PYTHON_SUFFIX}"
         ).is_file():
-            return frozenset({normalized})
+            named = frozenset({normalized})
+    if named and not auto_discovers:
+        return named
     if not import_root.is_dir():
-        return None
-    found = frozenset(
+        return named or None
+    regular = frozenset(
         entry.name
         for entry in import_root.iterdir()
         if entry.is_dir() and entry.name.isidentifier() and (entry / PACKAGE_INIT_FILE).is_file()
     )
-    return found or None
+    return (named | regular) or None
 
 
 def _read_declaration(directory: Path, warnings: list[ParseWarning]) -> _Declaration:
@@ -241,14 +254,19 @@ def _read_declaration(directory: Path, warnings: list[ParseWarning]) -> _Declara
         The declaration; empty when nothing usable is declared.
     """
     pyproject = _load_toml(directory / PYPROJECT_NAME, warnings)
-    declaration = _declaration_from_pyproject(pyproject) if pyproject else _Declaration()
+    declaration = (
+        _declaration_from_pyproject(pyproject) if pyproject else _Declaration(auto_discovers=True)
+    )
     if declaration.packages is None:
         from_cfg = _declaration_from_setup_cfg(directory / SETUP_CFG_NAME, warnings)
         declaration = _Declaration(
-            declaration.import_root or from_cfg.import_root,
+            declaration.import_root
+            if declaration.import_root is not None
+            else from_cfg.import_root,
             from_cfg.packages,
             declaration.name,
             declaration.script_modules,
+            declaration.auto_discovers,
         )
     return declaration
 
@@ -325,11 +343,32 @@ def _declaration_from_pyproject(data: dict) -> _Declaration:
     project = _table(data, "project")
     poetry = _table(data, "tool", "poetry")
     name = _string(project.get("name")) or _string(poetry.get("name"))
+    backend = _string(_table(data, "build-system").get("build-backend"))
+    scripts = script_modules_of(project)
     for extract in (_uv_build, _maturin, _hatch, _poetry, _setuptools):
         import_root, packages = extract(data)
         if import_root is not None or packages is not None:
-            return _Declaration(import_root, packages, name, script_modules_of(project))
-    return _Declaration(None, None, name, script_modules_of(project))
+            # Without a [build-system], a backend's own tool table says which backend it is.
+            auto_discovers = _auto_discovers(backend, extract is _setuptools)
+            return _Declaration(import_root, packages, name, scripts, auto_discovers)
+    return _Declaration(None, None, name, scripts, _auto_discovers(backend, True))
+
+
+def _auto_discovers(backend: str | None, is_setuptools_table: bool) -> bool:
+    """Tell whether the build backend is setuptools, which ships every package it finds.
+
+    Args:
+        backend: ``[build-system] build-backend``, when declared.
+        is_setuptools_table: Whether the declaration came from setuptools or from nothing,
+            as opposed to another backend's tool table.
+
+    Returns:
+        True for a setuptools backend, or when none is declared and no other backend's
+        tool table is present.
+    """
+    if backend is None:
+        return is_setuptools_table
+    return backend.startswith(SETUPTOOLS_BACKEND_PREFIX)
 
 
 def _uv_build(data: dict) -> tuple[str | None, frozenset[str] | None]:

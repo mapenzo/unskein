@@ -653,3 +653,10 @@ def test_consumers_column_appears_only_with_consumers(simple_project: Path) -> N
     assert "Consumers" not in plain
     assert "## Scripts" not in plain
     assert "scripts" not in plain.split("## General metrics", maxsplit=1)[0]
+
+
+def test_coupled_intro_and_consumers_note_are_separate_paragraphs() -> None:
+    lines = _scripts_report(Lang.EN).splitlines()
+    note = next(i for i, line in enumerate(lines) if line.startswith("Consumers:"))
+    assert lines[note - 1] == ""
+    assert lines[note - 2] != ""
