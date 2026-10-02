@@ -276,3 +276,25 @@ def test_scan_warns_about_a_declared_layer_that_matches_no_module(
     assert [record.getMessage() for record in caplog.records] == [
         "Layer cor in [layers] matches no module of the project"
     ]
+
+
+def test_scan_does_not_warn_about_a_declared_layer_that_only_scripts_match(
+    make_project: MakeProject, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "lib"\n[tool.setuptools]\npackages = ["lib"]\n',
+            "lib/__init__.py": "",
+            "lib/api.py": "",
+            "cookbook/demo.py": "from lib import api\n",
+            ".unskein.toml": '[layers]\norder = ["cookbook", "lib"]\n',
+        }
+    )
+    logger = logging.getLogger("unskein")
+    monkeypatch.setattr(logger, "handlers", [])
+    monkeypatch.setattr(logger, "propagate", True)
+
+    with caplog.at_level(logging.WARNING, logger="unskein"):
+        execute_scan(prepare(ScanOptions(path=root, no_ai=True)))
+
+    assert caplog.records == []
