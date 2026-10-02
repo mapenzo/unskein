@@ -301,8 +301,10 @@ archivo que ya lo declara explícitamente.
 ## 2.6. Layout del proyecto (`parsers/layout.py`)
 
 Un monorepo tiene varias distribuciones, y cada archivo debe nombrarse como lo
-importa Python según la que lo empaqueta. `ProjectLayout` se calcula una vez antes
-de `plan_parse` y viaja a los workers dentro de `ParsePlan`; sin configuración.
+importa Python según la que lo empaqueta. `ProjectLayout` se calcula una vez dentro
+de `plan_parse` y solo se usa ahí (`build_layout` + `name_files`); el `ParsePlan` que llega
+a los workers lleva las tareas ya nombradas, el `ProjectIndex` compartido (con los archivos
+no empaquetados), los warnings y los entry points. Sin configuración.
 
 **Detección.** Una distribución es un directorio con `pyproject.toml`, `setup.py` o
 `setup.cfg`; la raíz del proyecto lo es siempre, aunque no tenga manifiesto. Los
@@ -322,15 +324,16 @@ import que sea identificador y tenga `__init__.py`. Si la heurística no encuent
 ningún paquete, o la raíz no tiene manifiesto, la distribución empaqueta todo lo que
 contiene (el nombrado de siempre).
 
-**Nombrado** (`ProjectLayout.module_name`): lo nombra la distribución más profunda cuyo
+**Nombrado** (`ProjectLayout.name_of`): lo nombra la distribución más profunda cuyo
 `import_root` contiene el archivo y cuyo primer segmento está en `packages`
 (`is_packaged=True`). Si ninguna lo empaqueta, el nombre es relativo a la raíz del
 proyecto (`is_packaged=False`); si algún segmento no es identificador (`.circleci`,
 `e2e-stack`), se nombra por ruta POSIX, que contiene `/` y por tanto nunca coincide con
 un import. `__init__.py` colapsa al paquete.
 
-**Colisiones**: con el mismo nombre con punto gana la distribución más profunda; el
-otro archivo se nombra por ruta y se emite `MODULE_NAME_COLLISION`. Manifiesto ilegible
+**Colisiones** (`name_files`): con el mismo nombre con punto gana el archivo nombrado por la
+raíz de import más profunda (uno que ninguna distribución empaqueta pierde ante cualquiera);
+el empate se resuelve por ruta, la menor en orden alfabético. Los demás se nombran por ruta y se emite `MODULE_NAME_COLLISION`. Manifiesto ilegible
 (`MANIFEST_UNREADABLE`, usa la heurística) y paquete declarado inexistente
 (`DECLARED_PACKAGE_MISSING`, se ignora esa entrada) también son warnings: el análisis
 nunca se aborta por un manifiesto del usuario.
@@ -764,7 +767,7 @@ Ca cuenta dependencias desde dentro del sistema medido (Martin): un consumidor e
 no forma parte de él. Un *script* es un archivo que ninguna distribución empaqueta
 (`is_packaged=False`) y que nadie importa (Ca = 0 contando todos los `ImportKind`); los
 nombrados por ruta lo son siempre. Los entry points declarados nunca son huérfanos. El
-grafo conserva las aristas script → módulo con `from_script=True`, pero Ca, Ce,
+grafo completo conserva las aristas script → módulo, pero Ca, Ce,
 inestabilidad, impacto, marañas, ciclos, percentil y tabla de paquetes se calculan sobre
 el subgrafo de módulos (`nx.subgraph_view`, sin copia). `CouplingMetrics.consumers` es el
 número de scripts distintos que importan el módulo. Los scripts no se evalúan en
@@ -1084,10 +1087,11 @@ Estructura del reporte:
 ## Resumen                          (con o sin IA — nunca vacío)
 ## Métricas generales
 ## Ciclos de dependencia
-## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado; columna
-                                    Consumidores solo si algún módulo tiene)
+## Paquetes                         (si hay resumen por paquetes)
 ## Scripts                          (solo si hay scripts: por directorio de primer nivel,
                                     con recuento y paquetes que usan)
+## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado; columna
+                                    Consumidores solo si algún módulo tiene)
 ## Problemas señalados (IA)         (siempre presente: los problemas si hay AIReport;
                                     si no, el aviso de por qué no hay: DISABLED,
                                     NOT_CONFIGURED o FAILED)
