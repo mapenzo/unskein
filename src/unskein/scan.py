@@ -225,8 +225,8 @@ def analyze_project(context: ScanContext) -> AnalysisResult:
     result = analyze(parsed, context.findings)
     if context.findings.enabled:
         known_modules = [*result.graph.nodes, *result.scripts]
-    for layer in unmatched_layers(known_modules, context.findings.layers):
-        logger.warning("Layer %s in [layers] matches no module of the project", layer)
+        for layer in unmatched_layers(known_modules, context.findings.layers):
+            logger.warning("Layer %s in [layers] matches no module of the project", layer)
     logger.debug(
         "Analyzed %d modules, %d dependencies",
         result.graph.number_of_nodes(),
