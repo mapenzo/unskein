@@ -153,7 +153,9 @@ def _distribution_at(directory: Path, warnings: list[ParseWarning]) -> Distribut
         import_root = _default_import_root(directory)
     else:
         import_root = _absolute(directory / declaration.import_root)
-    packages = _existing_declared(import_root, declaration.packages, warnings)
+    packages: frozenset[str] | None = _existing_declared(
+        import_root, declaration.packages, warnings
+    )
     if not packages:
         packages = _conventional_packages(import_root, declaration.name)
     return Distribution(directory, import_root, packages, declaration.script_modules)
@@ -198,27 +200,31 @@ def _existing_declared(
     return frozenset(existing)
 
 
-def _conventional_packages(import_root: Path, name: str | None) -> frozenset[str]:
-    """Return the package named after the distribution, else every regular package.
+def _conventional_packages(import_root: Path, name: str | None) -> frozenset[str] | None:
+    """Return the package or module named after the distribution, else every regular package.
 
     Args:
         import_root: Directory the packages live in.
         name: Project name, when the manifest declares one.
 
     Returns:
-        Top-level package names.
+        Top-level names, or None when none is found, so everything under the import root
+        is shipped.
     """
     if name is not None:
         normalized = _NAME_SEPARATORS.sub("_", name).lower()
-        if (import_root / normalized).is_dir():
+        if (import_root / normalized).is_dir() or (
+            import_root / f"{normalized}{PYTHON_SUFFIX}"
+        ).is_file():
             return frozenset({normalized})
     if not import_root.is_dir():
-        return frozenset()
-    return frozenset(
+        return None
+    found = frozenset(
         entry.name
         for entry in import_root.iterdir()
         if entry.is_dir() and entry.name.isidentifier() and (entry / PACKAGE_INIT_FILE).is_file()
     )
+    return found or None
 
 
 def _read_declaration(directory: Path, warnings: list[ParseWarning]) -> _Declaration:
@@ -417,7 +423,7 @@ def _declaration_from_setup_cfg(path: Path, warnings: list[ParseWarning]) -> _De
     """
     if not path.is_file():
         return _Declaration()
-    parser = configparser.ConfigParser()
+    parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(path, encoding="utf-8")
     except (configparser.Error, OSError, UnicodeDecodeError) as error:

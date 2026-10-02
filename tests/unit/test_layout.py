@@ -189,3 +189,30 @@ def test_scripts_of_every_distribution_are_read(make_project: MakeProject) -> No
     found = _by_root(_detect(root)[0], root)
     assert found["."].script_modules == ("a.cli",)
     assert found["b"].script_modules == ("b.gui",)
+
+
+def test_tool_only_pyproject_ships_everything(make_project: MakeProject) -> None:
+    root = make_project(
+        {"pyproject.toml": "[tool.ruff]\nline-length = 99\n", "main.py": "", "util.py": ""}
+    )
+    (dist,), _ = _detect(root)
+    assert dist.packages is None
+
+
+def test_single_module_distribution_ships_its_module(make_project: MakeProject) -> None:
+    root = make_project({"pyproject.toml": '[project]\nname = "foo"\n', "foo.py": ""})
+    (dist,), _ = _detect(root)
+    assert dist.packages == frozenset({"foo"})
+
+
+def test_setup_cfg_with_percent_does_not_abort(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "setup.cfg": "[options]\npackages =\n    pct\npackage_dir =\n    =src%x\n",
+            "src%x/pct/__init__.py": "",
+        }
+    )
+    (dist,), warnings = _detect(root)
+    assert dist.import_root == root / "src%x"
+    assert dist.packages == frozenset({"pct"})
+    assert warnings == []
