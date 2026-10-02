@@ -1,37 +1,17 @@
-"""Entry points of a project, read from the scripts its ``pyproject.toml`` declares."""
+"""Entry points of a distribution, read from the scripts its ``[project]`` table declares."""
 
-import logging
-import tomllib
-from pathlib import Path
-
-logger = logging.getLogger("unskein")
-
-PYPROJECT_NAME = "pyproject.toml"
 SCRIPT_TABLES = ("scripts", "gui-scripts")
 
 
-def read_script_modules(root: Path) -> tuple[str, ...]:
-    """Return the modules that the project's console and GUI scripts point at.
-
-    A missing file or a project without scripts gives no entry points. A file
-    that cannot be read or parsed is reported once through the ``unskein``
-    logger and ignored: the scan must not depend on it.
+def script_modules_of(project: object) -> tuple[str, ...]:
+    """Return the modules that a ``[project]`` table's console and GUI scripts point at.
 
     Args:
-        root: Project root, where ``pyproject.toml`` lives.
+        project: The parsed ``[project]`` table, or anything else when the manifest has none.
 
     Returns:
         Sorted, unique module names (the part before ``:`` of each script target).
     """
-    path = root / PYPROJECT_NAME
-    if not path.is_file():
-        return ()
-    try:
-        with path.open("rb") as file:
-            project = tomllib.load(file).get("project")
-    except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as error:
-        logger.warning("Ignoring %s for entry points: %s", path, error)
-        return ()
     if not isinstance(project, dict):
         return ()
     modules: set[str] = set()

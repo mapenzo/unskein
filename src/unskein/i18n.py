@@ -113,6 +113,30 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Cadenas de re-exports demasiado largas",
         Lang.EN: "Re-export chains too long",
     },
+    "warning.manifest_unreadable": {
+        Lang.ES: "Manifiesto ilegible, se detectan sus paquetes por convención: {detail}",
+        Lang.EN: "Unreadable manifest, its packages are detected by convention: {detail}",
+    },
+    "warning_title.manifest_unreadable": {
+        Lang.ES: "Manifiestos ilegibles",
+        Lang.EN: "Unreadable manifests",
+    },
+    "warning.declared_package_missing": {
+        Lang.ES: "El manifiesto declara el paquete '{detail}', que no existe",
+        Lang.EN: "The manifest declares package '{detail}', which does not exist",
+    },
+    "warning_title.declared_package_missing": {
+        Lang.ES: "Paquetes declarados inexistentes",
+        Lang.EN: "Declared packages that do not exist",
+    },
+    "warning.module_name_collision": {
+        Lang.ES: "Nombre de módulo repetido, este archivo se nombra por su ruta: {detail}",
+        Lang.EN: "Repeated module name, this file is named by its path: {detail}",
+    },
+    "warning_title.module_name_collision": {
+        Lang.ES: "Nombres de módulo repetidos",
+        Lang.EN: "Repeated module names",
+    },
 }
 
 _REPORT: dict[str, dict[Lang, str]] = {

@@ -20,6 +20,11 @@ class WarningCode(StrEnum):
         PARSE_TIMEOUT: Parsing a file exceeded ``per_file_timeout_seconds``; it was skipped.
         REEXPORT_CYCLE: Re-exports of a symbol form a cycle.
         REEXPORT_DEPTH_EXCEEDED: A re-export chain is longer than the resolution limit.
+        MANIFEST_UNREADABLE: A ``pyproject.toml`` or ``setup.cfg`` could not be read or
+            parsed; its distribution is detected with the heuristic.
+        DECLARED_PACKAGE_MISSING: A manifest declares a package that does not exist on disk.
+        MODULE_NAME_COLLISION: Two files would take the same module name; the one in the
+            shallower distribution is named by its path.
     """
 
     STAR_IMPORT = "star_import"
@@ -30,6 +35,9 @@ class WarningCode(StrEnum):
     PARSE_TIMEOUT = "parse_timeout"
     REEXPORT_CYCLE = "reexport_cycle"
     REEXPORT_DEPTH_EXCEEDED = "reexport_depth_exceeded"
+    MANIFEST_UNREADABLE = "manifest_unreadable"
+    DECLARED_PACKAGE_MISSING = "declared_package_missing"
+    MODULE_NAME_COLLISION = "module_name_collision"
 
 
 @dataclass(frozen=True, slots=True)
