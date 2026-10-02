@@ -85,8 +85,8 @@ def render_report(context: ReportContext, lang: Lang) -> str:
     """Render the full report as Markdown.
 
     Formatting only, no business logic: every number and judgment comes from
-    the analysis or the AI report. The warnings section appears only when
-    there are warnings; every other section is always present.
+    the analysis or the AI report. The warnings and scripts sections appear
+    only when there are any; every other section is always present.
 
     Args:
         context: Analysis, AI report and presentation settings.
@@ -104,6 +104,8 @@ def render_report(context: ReportContext, lang: Lang) -> str:
     packages = _packages(context.result, lang)
     if packages:
         sections.append(packages)
+    if context.result.scripts:
+        sections.append(_scripts(context.result, lang))
     sections.append(_coupled(context.result, lang))
     if context.result.findings_enabled:
         sections.append(_findings(context.result, lang))
@@ -136,10 +138,15 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         Markdown lines of the section.
     """
     result = context.result
+    scripts = ""
+    if result.scripts:
+        key = "one" if len(result.scripts) == 1 else "other"
+        scripts = t(f"report.summary_scripts.{key}", lang, count=len(result.scripts))
     counts = t(
         "report.summary_counts",
         lang,
         modules=result.graph.number_of_nodes(),
+        scripts=scripts,
         dependencies=result.graph.number_of_edges(),
         cycles=_cycle_count(result),
     )
@@ -191,8 +198,10 @@ def _metrics(result: AnalysisResult, lang: Lang) -> list[str]:
     Returns:
         Markdown lines of the section.
     """
-    rows = [
-        ("report.metric.modules", result.graph.number_of_nodes()),
+    rows = [("report.metric.modules", result.graph.number_of_nodes())]
+    if result.scripts:
+        rows.append(("report.metric.scripts", len(result.scripts)))
+    rows += [
         ("report.metric.dependencies", result.graph.number_of_edges()),
         ("report.metric.cycles", _cycle_count(result)),
         ("report.metric.tangles", len(result.tangles)),
@@ -343,18 +352,23 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
     modules = result.high_coupling_modules
     if not modules:
         return [*lines, t("report.no_coupled", lang)]
+    has_consumers = any(result.coupling_metrics[name].consumers for name in modules)
+    lines.append(t("report.coupled_intro", lang, top=TOP_COUPLED_SHARE))
+    if has_consumers:
+        lines.append(t("report.coupled_consumers_note", lang))
+    consumers_header = f" | {t('report.consumers', lang)}" if has_consumers else ""
     lines += [
-        t("report.coupled_intro", lang, top=TOP_COUPLED_SHARE),
         "",
         f"| {t('report.module', lang)} | Ca | Ce | {t('report.instability', lang)} "
-        f"| {t('report.impact', lang)} |",
-        "|---|---:|---:|---:|---:|",
+        f"| {t('report.impact', lang)}{consumers_header} |",
+        "|---|---:|---:|---:|---:|" + ("---:|" if has_consumers else ""),
     ]
     for name in modules[:MAX_MODULES_IN_TABLE]:
         m = result.coupling_metrics[name]
+        consumers = f" | {m.consumers}" if has_consumers else ""
         lines.append(
             f"| `{name}` | {m.afferent} | {m.efferent} | {m.instability:.2f} "
-            f"| {result.impact.get(name, NOT_MEASURED)} |"
+            f"| {result.impact.get(name, NOT_MEASURED)}{consumers} |"
         )
     if len(modules) > MAX_MODULES_IN_TABLE:
         showing = t(
@@ -365,6 +379,32 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
             top=TOP_COUPLED_SHARE,
         )
         lines += ["", showing]
+    return lines
+
+
+def _scripts(result: AnalysisResult, lang: Lang) -> list[str]:
+    """Build the scripts section: one line per directory with what its scripts use.
+
+    Args:
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        Markdown lines of the section.
+    """
+    lines = [f"## {t('report.scripts', lang)}", "", t("report.scripts_intro", lang), ""]
+    for group in result.script_groups:
+        key = "one" if group.scripts == 1 else "other"
+        uses = ", ".join(f"`{use}`" for use in group.uses) or NOT_MEASURED
+        lines.append(
+            t(
+                f"report.script_group.{key}",
+                lang,
+                directory=group.directory,
+                count=group.scripts,
+                uses=uses,
+            )
+        )
     return lines
 
 

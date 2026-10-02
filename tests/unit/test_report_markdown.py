@@ -7,6 +7,7 @@ import pathspec
 import pytest
 
 from unskein.ai.models import AIFailure, AIReport, Problem
+from unskein.config import AnalysisConfig
 from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import (
     IMPACT_BOTTLENECK_MODULES,
@@ -612,3 +613,43 @@ def test_summary_points_to_untangle_when_there_are_tangles(
     assert "`unskein untangle`" in tangled.split("## General metrics", maxsplit=1)[0]
     clean = render(simple_project, analyzed(simple_project))
     assert "unskein untangle" not in clean
+
+
+SCRIPTS_ROOT = Path(__file__).parent.parent / "fixtures" / "scripts_project"
+
+
+def _scripts_report(lang: Lang) -> str:
+    """Render the report of the scripts fixture without AI.
+
+    Args:
+        lang: Report language.
+
+    Returns:
+        The Markdown report.
+    """
+    adapter = PythonAdapter(AnalysisConfig())
+    parsed = adapter.resolve_indirection(
+        adapter.parse(sorted(SCRIPTS_ROOT.rglob("*.py")), SCRIPTS_ROOT)
+    )
+    return render(SCRIPTS_ROOT, analyze(parsed), lang)
+
+
+def test_summary_and_metrics_count_scripts() -> None:
+    report = _scripts_report(Lang.EN)
+    assert "modules + 4 scripts, " in report
+    assert "| Scripts | 4 |" in report
+
+
+def test_scripts_section_groups_by_directory() -> None:
+    report = _scripts_report(Lang.ES)
+    assert "## Scripts" in report
+    assert "- `cookbook/` (2 scripts) → `lib`" in report
+    assert "- `.github/` (1 script) → `lib`" in report
+
+
+def test_consumers_column_appears_only_with_consumers(simple_project: Path) -> None:
+    assert "| Consumers |" in _scripts_report(Lang.EN)
+    plain = render(simple_project, analyzed(simple_project))
+    assert "Consumers" not in plain
+    assert "## Scripts" not in plain
+    assert "scripts" not in plain.split("## General metrics", maxsplit=1)[0]
