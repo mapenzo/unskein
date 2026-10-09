@@ -35,6 +35,12 @@ STATEMENT_LIST_FIELDS = ("body", "handlers", "cases", "orelse", "finalbody")
 
 FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 TYPE_CHECKING_NAME = "TYPE_CHECKING"
+TRY_NODES = (ast.Try, ast.TryStar)
+WITH_NODES = (ast.With, ast.AsyncWith)
+GUARDED_BLOCK = "body"
+# Handlers that catch a failed import; a bare `except:` does too.
+IMPORT_ERROR_NAMES = frozenset({"ImportError", "ModuleNotFoundError", "Exception", "BaseException"})
+SUPPRESS_NAME = "suppress"
 # Names of non-importable files are POSIX paths; "/" never appears in a dotted name.
 PATH_SEPARATOR = "/"
 
@@ -76,7 +82,84 @@ def block_kind(node: ast.AST, field_name: str, kind: ImportKind) -> ImportKind:
     return kind
 
 
-def iter_statements(tree: ast.Module) -> Iterator[tuple[ast.AST, ImportKind]]:
+def _exception_names(node: ast.expr | None) -> list[str]:
+    """Return the names an ``except`` type or ``suppress`` argument refers to.
+
+    Args:
+        node: A name (``ImportError``), an attribute (``builtins.ImportError``) or a tuple.
+
+    Returns:
+        The last segment of every name found; empty for anything else.
+    """
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, ast.Attribute):
+        return [node.attr]
+    if isinstance(node, ast.Tuple):
+        return [name for element in node.elts for name in _exception_names(element)]
+    return []
+
+
+def catches_import_errors(handlers: list[ast.ExceptHandler]) -> bool:
+    """Tell whether some handler of a ``try`` catches a failed import.
+
+    Args:
+        handlers: The ``except`` clauses.
+
+    Returns:
+        True for a bare ``except:`` or a handler naming one of ``IMPORT_ERROR_NAMES``.
+    """
+    for handler in handlers:
+        if handler.type is None or IMPORT_ERROR_NAMES.intersection(_exception_names(handler.type)):
+            return True
+    return False
+
+
+def suppresses_import_errors(node: ast.With | ast.AsyncWith) -> bool:
+    """Tell whether a ``with`` statement suppresses failed imports.
+
+    Args:
+        node: The ``with`` statement.
+
+    Returns:
+        True when one of its context managers is ``suppress(...)`` or ``x.suppress(...)``
+        called with one of ``IMPORT_ERROR_NAMES``.
+    """
+    for item in node.items:
+        call = item.context_expr
+        if not isinstance(call, ast.Call) or SUPPRESS_NAME not in _exception_names(call.func):
+            continue
+        if any(IMPORT_ERROR_NAMES.intersection(_exception_names(arg)) for arg in call.args):
+            return True
+    return False
+
+
+def block_guarded(node: ast.AST, field_name: str, is_guarded: bool) -> bool:
+    """Return whether the statements of one block are guarded against failed imports.
+
+    Only the body of a ``try`` that catches import errors, or of a ``with suppress(...)``
+    for them, is guarded; handlers, ``else`` and ``finally`` are not. Guarding is inherited.
+
+    Args:
+        node: Compound statement that owns the block.
+        field_name: Field of ``node`` that holds the block.
+        is_guarded: Whether ``node`` itself is guarded.
+
+    Returns:
+        Whether the block's statements are guarded.
+    """
+    if is_guarded:
+        return True
+    if field_name != GUARDED_BLOCK:
+        return False
+    if isinstance(node, TRY_NODES):
+        return catches_import_errors(node.handlers)
+    if isinstance(node, WITH_NODES):
+        return suppresses_import_errors(node)
+    return False
+
+
+def iter_statements(tree: ast.Module) -> Iterator[tuple[ast.AST, ImportKind, bool]]:
     """Yield every statement of a module with its context, nested ones included, in code order.
 
     Skips expressions on purpose: ``ast.walk`` visits millions of expression
@@ -86,17 +169,18 @@ def iter_statements(tree: ast.Module) -> Iterator[tuple[ast.AST, ImportKind]]:
         tree: Parsed module.
 
     Yields:
-        Each statement, exception handler and match case, depth-first, paired with
-        the ``ImportKind`` an import placed there would have.
+        Each statement, exception handler and match case, depth-first, with the
+        ``ImportKind`` an import placed there would have and whether it would be guarded.
     """
-    stack = [(node, ImportKind.MODULE) for node in reversed(tree.body)]
+    stack = [(node, ImportKind.MODULE, False) for node in reversed(tree.body)]
     while stack:
-        node, kind = stack.pop()
-        yield node, kind
+        node, kind, is_guarded = stack.pop()
+        yield node, kind, is_guarded
         for field_name in reversed(STATEMENT_LIST_FIELDS):
             if children := getattr(node, field_name, None):
                 child_kind = block_kind(node, field_name, kind)
-                stack.extend((child, child_kind) for child in reversed(children))
+                child_guarded = block_guarded(node, field_name, is_guarded)
+                stack.extend((child, child_kind, child_guarded) for child in reversed(children))
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +315,7 @@ class _ImportCollector:
         *,
         kind: ImportKind = ImportKind.MODULE,
         binding: Binding | None = None,
+        is_guarded: bool = False,
     ) -> str | None:
         """Record an import edge towards a module.
 
@@ -243,6 +328,7 @@ class _ImportCollector:
             line: Line of the import statement.
             kind: Where the statement sits.
             binding: The name the statement binds, when it binds one.
+            is_guarded: Whether the statement is guarded against failed imports.
 
         Returns:
             The internal target module, or None if external or unresolved.
@@ -250,7 +336,9 @@ class _ImportCollector:
         if binding is not None:
             self.bound_counts[binding.name] += 1
         if self.index.is_external(name):
-            self.edges.append(ImportEdge(self.source, name, True, symbol, line, kind))
+            self.edges.append(
+                ImportEdge(self.source, name, True, symbol, line, kind, is_guarded=is_guarded)
+            )
             return None
         target = self.index.closest_module(name)
         if target is None:
@@ -259,7 +347,9 @@ class _ImportCollector:
         if target != name:
             self.warn(WarningCode.UNRESOLVED_IMPORT, line, f"{name} -> {target}")
         if target != self.source:
-            self.edges.append(ImportEdge(self.source, target, False, symbol, line, kind))
+            self.edges.append(
+                ImportEdge(self.source, target, False, symbol, line, kind, is_guarded=is_guarded)
+            )
             if binding is not None and self.binds_package(
                 binding, symbol, target, is_exact=target == name
             ):
@@ -315,18 +405,27 @@ class _ImportCollector:
         Args:
             tree: Parsed module.
         """
-        for node, kind in iter_statements(tree):
+        for node, kind, is_guarded in iter_statements(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     top, _, rest = alias.name.partition(".")
                     bound = Binding(alias.asname, True) if alias.asname else Binding(top, not rest)
-                    self.add(alias.name, None, node.lineno, kind=kind, binding=bound)
+                    self.add(
+                        alias.name,
+                        None,
+                        node.lineno,
+                        kind=kind,
+                        binding=bound,
+                        is_guarded=is_guarded,
+                    )
             elif isinstance(node, ast.ImportFrom):
                 base = self.relative_base(node) if node.level else node.module
                 if base:
-                    self.visit_from(base, node, kind=kind)
+                    self.visit_from(base, node, kind=kind, is_guarded=is_guarded)
 
-    def visit_from(self, base: str, node: ast.ImportFrom, *, kind: ImportKind) -> None:
+    def visit_from(
+        self, base: str, node: ast.ImportFrom, *, kind: ImportKind, is_guarded: bool = False
+    ) -> None:
         """Record the names of a `from base import ...` statement.
 
         A name that is a submodule of base becomes a module import; any other
@@ -339,6 +438,7 @@ class _ImportCollector:
             base: Absolute dotted module the names are imported from.
             node: The `from ... import` statement.
             kind: Where the statement sits.
+            is_guarded: Whether the statement is guarded against failed imports.
         """
         for alias in node.names:
             if alias.name == "*":
@@ -347,16 +447,20 @@ class _ImportCollector:
                 )
                 if not is_star_reexport:
                     self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
-                self.add(base, None, node.lineno, kind=kind)
+                self.add(base, None, node.lineno, kind=kind, is_guarded=is_guarded)
                 if is_star_reexport:
                     self.re_exports.append(ReExport(self.source, base, STAR_EXPORT))
                 continue
             binding = Binding(alias.asname or alias.name, True)
             submodule = f"{base}.{alias.name}"
             if submodule in self.index.modules:
-                self.add(submodule, None, node.lineno, kind=kind, binding=binding)
+                self.add(
+                    submodule, None, node.lineno, kind=kind, binding=binding, is_guarded=is_guarded
+                )
                 continue
-            target = self.add(base, alias.name, node.lineno, kind=kind, binding=binding)
+            target = self.add(
+                base, alias.name, node.lineno, kind=kind, binding=binding, is_guarded=is_guarded
+            )
             if self.is_package and target is not None and target != self.source:
                 exported = alias.asname or alias.name
                 self.re_exports.append(ReExport(self.source, target, exported))

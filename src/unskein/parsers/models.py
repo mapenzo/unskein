@@ -119,6 +119,9 @@ class ImportEdge:
             only filled for imports of a package whose use was analyzed.
         escapes: Whether that name is also used by itself (passed, assigned, rebound),
             so its attribute accesses do not tell everything the module depends on.
+        is_guarded: Whether the statement sits in the body of a ``try`` that catches import
+            errors, or of ``with contextlib.suppress(...)`` for them; such an import is
+            optional by contract.
     """
 
     source: str
@@ -129,6 +132,7 @@ class ImportEdge:
     kind: ImportKind = ImportKind.MODULE
     accessed: tuple[str, ...] = ()
     escapes: bool = False
+    is_guarded: bool = False
 
 
 @dataclass(slots=True)
