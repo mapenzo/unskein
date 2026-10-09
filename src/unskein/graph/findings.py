@@ -71,7 +71,7 @@ def find_findings(
     *,
     packages: Collection[str] = frozenset(),
     scripts: Collection[str] = frozenset(),
-    namespaces: Collection[str] = frozenset(),
+    virtual: Collection[str] = frozenset(),
 ) -> list[Finding]:
     """Apply every rule to the graph and its coupling metrics.
 
@@ -84,7 +84,7 @@ def find_findings(
         config: Thresholds, entry points and declared layers.
         packages: Names of modules that are package ``__init__`` files.
         scripts: Scripts: no metrics of their own, evaluated only by the layer rule.
-        namespaces: Namespace packages: no rule applies to them, but they can be the
+        virtual: Modules with no parsed file: no rule applies to them, but they can be the
             target of a layer violation.
 
     Returns:
@@ -98,7 +98,7 @@ def find_findings(
         *_bottlenecks(candidates, config),
         *_orchestrators(candidates, config),
         *_orphans(candidates, config),
-        *_layer_violations(graph, candidates, config, scripts=scripts, targets=namespaces),
+        *_layer_violations(graph, candidates, config, scripts=scripts, targets=virtual),
     ]
 
 

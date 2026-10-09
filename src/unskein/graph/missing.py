@@ -168,7 +168,7 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> dict[str, _Missin
         What is imported from each missing module, by its name; ``first`` is set only
         when some statement breaks (required or lazy).
     """
-    known = frozenset(module.name for module in result.modules) | frozenset(result.namespaces)
+    known = frozenset(module.name for module in result.modules) | frozenset(result.virtual)
     missing: defaultdict[str, _Missing] = defaultdict(_Missing)
     # Only packaged modules with a broken import: relative paths are slow on many files.
     sources = sorted(

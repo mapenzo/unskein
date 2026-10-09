@@ -249,10 +249,8 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
         A new parse result with resolved import targets.
     """
     index = build_reexport_index(result.re_exports, star_exports(result.modules, result.re_exports))
-    # Namespace packages have no file, but chains walk through them to their submodules.
-    module_names = frozenset(module.name for module in result.modules) | frozenset(
-        result.namespaces
-    )
+    # Virtual modules have no file, but chains walk through them to their submodules.
+    module_names = frozenset(module.name for module in result.modules) | frozenset(result.virtual)
     warnings = dict.fromkeys(result.warnings)
     modules = []
     for module in result.modules:

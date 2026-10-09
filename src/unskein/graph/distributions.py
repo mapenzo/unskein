@@ -310,12 +310,13 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     # Unparsed files (too large, syntax errors) still belong to their distribution.
     distribution_of: dict[str, str | None] = dict(result.module_distributions)
     distribution_of.update((module.name, module.distribution) for module in result.modules)
-    # Namespace packages have no file: their distribution and packaging come from their modules.
-    for namespace in result.namespaces:
-        distribution_of.setdefault(namespace, None)
+    # Virtual modules have no parsed file: their distribution comes from the plan (or, for
+    # namespace packages, from their modules).
+    for name in result.virtual:
+        distribution_of.setdefault(name, None)
     packaged = {module.name for module in result.modules if module.is_packaged}
     packaged.update(result.module_distributions)
-    packaged.update(name for name, shipped in result.namespaces.items() if shipped)
+    packaged.update(name for name, virtual in result.virtual.items() if virtual.is_packaged)
     # Sorted by relative POSIX path, so "first" is the same on every platform; computed
     # once per module (Path.relative_to is slow on tens of thousands of imports).
     sources = sorted(

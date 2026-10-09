@@ -2,8 +2,8 @@
 
 import ast
 from collections import defaultdict
-from collections.abc import Collection, Iterator
-from dataclasses import dataclass
+from collections.abc import Collection, Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pathspec
@@ -23,6 +23,8 @@ from unskein.parsers.models import (
     ParseTask,
     ParseWarning,
     ReExport,
+    VirtualKind,
+    VirtualModule,
     WarningCode,
 )
 from unskein.parsers.usage import collect_name_usage
@@ -199,44 +201,61 @@ class ProjectIndex:
         top_level: First segments of those names (the project's top-level packages).
         packages: Modules that have submodules, i.e. the package facades (their ``__init__.py``).
         unpackaged: Modules no distribution ships (named by path or by their place under the root).
-        namespaces: Packages without an ``__init__.py`` (PEP 420): dotted prefixes of importable
-            names that are not modules themselves. They are also in ``modules`` and ``packages``.
+        virtual: Modules with no ``.py`` file, by name: namespace packages (dotted prefixes
+            of importable names that are not modules themselves), compiled extensions and
+            stubs. All of them are in ``modules``; namespace packages are also in ``packages``.
     """
 
     modules: frozenset[str]
     top_level: frozenset[str]
     packages: frozenset[str]
     unpackaged: frozenset[str] = frozenset()
-    namespaces: frozenset[str] = frozenset()
+    virtual: dict[str, VirtualKind] = field(default_factory=dict)
 
     @classmethod
     def from_names(
-        cls, names: set[str], unpackaged: frozenset[str] = frozenset()
+        cls,
+        names: set[str],
+        unpackaged: frozenset[str] = frozenset(),
+        native: Mapping[str, VirtualKind] | None = None,
     ) -> "ProjectIndex":
         """Build the index from the project's module names.
 
         Names that are paths (files no import can reach) are kept as modules but
         never become top-level packages, so they cannot make an import internal.
         Every dotted prefix of an importable name that is not a module is a namespace
-        package (a directory without ``__init__.py``).
+        package (a directory without ``__init__.py``). Compiled extensions and stubs are
+        importable names too: one in a directory with no ``.py`` makes that directory a
+        namespace package, and an ``__init__.pyi`` makes its directory a regular package.
 
         Args:
-            names: Names of all project modules.
+            names: Names of all parsed project modules.
             unpackaged: Those of them no distribution ships.
+            native: Compiled extensions and stubs with no ``.py`` file, by name.
 
         Returns:
             The index over those names.
         """
-        importable = {name for name in names if PATH_SEPARATOR not in name}
+        native = native or {}
+        importable = {name for name in names | native.keys() if PATH_SEPARATOR not in name}
         prefixes = {
             NAME_SEPARATOR.join(parts[:end])
             for parts in (name.split(NAME_SEPARATOR) for name in importable)
             for end in range(1, len(parts))
         }
-        namespaces = frozenset(prefixes - importable)
-        modules = frozenset(names) | namespaces
+        namespaces = prefixes - importable
+        virtual = {name: VirtualKind.NAMESPACE for name in namespaces} | dict(native)
+        modules = frozenset(names) | frozenset(virtual)
         top_level = frozenset(name.split(NAME_SEPARATOR)[0] for name in importable)
-        return cls(modules, top_level, frozenset(prefixes & modules), unpackaged, namespaces)
+        packages = frozenset(prefixes & modules)
+        return cls(modules, top_level, packages, unpackaged, dict(sorted(virtual.items())))
+
+    @property
+    def namespaces(self) -> frozenset[str]:
+        """Return the namespace packages: packages without an ``__init__.py`` (PEP 420)."""
+        return frozenset(
+            name for name, kind in self.virtual.items() if kind is VirtualKind.NAMESPACE
+        )
 
     def is_namespace(self, name: str) -> bool:
         """Return whether a name is a namespace package (a package without ``__init__.py``).
@@ -247,7 +266,7 @@ class ProjectIndex:
         Returns:
             True when some module lives under it but no file is it.
         """
-        return name in self.namespaces
+        return self.virtual.get(name) is VirtualKind.NAMESPACE
 
     def is_open_namespace(self, name: str) -> bool:
         """Return whether a namespace package has no regular package above it.
@@ -264,7 +283,7 @@ class ProjectIndex:
         """
         parts = name.split(NAME_SEPARATOR)
         return all(
-            NAME_SEPARATOR.join(parts[:end]) in self.namespaces for end in range(1, len(parts) + 1)
+            self.is_namespace(NAME_SEPARATOR.join(parts[:end])) for end in range(1, len(parts) + 1)
         )
 
     def is_package(self, name: str) -> bool:
@@ -746,7 +765,10 @@ class PythonAdapter(LanguageAdapter):
             layout.distribution_infos,
             module_distributions,
             layout.root,
-            namespaces=namespaces,
+            virtual={
+                name: VirtualModule(VirtualKind.NAMESPACE, shipped)
+                for name, shipped in namespaces.items()
+            },
         )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:
