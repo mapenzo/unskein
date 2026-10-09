@@ -1,6 +1,5 @@
 """Dependencies between the distributions of a project: uses, rules 6-9 and installability."""
 
-import os
 from collections import Counter, defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass, field
@@ -19,7 +18,6 @@ from unskein.parsers.models import (
 )
 
 PATH_SEPARATOR = "/"
-CURRENT_DIRECTORY = "."
 NAME_SEPARATOR = "."
 PROJECT_TABLE = "[project] dependencies"
 SETUP_CFG_TABLE = "[options] install_requires"
@@ -353,11 +351,16 @@ def _common_directory(paths: list[Path], root: Path | None) -> str:
     Returns:
         The directory with a trailing ``/``; the file itself when it sits at the root.
     """
-    parents = [PurePosixPath(_relative(path, root)).parent for path in paths]
-    common = PurePosixPath(os.path.commonpath([str(parent) for parent in parents]))
-    if common == PurePosixPath(CURRENT_DIRECTORY):
+    # Compared part by part, not with os.path.commonpath, which joins with "\\" on Windows.
+    parents = [PurePosixPath(_relative(path, root)).parent.parts for path in paths]
+    common: list[str] = []
+    for parts in zip(*parents, strict=False):
+        if len(set(parts)) > 1:
+            break
+        common.append(parts[0])
+    if not common:
         return _relative(paths[0], root)
-    return f"{common}{PATH_SEPARATOR}"
+    return f"{PATH_SEPARATOR.join(common)}{PATH_SEPARATOR}"
 
 
 def _status(
