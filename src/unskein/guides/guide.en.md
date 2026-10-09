@@ -49,6 +49,23 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   one package do not count. Below the table, the largest dependencies between packages with
   their number of imports. Both are shown, and given to the AI, even with
   `[findings] enabled = false`.
+- **Distributions**: only in monorepos with two or more named distributions (or when one
+  imports code no distribution ships). Per distribution: its modules, which others it
+  really imports and whether it can be installed alone, without extras, with no failing
+  import; if not, the `file:line` that prevents it. Each import between distributions counts
+  as *required* (at import time), *lazy* (inside a function) or *guarded* (in the body of a
+  `try` that catches `ImportError`, `ModuleNotFoundError`, `Exception` or a bare `except:`
+  and does not end in `raise`, or of `with contextlib.suppress(...)` for those errors); guarded imports are optional by
+  contract and never prevent installing it. Declared dependencies are read from
+  `[project] dependencies` and its extras, `[tool.poetry]` (dependencies and extras) and
+  `setup.cfg`. A dependency listed only in a dependency group (`[dependency-groups]`, Poetry
+  groups) counts as undeclared, since no installer installs groups with the package; the
+  finding says which group lists it. With `dynamic = ["dependencies"]` or
+  only `setup.py` they are unknown, and that distribution is never the source of an
+  undeclared dependency. Two manifests with the same name give a warning, and only the
+  shallower one keeps it. Each finding between
+  distributions comes with a **Fix** you can copy (the line to add and the manifest it goes
+  in). It is computed even with `[findings] enabled = false`.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.
@@ -79,6 +96,14 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     entry point run from outside the code.
   - **Layer violation**: only when you declare `[layers]`: a module of a lower layer
     imports one of a higher layer.
+  - **Undeclared dependency**: a distribution in the repository imports another one its
+    manifest does not declare; installed alone, it fails on import.
+  - **Optional dependency used as required**: declared only in an extra, but imported at
+    load time without `try`/`except ImportError`.
+  - **Import of unpackaged code**: imports code that no distribution ships (it only exists
+    in the repository).
+  - **Cycle between distributions**: distributions that import each other; it says which
+    edge to cut.
 
   Thresholds are relative to the project (percentiles, with an absolute minimum) and can
   be tuned in `[findings]`. Findings never change the exit code.

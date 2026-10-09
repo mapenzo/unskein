@@ -25,6 +25,10 @@ class WarningCode(StrEnum):
         DECLARED_PACKAGE_MISSING: A manifest declares a package that does not exist on disk.
         MODULE_NAME_COLLISION: Two files would take the same module name; the one in the
             shallower distribution is named by its path.
+        DUPLICATE_DISTRIBUTION_NAME: Two manifests declare the same distribution name; only
+            the shallower one keeps it.
+        INVALID_REQUIREMENT: A declared dependency (or an included dependency group) has
+            no usable name; it is ignored.
     """
 
     STAR_IMPORT = "star_import"
@@ -38,6 +42,8 @@ class WarningCode(StrEnum):
     MANIFEST_UNREADABLE = "manifest_unreadable"
     DECLARED_PACKAGE_MISSING = "declared_package_missing"
     MODULE_NAME_COLLISION = "module_name_collision"
+    INVALID_REQUIREMENT = "invalid_requirement"
+    DUPLICATE_DISTRIBUTION_NAME = "duplicate_distribution_name"
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +125,9 @@ class ImportEdge:
             only filled for imports of a package whose use was analyzed.
         escapes: Whether that name is also used by itself (passed, assigned, rebound),
             so its attribute accesses do not tell everything the module depends on.
+        is_guarded: Whether the statement sits in the body of a ``try`` that catches import
+            errors, or of ``with contextlib.suppress(...)`` for them; such an import is
+            optional by contract.
     """
 
     source: str
@@ -129,6 +138,51 @@ class ImportEdge:
     kind: ImportKind = ImportKind.MODULE
     accessed: tuple[str, ...] = ()
     escapes: bool = False
+    is_guarded: bool = False
+
+
+class ManifestStyle(StrEnum):
+    """Where a manifest declares its required dependencies, which decides how to fix it.
+
+    Attributes:
+        PROJECT: ``[project] dependencies`` of ``pyproject.toml`` (PEP 621).
+        SETUP_CFG: ``[options] install_requires`` of ``setup.cfg``.
+        POETRY: ``[tool.poetry.dependencies]`` of a Poetry ``pyproject.toml``.
+    """
+
+    PROJECT = "project"
+    SETUP_CFG = "setup_cfg"
+    POETRY = "poetry"
+
+
+# Names per extra or dependency group, sorted by extra: immutable, hashable and picklable.
+OptionalDependencies = tuple[tuple[str, frozenset[str]], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DistributionInfo:
+    """A named distribution of the project and what its manifest declares.
+
+    Attributes:
+        name: Distribution name, PEP 503-normalized (``litellm-enterprise``).
+        root: Directory holding its manifest.
+        requires: Names of its required dependencies; None when unknown.
+        optional: Names per extra and per dependency group, sorted by extra.
+        version: Its literal version; None when dynamic or missing.
+        manifest: File that declares its dependencies; None when there is none.
+        style: Where that manifest declares required dependencies.
+        groups: Names per dependency group, sorted by group; they do not declare a
+            dependency, since no installer installs them with the package.
+    """
+
+    name: str
+    root: Path
+    requires: frozenset[str] | None
+    optional: OptionalDependencies
+    version: str | None
+    manifest: Path | None
+    style: ManifestStyle = ManifestStyle.PROJECT
+    groups: OptionalDependencies = ()
 
 
 @dataclass(slots=True)
@@ -144,6 +198,8 @@ class ModuleInfo:
         bound_names: Every name the module binds at module level, sorted.
         is_packaged: Whether a distribution ships the module; unpackaged modules that
             nothing imports are scripts.
+        distribution: Name of the distribution that ships the module; None when none
+            with a name does.
     """
 
     name: str
@@ -153,6 +209,7 @@ class ModuleInfo:
     declares_all: bool = False
     bound_names: tuple[str, ...] = ()
     is_packaged: bool = True
+    distribution: str | None = None
 
 
 # Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.
@@ -206,12 +263,18 @@ class ParsePlan:
             must be picklable.
         warnings: Problems found while naming the files (manifests, collisions).
         entry_points: Modules the project's distributions declare as scripts.
+        distributions: Named distributions of the project.
+        module_distributions: Distribution of each module that one ships.
+        project_root: Absolute project directory, for relative paths in findings.
     """
 
     tasks: list[ParseTask]
     shared: Any
     warnings: list[ParseWarning] = field(default_factory=list)
     entry_points: tuple[str, ...] = ()
+    distributions: tuple[DistributionInfo, ...] = ()
+    module_distributions: dict[str, str] = field(default_factory=dict)
+    project_root: Path | None = None
 
 
 @dataclass
@@ -225,6 +288,10 @@ class ParseResult:
         warnings: Problems that skipped a file or an import without stopping
             the analysis.
         entry_points: Modules the project's distributions declare as scripts.
+        distributions: Named distributions of the project.
+        project_root: Absolute project directory; None when parsed without a plan.
+        module_distributions: Distribution of every module a named one ships, parsed or
+            not (a file skipped as too large still belongs to its distribution).
     """
 
     modules: list[ModuleInfo]
@@ -232,6 +299,9 @@ class ParseResult:
     re_exports: list[ReExport] = field(default_factory=list)
     warnings: list[ParseWarning] = field(default_factory=list)
     entry_points: tuple[str, ...] = ()
+    distributions: tuple[DistributionInfo, ...] = ()
+    project_root: Path | None = None
+    module_distributions: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_file_results(
@@ -246,8 +316,8 @@ class ParseResult:
         Args:
             language: Name of the language the modules are written in.
             file_results: One result per parsed file.
-            plan: The plan the files were parsed from; its warnings come first and its
-                entry points are kept.
+            plan: The plan the files were parsed from; its warnings come first, and its
+                entry points, distributions, module distributions and project root are kept.
 
         Returns:
             The combined result; skipped files contribute only their warnings.
@@ -256,9 +326,15 @@ class ParseResult:
         if plan is not None:
             result.warnings.extend(plan.warnings)
             result.entry_points = plan.entry_points
+            result.distributions = plan.distributions
+            result.project_root = plan.project_root
+            result.module_distributions = plan.module_distributions
         for file_result in file_results:
             if file_result.module is not None:
-                result.modules.append(file_result.module)
+                module = file_result.module
+                if plan is not None:
+                    module.distribution = plan.module_distributions.get(module.name)
+                result.modules.append(module)
             result.re_exports.extend(file_result.re_exports)
             result.warnings.extend(file_result.warnings)
         return result

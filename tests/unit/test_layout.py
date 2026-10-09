@@ -256,8 +256,10 @@ def _litellm_like(make_project: MakeProject) -> Path:
 
 def test_files_take_the_name_of_the_distribution_that_ships_them(make_project: MakeProject) -> None:
     names = _names(_litellm_like(make_project))
-    assert names["core/main.py"] == ModuleName("core.main", True)
-    assert names["enterprise/core_enterprise/proxy.py"] == ModuleName("core_enterprise.proxy", True)
+    assert names["core/main.py"] == ModuleName("core.main", True, "core")
+    assert names["enterprise/core_enterprise/proxy.py"] == ModuleName(
+        "core_enterprise.proxy", True, "core-enterprise"
+    )
     assert names["enterprise/hooks/banned.py"] == ModuleName("enterprise.hooks.banned", False)
     assert names["cookbook/demo.py"] == ModuleName("cookbook.demo", False)
 
@@ -303,7 +305,7 @@ def test_collision_keeps_the_deepest_and_names_the_other_by_path(make_project: M
     layout, _ = build_layout(root, files, None)
     named, warnings = name_files(layout, files)
     by_path = {p.relative_to(root).as_posix(): n for p, n in named}
-    assert by_path["member/shared/__init__.py"] == ModuleName("shared", True)
+    assert by_path["member/shared/__init__.py"] == ModuleName("shared", True, "shared")
     assert by_path["shared/__init__.py"] == ModuleName("shared/__init__.py", False)
     assert [(w.code, w.path) for w in warnings] == [
         (WarningCode.MODULE_NAME_COLLISION, root / "shared/__init__.py")
@@ -349,7 +351,7 @@ def test_uv_empty_module_root_without_module_name_is_kept(make_project: MakeProj
     assert distributions[-1].import_root == root
     assert distributions[-1].packages == frozenset({"pkg"})
     layout, _ = build_layout(root, sorted(root.rglob("*.py")), None)
-    assert layout.name_of(root / "pkg/a.py") == ModuleName("pkg.a", True)
+    assert layout.name_of(root / "pkg/a.py") == ModuleName("pkg.a", True, "pkg")
 
 
 FLAT_DIRS = {"mysite/__init__.py": "", "polls/__init__.py": "", "polls/views.py": ""}
@@ -393,7 +395,7 @@ def test_equal_depth_collision_keeps_the_smaller_path(make_project: MakeProject)
     layout, _ = build_layout(root, files, None)
     named, warnings = name_files(layout, files)
     by_path = {p.relative_to(root).as_posix(): n for p, n in named}
-    assert by_path["services/a/app/__init__.py"] == ModuleName("app", True)
+    assert by_path["services/a/app/__init__.py"] == ModuleName("app", True, "app")
     assert by_path["services/b/app/__init__.py"] == ModuleName("services/b/app/__init__.py", False)
     assert [w.code for w in warnings] == [WarningCode.MODULE_NAME_COLLISION]
 
@@ -405,3 +407,72 @@ def test_no_manifest_with_src_yields_src_then_root(make_project: MakeProject) ->
         (root / "src", None),
         (root, None),
     ]
+
+
+def test_named_distributions_carry_their_declared_dependencies() -> None:
+    root = Path(__file__).parent.parent / "fixtures" / "distributions_monorepo"
+    layout, _ = build_layout(root, sorted(root.rglob("*.py")), None)
+    infos = {info.name: info for info in layout.distribution_infos}
+    assert list(infos) == ["core", "core-plugins"]
+    assert infos["core"].requires == frozenset({"requests"})
+    assert dict(infos["core"].optional) == {"plugins": frozenset({"core-plugins"})}
+    assert infos["core"].version == "2.3.0"
+    assert infos["core-plugins"].requires == frozenset()
+    assert infos["core-plugins"].manifest == root / "plugins" / "pyproject.toml"
+
+
+def test_module_names_know_their_distribution() -> None:
+    root = Path(__file__).parent.parent / "fixtures" / "distributions_monorepo"
+    files = sorted(root.rglob("*.py"))
+    layout, _ = build_layout(root, files, None)
+    named, _ = name_files(layout, files)
+    by_name = {name.name: name.distribution for _, name in named}
+    assert by_name["core.engine"] == "core"
+    assert by_name["core_plugins.extra"] == "core-plugins"
+    assert by_name["legacy.tool"] is None
+
+
+def test_roots_without_manifest_or_name_have_no_distribution(make_project: MakeProject) -> None:
+    root = make_project({"app/__init__.py": "", "app/a.py": ""})
+    files = sorted(root.rglob("*.py"))
+    layout, _ = build_layout(root, files, None)
+    named, _ = name_files(layout, files)
+    assert layout.distribution_infos == ()
+    assert {name.distribution for _, name in named} == {None}
+
+
+def test_two_manifests_with_one_name_warn_and_only_the_shallower_is_named(
+    make_project: MakeProject,
+) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\n',
+            "a/__init__.py": "",
+            "one/pyproject.toml": '[project]\nname = "Twin"\n',
+            "one/twin/__init__.py": "",
+            "deep/two/pyproject.toml": '[project]\nname = "twin"\n',
+            "deep/two/twin_b/__init__.py": "",
+        }
+    )
+    files = sorted(root.rglob("*.py"))
+    layout, warnings = build_layout(root, files, None)
+    named, _ = name_files(layout, files)
+    by_name = {name.name: name.distribution for _, name in named}
+    assert by_name["twin"] == "twin"
+    assert by_name["twin_b"] is None
+    assert [(w.code, w.detail) for w in warnings] == [
+        (WarningCode.DUPLICATE_DISTRIBUTION_NAME, "twin")
+    ]
+    assert warnings[0].path == root / "deep" / "two"
+
+
+def test_setup_cfg_name_is_read_when_pyproject_declares_packages(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[tool.setuptools]\npackages = ["pkg"]\n',
+            "setup.cfg": "[metadata]\nname = Named\n",
+            "pkg/__init__.py": "",
+        }
+    )
+    layout, _ = build_layout(root, sorted(root.rglob("*.py")), None)
+    assert [info.name for info in layout.distribution_infos] == ["named"]

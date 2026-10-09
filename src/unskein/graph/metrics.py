@@ -8,6 +8,11 @@ import networkx as nx
 from unskein.config import FindingsConfig
 from unskein.graph.builder import build_graph
 from unskein.graph.coupling import CouplingMetrics
+from unskein.graph.distributions import (
+    DistributionEdge,
+    DistributionSummary,
+    analyze_distributions,
+)
 from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
@@ -46,6 +51,8 @@ class AnalysisResult:
             type-only imports are counted, largest first.
         scripts: Unpackaged modules nothing imports; outside every metric.
         script_groups: Scripts by top-level directory, most first.
+        distributions: Installability of each named distribution, by name.
+        distribution_edges: Imports between distributions with what each declares.
     """
 
     graph: nx.DiGraph
@@ -63,6 +70,8 @@ class AnalysisResult:
     hidden_tangles: list[list[str]] = field(default_factory=list)
     scripts: frozenset[str] = field(default_factory=frozenset)
     script_groups: list[ScriptGroup] = field(default_factory=list)
+    distributions: list[DistributionSummary] = field(default_factory=list)
+    distribution_edges: list[DistributionEdge] = field(default_factory=list)
 
 
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
@@ -251,6 +260,10 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     findings = find_findings(
         full_graph, coupling, findings_config, packages=facades, scripts=scripts
     )
+    distribution_analysis = analyze_distributions(result, scripts)
+    impact_targets = _impact_targets(high_coupling, findings)
+    if findings_config.enabled:
+        findings = [*findings, *distribution_analysis.findings]
     package_metrics, package_edges = summarize_project_packages(
         graph, findings_config.package_depth, facades=facades
     )
@@ -264,10 +277,12 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         tangles=tangles,
         findings=findings,
         findings_enabled=findings_config.enabled,
-        impact=impact_radius(graph, _impact_targets(high_coupling, findings)),
+        impact=impact_radius(graph, impact_targets),
         packages=package_metrics,
         package_edges=package_edges,
         hidden_tangles=find_hidden_tangles(graph, tangles),
         scripts=scripts,
         script_groups=group_scripts(full_graph, scripts),
+        distributions=distribution_analysis.summaries,
+        distribution_edges=distribution_analysis.edges,
     )

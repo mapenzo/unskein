@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not in Ca, metrics or findings (except layers).
 - Warnings for unreadable manifests, declared packages that do not exist and repeated
   module names.
+- Findings between the distributions of a monorepo, each with a copyable fix:
+  undeclared dependencies, dependencies declared only in an extra but imported at load
+  time, imports of code that no distribution ships, and cycles between distributions
+  (each edge marked required, optional, undeclared or unknown, with the edges to cut).
+  Imports inside a `try` that catches import errors (and does not re-raise), or
+  `contextlib.suppress`, count as optional by contract.
+  A dependency listed only in a dependency group counts as undeclared: groups are never
+  installed with the package. Poetry manifests are read too.
+- A Distributions section: what each distribution really imports from the others and
+  whether it can be installed alone.
+- Warnings for declared dependencies without a valid name and for two manifests that
+  declare the same distribution name.
 
 ### Changed
 

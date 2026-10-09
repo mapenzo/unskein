@@ -49,6 +49,14 @@ _ERRORS: dict[str, dict[Lang, str]] = {
 }
 
 _WARNINGS: dict[str, dict[Lang, str]] = {
+    "warning.invalid_requirement": {
+        Lang.ES: "Dependencia declarada sin nombre válido, se ignora: {detail}",
+        Lang.EN: "Declared dependency without a valid name, ignored: {detail}",
+    },
+    "warning_title.invalid_requirement": {
+        Lang.ES: "Dependencias declaradas no válidas",
+        Lang.EN: "Invalid declared dependencies",
+    },
     "warning.star_import": {
         Lang.ES: "Import con asterisco desde {detail}: no se siguen los nombres que trae",
         Lang.EN: "Star import from {detail}: the names it brings in are not followed",
@@ -132,6 +140,16 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
     "warning.module_name_collision": {
         Lang.ES: "Nombre de módulo repetido, este archivo se nombra por su ruta: {detail}",
         Lang.EN: "Repeated module name, this file is named by its path: {detail}",
+    },
+    "warning.duplicate_distribution_name": {
+        Lang.ES: "Otro manifiesto (menos profundo, o el primero por ruta) ya declara la "
+        "distribución {detail}; este pierde el nombre",
+        Lang.EN: "Another manifest (shallower, or first by path) already declares the "
+        "distribution {detail}; this one loses the name",
+    },
+    "warning_title.duplicate_distribution_name": {
+        Lang.ES: "Nombres de distribución repetidos",
+        Lang.EN: "Repeated distribution names",
     },
     "warning_title.module_name_collision": {
         Lang.ES: "Nombres de módulo repetidos",
@@ -265,6 +283,29 @@ _REPORT: dict[str, dict[Lang, str]] = {
     },
     "report.package": {Lang.ES: "Paquete", Lang.EN: "Package"},
     "report.package_modules": {Lang.ES: "Módulos", Lang.EN: "Modules"},
+    "report.distributions": {Lang.ES: "Distribuciones", Lang.EN: "Distributions"},
+    "report.distributions_intro": {
+        Lang.ES: "Cada distribución del repositorio, lo que importa de verdad de las demás y "
+        "si se puede instalar sola (sin extras) sin que falle ningún import.",
+        Lang.EN: "Each distribution in the repository, what it really imports from the others "
+        "and whether it can be installed alone (without extras) with no failing import.",
+    },
+    "report.distribution": {Lang.ES: "Distribución", Lang.EN: "Distribution"},
+    "report.distribution_uses": {Lang.ES: "Usa", Lang.EN: "Uses"},
+    "report.distribution_installable": {
+        Lang.ES: "¿Instalable sola?",
+        Lang.EN: "Installable alone?",
+    },
+    "report.installable.yes": {Lang.ES: "sí", Lang.EN: "yes"},
+    "report.installable.no": {Lang.ES: "no: `{blocker}`", Lang.EN: "no: `{blocker}`"},
+    "report.installable.unknown": {
+        Lang.ES: "desconocido (no se pueden leer sus dependencias)",
+        Lang.EN: "unknown (its dependencies cannot be read)",
+    },
+    "report.summary_distributions": {
+        Lang.ES: "{count} distribuciones; {blocked} no se pueden instalar solas.",
+        Lang.EN: "{count} distributions; {blocked} cannot be installed alone.",
+    },
     "report.packages_showing": {
         Lang.ES: "Se muestran los {shown} paquetes más acoplados de {total}.",
         Lang.EN: "Showing the {shown} most coupled of the {total} packages.",
@@ -499,6 +540,44 @@ _REPORT: dict[str, dict[Lang, str]] = {
 }
 
 _FINDINGS: dict[str, dict[Lang, str]] = {
+    "finding.uses": {
+        Lang.ES: "requeridos: {required}, perezosos: {lazy}, protegidos: {guarded}",
+        Lang.EN: "{required} required, {lazy} lazy, {guarded} guarded",
+    },
+    "finding.first": {Lang.ES: "primero: `{first}`", Lang.EN: "first: `{first}`"},
+    "finding.only_in_groups": {
+        Lang.ES: "solo en el grupo {groups}, que nunca se instala con el paquete",
+        Lang.EN: "only in group {groups}, never installed with the package",
+    },
+    "finding.fix": {Lang.ES: "Arreglo", Lang.EN: "Fix"},
+    "finding.status.required": {Lang.ES: "requerida", Lang.EN: "required"},
+    "finding.status.optional": {
+        Lang.ES: "opcional (extra {extras})",
+        Lang.EN: "optional (extra {extras})",
+    },
+    "finding.status.undeclared": {Lang.ES: "no declarada", Lang.EN: "undeclared"},
+    "finding.status.unknown": {Lang.ES: "desconocida", Lang.EN: "unknown"},
+    "finding.fix.add_dependency": {
+        Lang.ES: "añade `{requirement}` a `{table}` en `{manifest}`",
+        Lang.EN: "add `{requirement}` to `{table}` in `{manifest}`",
+    },
+    "finding.fix.promote_or_guard": {
+        Lang.ES: "mueve `{target}` de los extras {extras} a las dependencias requeridas en "
+        "`{manifest}`, o protege el import de `{first}` con `try`/`except ImportError`",
+        Lang.EN: "move `{target}` from the extras {extras} to the required dependencies in "
+        "`{manifest}`, or guard the import at `{first}` with `try`/`except ImportError`",
+    },
+    "finding.fix.package_or_move": {
+        Lang.ES: "`{directory}` no lo empaqueta ninguna distribución: muévelo dentro de un "
+        "paquete de `{source}` o decláralo en sus paquetes",
+        Lang.EN: "`{directory}` is shipped by no distribution: move it inside a package of "
+        "`{source}` or declare it among its packages",
+    },
+    "finding.fix.cut_edge": {
+        Lang.ES: "corta {cuts}: las aristas con menos usos que rompen, hasta que no quede "
+        "ningún ciclo",
+        Lang.EN: "cut {cuts}: the edges with the fewest breaking uses, until no cycle is left",
+    },
     "finding.impact": {Lang.ES: "impacto {impact}", Lang.EN: "impact {impact}"},
     "finding.unstable_dependency.title": {
         Lang.ES: "Dependencia inestable",
@@ -574,6 +653,72 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "inferior o pasarlo por una abstracción, para que las capas solo dependan hacia abajo.",
         Lang.EN: "Invert the dependency: move what the lower layer needs into a lower layer "
         "or pass it through an abstraction, so layers only depend downwards.",
+    },
+    "finding.undeclared_dependency.title": {
+        Lang.ES: "Dependencia no declarada",
+        Lang.EN: "Undeclared dependency",
+    },
+    "finding.undeclared_dependency.explanation": {
+        Lang.ES: "Una distribución del repositorio importa otra que su manifiesto no declara: "
+        "en el monorepo funciona porque todo está instalado, pero instalada sola falla al "
+        "importar.",
+        Lang.EN: "A distribution in the repository imports another one its manifest does not "
+        "declare: it works in the monorepo because everything is installed, but installed "
+        "alone it fails at import time.",
+    },
+    "finding.undeclared_dependency.recommendation": {
+        Lang.ES: "Declarar la dependencia en el manifiesto de la distribución que importa, o "
+        "dejar de importarla.",
+        Lang.EN: "Declare the dependency in the manifest of the importing distribution, or stop "
+        "importing it.",
+    },
+    "finding.optional_required.title": {
+        Lang.ES: "Dependencia opcional usada como requerida",
+        Lang.EN: "Optional dependency used as required",
+    },
+    "finding.optional_required.explanation": {
+        Lang.ES: "Una distribución declara otra solo en un extra, pero la importa al cargarse y "
+        "sin protegerla: quien la instale sin ese extra la verá fallar al importar.",
+        Lang.EN: "A distribution declares another one only in an extra, but imports it at load "
+        "time without guarding it: whoever installs it without that extra sees it fail on "
+        "import.",
+    },
+    "finding.optional_required.recommendation": {
+        Lang.ES: "Pasarla a las dependencias requeridas, o importarla dentro de un "
+        "`try`/`except ImportError`.",
+        Lang.EN: "Make it a required dependency, or import it inside a `try`/`except ImportError`.",
+    },
+    "finding.unpackaged_import.title": {
+        Lang.ES: "Import de código no empaquetado",
+        Lang.EN: "Import of unpackaged code",
+    },
+    "finding.unpackaged_import.explanation": {
+        Lang.ES: "Una distribución importa código que ninguna distribución empaqueta: solo "
+        "existe en el repositorio, así que instalada desde un paquete falla al importar.",
+        Lang.EN: "A distribution imports code that no distribution ships: it only exists in the "
+        "repository, so once installed from a package the import fails.",
+    },
+    "finding.unpackaged_import.recommendation": {
+        Lang.ES: "Mover ese código dentro de un paquete de la distribución o declararlo entre "
+        "sus paquetes.",
+        Lang.EN: "Move that code inside a package of the distribution or declare it among its "
+        "packages.",
+    },
+    "finding.distribution_cycle.title": {
+        Lang.ES: "Ciclo entre distribuciones",
+        Lang.EN: "Cycle between distributions",
+    },
+    "finding.distribution_cycle.explanation": {
+        Lang.ES: "Varias distribuciones se importan entre sí: ninguna se puede publicar, "
+        "versionar ni instalar sin las demás.",
+        Lang.EN: "Several distributions import each other: none can be released, versioned or "
+        "installed without the others.",
+    },
+    "finding.distribution_cycle.recommendation": {
+        Lang.ES: "Cortar la arista con menos usos que rompen, para que las dependencias entre "
+        "distribuciones vayan en un solo sentido.",
+        Lang.EN: "Cut the edge with the fewest breaking uses, so dependencies between "
+        "distributions go one way only.",
     },
     "finding.layers": {
         Lang.ES: "capa {layer_from} → {layer_to}",

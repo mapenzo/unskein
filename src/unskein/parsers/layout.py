@@ -2,15 +2,15 @@
 
 import configparser
 import os
-import re
 import tomllib
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from unskein.entry_points import script_modules_of
-from unskein.parsers.models import ParseWarning, WarningCode
+from unskein.parsers.models import DistributionInfo, ParseWarning, WarningCode
+from unskein.parsers.requirements import normalize_name, read_dependencies
 
 PYPROJECT_NAME = "pyproject.toml"
 SETUP_PY_NAME = "setup.py"
@@ -19,8 +19,11 @@ MANIFEST_NAMES = (PYPROJECT_NAME, SETUP_PY_NAME, SETUP_CFG_NAME)
 SRC_DIR = "src"
 PACKAGE_INIT_FILE = "__init__.py"
 PYTHON_SUFFIX = ".py"
-# PEP 503 normalization, then to an identifier: "Litellm-Enterprise" -> "litellm_enterprise".
-_NAME_SEPARATORS = re.compile(r"[-_.]+")
+# A normalized distribution name as an identifier: "litellm-enterprise" -> "litellm_enterprise".
+NAME_SEPARATOR = "-"
+IDENTIFIER_SEPARATOR = "_"
+CFG_METADATA = "metadata"
+CFG_NAME = "name"
 SETUPTOOLS_BACKEND_PREFIX = "setuptools"
 
 
@@ -33,12 +36,14 @@ class Distribution:
         import_root: Directory dotted module names are computed from.
         packages: Top-level names it ships; None ships everything under ``import_root``.
         script_modules: Modules its ``[project.scripts]`` and ``gui-scripts`` point at.
+        info: Name and declared dependencies; None when the manifest declares no name.
     """
 
     root: Path
     import_root: Path
     packages: frozenset[str] | None
     script_modules: tuple[str, ...] = ()
+    info: DistributionInfo | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +168,20 @@ def _distribution_at(directory: Path, warnings: list[ParseWarning]) -> Distribut
     )
     if not packages:
         packages = _conventional_packages(import_root, declaration.name, declaration.auto_discovers)
-    return Distribution(directory, import_root, packages, declaration.script_modules)
+    info = None
+    if declaration.name is not None:
+        declared = read_dependencies(directory, warnings)
+        info = DistributionInfo(
+            normalize_name(declaration.name),
+            directory,
+            declared.requires,
+            declared.optional,
+            declared.version,
+            declared.manifest,
+            declared.style,
+            declared.groups,
+        )
+    return Distribution(directory, import_root, packages, declaration.script_modules, info)
 
 
 def _default_import_root(directory: Path) -> Path:
@@ -224,7 +242,7 @@ def _conventional_packages(
     """
     named: frozenset[str] = frozenset()
     if name is not None:
-        normalized = _NAME_SEPARATORS.sub("_", name).lower()
+        normalized = normalize_name(name).replace(NAME_SEPARATOR, IDENTIFIER_SEPARATOR)
         if (import_root / normalized).is_dir() or (
             import_root / f"{normalized}{PYTHON_SUFFIX}"
         ).is_file():
@@ -257,14 +275,14 @@ def _read_declaration(directory: Path, warnings: list[ParseWarning]) -> _Declara
     declaration = (
         _declaration_from_pyproject(pyproject) if pyproject else _Declaration(auto_discovers=True)
     )
-    if declaration.packages is None:
+    if declaration.packages is None or declaration.name is None:
         from_cfg = _declaration_from_setup_cfg(directory / SETUP_CFG_NAME, warnings)
         declaration = _Declaration(
             declaration.import_root
             if declaration.import_root is not None
             else from_cfg.import_root,
-            from_cfg.packages,
-            declaration.name,
+            declaration.packages if declaration.packages is not None else from_cfg.packages,
+            declaration.name or from_cfg.name,
             declaration.script_modules,
             declaration.auto_discovers,
         )
@@ -450,7 +468,7 @@ def _setuptools(data: dict) -> tuple[str | None, frozenset[str] | None]:
 
 
 def _declaration_from_setup_cfg(path: Path, warnings: list[ParseWarning]) -> _Declaration:
-    """Read ``[options] packages`` (explicit list) and ``package_dir`` from ``setup.cfg``.
+    """Read ``[options] packages`` (explicit list), ``package_dir`` and the name from ``setup.cfg``.
 
     ``packages = find:`` is not a list of names, so it leaves packages undeclared.
 
@@ -476,7 +494,8 @@ def _declaration_from_setup_cfg(path: Path, warnings: list[ParseWarning]) -> _De
         key, _, value = line.partition("=")
         if not key.strip() and value.strip():
             import_root = value.strip()
-    return _Declaration(import_root, _first_segments(names))
+    name = parser.get(CFG_METADATA, CFG_NAME, fallback="").strip() or None
+    return _Declaration(import_root, _first_segments(names), name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,10 +506,13 @@ class ModuleName:
         name: Dotted module name, or a POSIX path relative to the project root when
             the file cannot be imported (a path segment is not an identifier).
         is_packaged: Whether a distribution ships the file.
+        distribution: Name of the distribution that ships the file; None when none with
+            a name does.
     """
 
     name: str
     is_packaged: bool
+    distribution: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -522,6 +544,13 @@ class ProjectLayout:
         """Return the modules every distribution's scripts point at, sorted and unique."""
         return tuple(sorted({m for d in self.distributions for m in d.script_modules}))
 
+    @property
+    def distribution_infos(self) -> tuple[DistributionInfo, ...]:
+        """Return the named distributions, sorted by name."""
+        return tuple(
+            sorted((d.info for d in self.distributions if d.info), key=lambda info: info.name)
+        )
+
 
 def _name_with_depth(layout: ProjectLayout, absolute: Path) -> tuple[ModuleName, int]:
     """Name a file and tell how deep the distribution that named it is.
@@ -537,12 +566,12 @@ def _name_with_depth(layout: ProjectLayout, absolute: Path) -> tuple[ModuleName,
         if not absolute.is_relative_to(distribution.import_root):
             continue
         parts = _module_parts(absolute.relative_to(distribution.import_root))
+        depth = len(distribution.import_root.parts)
+        owner = distribution.info.name if distribution.info else None
         if distribution.packages is None and not parts:
-            return ModuleName(distribution.import_root.name, True), len(
-                distribution.import_root.parts
-            )
+            return ModuleName(distribution.import_root.name, True, owner), depth
         if parts and _ships(distribution, parts):
-            return ModuleName(".".join(parts), True), len(distribution.import_root.parts)
+            return ModuleName(".".join(parts), True, owner), depth
     parts = _module_parts(absolute.relative_to(layout.root))
     if all(part.isidentifier() for part in parts):
         return ModuleName(".".join(parts) or layout.root.name, False), -1
@@ -593,7 +622,46 @@ def build_layout(
         The layout plus the warnings about unusable manifests.
     """
     distributions, warnings = detect_distributions(root, files, configured)
+    distributions = _unique_names(distributions, warnings)
     return ProjectLayout(_absolute(root), distributions), warnings
+
+
+def _unique_names(
+    distributions: tuple[Distribution, ...], warnings: list[ParseWarning]
+) -> tuple[Distribution, ...]:
+    """Keep one distribution per name: the shallowest; the others lose their name.
+
+    Two manifests with one name cannot both be installed, and judging the imports of one
+    against the manifest of the other would hide real problems.
+
+    Args:
+        distributions: Distributions, deepest import root first.
+        warnings: Collects one ``DUPLICATE_DISTRIBUTION_NAME`` per distribution that loses
+            its name.
+
+    Returns:
+        The distributions in the same order, repeated names cleared on the deeper ones.
+    """
+    named = sorted(
+        (d for d in distributions if d.info), key=lambda d: (len(d.root.parts), d.root.as_posix())
+    )
+    owners: dict[str, Path] = {}
+    for distribution in named:
+        owners.setdefault(distribution.info.name, distribution.root)
+    for distribution in named:
+        if owners[distribution.info.name] != distribution.root:
+            warnings.append(
+                ParseWarning(
+                    WarningCode.DUPLICATE_DISTRIBUTION_NAME,
+                    distribution.root,
+                    None,
+                    distribution.info.name,
+                )
+            )
+    return tuple(
+        replace(d, info=None) if d.info and owners[d.info.name] != d.root else d
+        for d in distributions
+    )
 
 
 def name_files(

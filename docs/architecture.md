@@ -350,6 +350,33 @@ configurada más la raíz del proyecto, cada uno empaqueta todo lo que contiene.
 así que los imports entre miembros del workspace son internos. Los entry points se leen
 de los scripts de todas las distribuciones, no solo de la raíz.
 
+**Dependencias declaradas** (`parsers/requirements.py`, `read_dependencies`). Una
+distribución cuyo manifiesto declara nombre (`[project] name`, `[tool.poetry] name` o
+`[metadata] name` de `setup.cfg`) lleva un `DistributionInfo`: nombre normalizado PEP 503,
+raíz, `requires`, `optional` y `groups` (tuplas ordenadas de pares extra o grupo →
+nombres, inmutables y serializables; los grupos no declaran dependencias), versión literal, manifiesto y `ManifestStyle` (dónde se declaran las
+requeridas, que decide la sintaxis del arreglo). Gana `pyproject.toml` con tabla `[project]`
+(`dependencies`, `[project.optional-dependencies]`, `[dependency-groups]` de PEP 735 con
+`include-group`); después `[tool.poetry]` (`dependencies` sin `python` ni las marcadas
+`optional = true`, `extras`, `group.<g>.dependencies` y `dev-dependencies` como grupo
+`dev`, `version`); si no, `setup.cfg` (`[options] install_requires`,
+`[options.extras_require]`, `[metadata] version`, donde `attr:` y `file:` son dinámicas). El
+nombre de `setup.cfg` se lee también cuando `pyproject.toml` declara paquetes pero no
+nombre. De cada
+especificador PEP 508 solo se toma el nombre, con un regex (sin depender de `packaging`).
+`requires = None` (desconocido) con `dynamic = ["dependencies"]` (sus entradas que no son
+texto se ignoran), solo `setup.py` o sin declaración legible; `[project]` sin `dependencies` declara un conjunto vacío. Un
+especificador sin nombre, o un `include-group` a un grupo inexistente o en ciclo (detalle
+`include-group = <grupo>`), da `INVALID_REQUIREMENT` y se ignora; los manifiestos ilegibles ya los avisó el layout.
+`ModuleName.distribution` y `ModuleInfo.distribution` dicen qué distribución con nombre
+empaqueta cada módulo; el `ParsePlan` lleva las distribuciones, ese mapa y la raíz del
+proyecto, y `ParseResult.from_file_results` los pasa al resultado (también en paralelo).
+`ParseResult.module_distributions` conserva la distribución de cada archivo nombrado,
+también de los que no se pudieron parsear, para que un import a uno de ellos siga contando
+entre distribuciones. Dos manifiestos con el mismo nombre (`build_layout`,
+`_unique_names`): lo conserva el menos profundo, los demás pierden el nombre (sus módulos no
+tienen distribución) y se emite `DUPLICATE_DISTRIBUTION_NAME`.
+
 ## 3. Parser de Python (`parsers/python_parser.py`)
 
 Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
@@ -393,6 +420,14 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   nombre). Manda el contexto más débil: un import perezoso dentro de un bloque
   `TYPE_CHECKING`, o un bloque `TYPE_CHECKING` dentro de una función, es `TYPE_CHECKING`.
   El `else` de un `if TYPE_CHECKING` y el cuerpo de `if not TYPE_CHECKING` son `MODULE`.
+
+  **Imports protegidos (`ImportEdge.is_guarded`)**: la sentencia está en el **cuerpo** de
+  un `try`/`try*` con algún handler que captura `ImportError`, `ModuleNotFoundError`,
+  `Exception` o `BaseException` (por nombre o atributo, también en tuplas) o un `except:`
+  desnudo, y cuyo cuerpo no termina en `raise` (si relanza, el import sigue rompiendo), o en el cuerpo de un `with` cuyo gestor es `suppress(...)`/`x.suppress(...)` con
+  alguno de esos nombres. Los handlers, `else` y `finally` no protegen. La protección se
+  hereda hacia los bloques anidados (`block_guarded`, junto a `block_kind` en
+  `iter_statements`). Un import protegido es opcional por contrato.
 - **Detección de re-exports**: solo en `__init__.py`, cada `ImportFrom`
   interno de un *símbolo* (no de un submódulo) genera
   `ReExport(paquete, módulo_origen, asname or name)`. Con alias, la cadena se
@@ -766,6 +801,41 @@ aplicados) y construye el grafo real.
   los módulos que definen cada símbolo. Los usos que no se pueden resolver siguen
   apuntando a la fachada, y ahí sí es un dato real.
 
+### Hallazgos entre distribuciones (`graph/distributions.py`)
+
+`analyze_distributions(result, scripts)` cruza lo que declara cada distribución con nombre
+con cómo usa sus imports; se calcula siempre (la tabla de instalabilidad lo necesita) y sus
+hallazgos solo se añaden a `AnalysisResult.findings` con los hallazgos activados. Sin
+distribuciones con nombre no hace nada.
+
+- **Uso** (`import_use`): `REQUIRED` (nivel de módulo, sin proteger), `LAZY` (en una función,
+  sin proteger), `GUARDED` (`is_guarded`); los `TYPE_CHECKING` se ignoran. Los que rompen
+  instalada sola son `REQUIRED + LAZY`.
+- **Aristas** (`DistributionEdge`): cada import interno de un módulo de A (que no sea script)
+  a un módulo parseado de B ≠ A suma en A → B, con su primera ubicación por uso
+  (`ruta:línea` POSIX relativa a la raíz; los módulos se recorren en el orden de esa ruta,
+  igual en todas las plataformas). Su `DependencyStatus` sale del manifiesto de A:
+  `REQUIRED`, `OPTIONAL` (con los extras que la declaran), `UNDECLARED` (con los grupos de
+  dependencias que la listan, si alguno: un grupo nunca se instala con el paquete) o `UNKNOWN`
+  (`requires = None`). Un import a código no empaquetado (`is_packaged=False`, ni script ni
+  nombrado por ruta) se agrupa por su primer segmento (`UnpackagedUse`), con el directorio
+  más profundo que contiene todos sus archivos. Un import a lo que empaqueta una
+  distribución sin nombre (solo `setup.py`) no cuenta: es una dependencia que no se puede
+  nombrar.
+
+| # | `FindingKind` | Se dispara | `modules` | Arreglo (`fix`) |
+|---|---|---|---|---|
+| 6 | `UNDECLARED_DEPENDENCY` | arista `UNDECLARED` con usos que rompen | `(A, B)` | `add_dependency`: `"B>=versión"` (o `"B"`) en `[project] dependencies` / `[options] install_requires`, o `B = ">=versión"` (o `"*"`) en `[tool.poetry.dependencies]`, del manifiesto de A |
+| 7 | `OPTIONAL_REQUIRED` | arista `OPTIONAL` con usos `REQUIRED` | `(A, B)` | `promote_or_guard`: pasarla a requeridas o proteger el import |
+| 8 | `UNPACKAGED_IMPORT` | import de código no empaquetado con usos que rompen | `(A, segmento)` | `package_or_move`: ese directorio dentro de un paquete de A o entre sus paquetes |
+| 9 | `DISTRIBUTION_CYCLE` | componente fuertemente conexa de ≥ 2 distribuciones (todas las aristas) | miembros ordenados | `cut_edge`: aristas a cortar, la de menos usos que rompen primero, repitiendo hasta que no quede ciclo |
+
+La evidencia es plana (números y cadenas cortas); el detalle de cada arista del ciclo vive
+en `AnalysisResult.distribution_edges`. `AnalysisResult.distributions` lleva un
+`DistributionSummary` por distribución: módulos, distribuciones que usa, `installable`
+(`False` si es origen de un hallazgo 6-8; `None` con dependencias desconocidas y sin hallazgo
+8) y `blocker` (`ruta:línea → destino` del más grave: 8, luego 6, luego 7).
+
 ### Ca interno y consumidores (`graph/scripts.py`)
 
 Ca cuenta dependencias desde dentro del sistema medido (Martin): un consumidor externo
@@ -950,7 +1020,10 @@ en el top de `Ca + Ce` volátil del que otros dependen — inestabilidad ≥
 oculta, que no falla al importar pero sigue acoplando; `low`: el
 resto; nunca se señala un módulo solo por ser estable, porque inestabilidad baja con
 muchos dependientes es sano), la regla de
-copiar los nombres de módulo literalmente y la instrucción de idioma. El user lleva
+copiar los nombres de módulo literalmente y la instrucción de idioma. Para los hallazgos
+entre distribuciones explica que `modules` son nombres de distribución, que el arreglo de su
+evidencia ya está calculado (repetirlo, no inventar otro) y que un `distribution_cycle` es
+`medium` salvo que sus cortes tengan usos que rompen. El user lleva
 los datos y el JSON schema de `AIReport` (dentro del prompt además de en la API:
 los modelos económicos ignoran `response_format`). La serialización es
 determinista.
@@ -1093,6 +1166,8 @@ Estructura del reporte:
 ## Métricas generales
 ## Ciclos de dependencia
 ## Paquetes                         (si hay resumen por paquetes)
+## Distribuciones                   (con ≥ 2 distribuciones con nombre o alguna no instalable:
+                                    módulos, qué usa y ¿instalable sola?)
 ## Scripts                          (solo si hay scripts: por directorio de primer nivel,
                                     con recuento y paquetes que usan)
 ## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado; columna

@@ -52,6 +52,23 @@ detección.
   módulos, y los imports dentro de un mismo paquete no cuentan. Bajo la tabla, las mayores
   dependencias entre paquetes con su número de imports. Ambos se muestran, y se pasan a la
   IA, incluso con `[findings] enabled = false`.
+- **Distribuciones**: solo en monorepos con dos o más distribuciones con nombre (o si
+  alguna importa código que ninguna empaqueta). Por distribución: sus módulos, de qué otras
+  importa de verdad y si se puede instalar sola, sin extras, sin que falle ningún import;
+  si no, el `archivo:línea` que lo impide. Cada import entre distribuciones cuenta como
+  *requerido* (al importar), *perezoso* (dentro de una función) o *protegido* (en el cuerpo
+  de un `try` que captura `ImportError`, `ModuleNotFoundError`, `Exception` o un `except:`
+  desnudo y no termina en `raise`, o de `with contextlib.suppress(...)` de esos errores); los protegidos son
+  opcionales por contrato y nunca impiden instalarla. Las dependencias declaradas se leen de
+  `[project] dependencies` y sus extras, `[tool.poetry]` (dependencias y extras) y
+  `setup.cfg`. Una dependencia que solo aparece en un grupo de dependencias
+  (`[dependency-groups]`, grupos de Poetry) cuenta como no declarada, porque ningún
+  instalador instala los grupos con el paquete; el hallazgo dice qué grupo la lista. Con `dynamic = ["dependencies"]` o solo
+  `setup.py` son desconocidas, y esa distribución nunca origina una dependencia no declarada.
+  Dos manifiestos con el mismo nombre dan un aviso, y solo el menos profundo lo conserva.
+  Cada hallazgo entre
+  distribuciones trae un **Arreglo** que se puede copiar (la línea a añadir y el manifiesto
+  donde va). Se calcula también con `[findings] enabled = false`.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto
@@ -85,6 +102,14 @@ detección.
     código muerto o un punto de entrada que se ejecuta desde fuera del código.
   - **Violación de capas**: solo si declaras `[layers]`: un módulo de una capa inferior
     importa uno de una capa superior.
+  - **Dependencia no declarada**: una distribución del repositorio importa otra que su
+    manifiesto no declara; instalada sola, falla al importar.
+  - **Dependencia opcional usada como requerida**: la declara solo en un extra, pero la
+    importa al cargarse y sin `try`/`except ImportError`.
+  - **Import de código no empaquetado**: importa código que ninguna distribución
+    empaqueta (solo existe en el repositorio).
+  - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
+    arista cortar.
 
   Los umbrales son relativos al proyecto (percentiles, con un mínimo absoluto) y se
   pueden ajustar en `[findings]`. Los hallazgos nunca cambian el código de salida.

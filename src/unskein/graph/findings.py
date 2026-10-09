@@ -14,7 +14,7 @@ from unskein.graph.percentile import nearest_rank_percentile
 MAIN_MODULE_SUFFIX = "__main__"
 INSTABILITY_DECIMALS = 2
 
-# Evidence values are numbers, except for layer violations, which name the two layers.
+# Evidence values are numbers or short strings (layer names, locations, fixes).
 Evidence = dict[str, float | str]
 
 
@@ -27,6 +27,10 @@ class FindingKind(StrEnum):
         ORCHESTRATOR: A module with far more dependencies than the rest.
         ORPHAN: A module that imports no project module and is imported by none.
         LAYER_VIOLATION: A module of a lower declared layer imports one of a higher layer.
+        UNDECLARED_DEPENDENCY: A distribution imports another it does not declare.
+        OPTIONAL_REQUIRED: A distribution imports at load time one it only declares in an extra.
+        UNPACKAGED_IMPORT: A distribution imports code that no distribution ships.
+        DISTRIBUTION_CYCLE: Distributions that depend on each other.
     """
 
     UNSTABLE_DEPENDENCY = "unstable_dependency"
@@ -34,6 +38,10 @@ class FindingKind(StrEnum):
     ORCHESTRATOR = "orchestrator"
     ORPHAN = "orphan"
     LAYER_VIOLATION = "layer_violation"
+    UNDECLARED_DEPENDENCY = "undeclared_dependency"
+    OPTIONAL_REQUIRED = "optional_required"
+    UNPACKAGED_IMPORT = "unpackaged_import"
+    DISTRIBUTION_CYCLE = "distribution_cycle"
 
 
 @dataclass(frozen=True, slots=True)

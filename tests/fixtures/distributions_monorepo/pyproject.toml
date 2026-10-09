@@ -1,0 +1,13 @@
+[build-system]
+build-backend = "hatchling.build"
+
+[project]
+name = "core"
+version = "2.3.0"
+dependencies = ["requests"]
+
+[project.optional-dependencies]
+plugins = ["core-plugins==0.1"]
+
+[tool.uv.workspace]
+members = ["plugins"]
