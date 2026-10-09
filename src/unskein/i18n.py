@@ -877,6 +877,26 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.EN: "Guard those uses with the same fallback, or drop the fallback if the "
         "extension is required.",
     },
+    "finding.wildcard_import.title": {
+        Lang.ES: "Import con estrella",
+        Lang.EN: "Wildcard import",
+    },
+    "finding.wildcard_import.explanation": {
+        Lang.ES: "`from módulo import *` trae todos los nombres públicos del módulo, pero el "
+        "código solo usa algunos. unskein calcula, con el proyecto entero, los nombres que "
+        "necesita cada sentencia: los que el módulo lee, los que otros módulos importan desde "
+        "él y los que pasan a quienes lo importan con estrella.",
+        Lang.EN: "`from module import *` brings every public name of the module, but the code "
+        "uses only some of them. unskein computes, with the whole project, the names each "
+        "statement needs: those the module reads, those other modules import from it and "
+        "those that pass on to modules that star-import it.",
+    },
+    "finding.wildcard_import.recommendation": {
+        Lang.ES: "Sustituir cada sentencia por el import explícito que se indica, o eliminarla "
+        "si no usa nada.",
+        Lang.EN: "Replace each statement with the explicit import shown, or remove it when it "
+        "uses nothing.",
+    },
     "finding.fix.import_from": {Lang.ES: "importa {items}", Lang.EN: "import {items}"},
     "finding.fix.import_from.item": {
         Lang.ES: "`{symbol}` desde `{module}`, que lo define{others}",

@@ -132,6 +132,13 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     way or to drop the fallback. A name taken from a facade that imports it in such a `try`
     counts as guarded too.
     It does not follow control flow: an earlier check (`if available():`) is not seen.
+  - **Wildcard import**: one finding per module imported with `from x import *` outside a
+    package facade. For each statement it gives the explicit import to write, with the
+    names it needs computed with the whole project: those the module reads, those other
+    modules (tests included) import from it, and those that pass on to modules that
+    star-import it. A statement that needs nothing is to be removed (it still loads the
+    module when imported). A star whose names cannot be known (a computed `__all__`) stays a
+    warning.
   - **Cycle between distributions**: distributions that import each other; it says which
     edge to cut.
 
