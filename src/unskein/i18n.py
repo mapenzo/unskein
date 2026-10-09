@@ -65,6 +65,16 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Imports con asterisco",
         Lang.EN: "Star imports",
     },
+    "warning.star_not_analyzed": {
+        Lang.ES: "Import con asterisco desde {detail}: sin analizar; `--star-fixes` calcula el "
+        "import explícito que escribir",
+        Lang.EN: "Star import from {detail}: not analyzed; `--star-fixes` computes the explicit "
+        "import to write",
+    },
+    "warning_title.star_not_analyzed": {
+        Lang.ES: "Imports con asterisco sin analizar",
+        Lang.EN: "Star imports not analyzed",
+    },
     "warning.relative_beyond_top": {
         Lang.ES: "El import relativo '{detail}' sube más allá del paquete raíz",
         Lang.EN: "Relative import '{detail}' goes beyond the top-level package",

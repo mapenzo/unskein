@@ -16,7 +16,7 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "star_project"
 
 def _analyzed(root: Path = FIXTURE, config: FindingsConfig | None = None) -> AnalysisResult:
     """Discover, parse, resolve and analyze a project."""
-    adapter = PythonAdapter(AnalysisConfig())
+    adapter = PythonAdapter(AnalysisConfig(star_fixes=True))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)), config)
 

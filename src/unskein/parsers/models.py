@@ -31,6 +31,8 @@ class WarningCode(StrEnum):
             no usable name; it is ignored.
         INVALID_MODULE_NAME: A manifest declares a compiled module whose name is not dotted
             identifiers; it is ignored.
+        STAR_NOT_ANALYZED: ``from x import *`` of a project module outside a package facade,
+            not analyzed because ``star_fixes`` is off; the option computes the explicit import.
     """
 
     STAR_IMPORT = "star_import"
@@ -47,6 +49,7 @@ class WarningCode(StrEnum):
     INVALID_REQUIREMENT = "invalid_requirement"
     DUPLICATE_DISTRIBUTION_NAME = "duplicate_distribution_name"
     INVALID_MODULE_NAME = "invalid_module_name"
+    STAR_NOT_ANALYZED = "star_not_analyzed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,6 +363,7 @@ class ParsePlan:
         project_root: Absolute project directory, for relative paths in findings.
         virtual: Modules with no parsed file (namespace packages, compiled extensions,
             stubs), by name, sorted.
+        star_fixes: Whether star imports are analyzed to compute their fix (rule 12).
     """
 
     tasks: list[ParseTask]
@@ -370,6 +374,7 @@ class ParsePlan:
     module_distributions: dict[str, str] = field(default_factory=dict)
     project_root: Path | None = None
     virtual: dict[str, VirtualModule] = field(default_factory=dict)
+    star_fixes: bool = False
 
 
 @dataclass
@@ -389,6 +394,7 @@ class ParseResult:
             not (a file skipped as too large still belongs to its distribution).
         virtual: Modules with no parsed file (namespace packages, compiled extensions,
             stubs), by name, sorted.
+        star_fixes: Whether star imports are analyzed to compute their fix (rule 12).
     """
 
     modules: list[ModuleInfo]
@@ -400,6 +406,7 @@ class ParseResult:
     project_root: Path | None = None
     module_distributions: dict[str, str] = field(default_factory=dict)
     virtual: dict[str, VirtualModule] = field(default_factory=dict)
+    star_fixes: bool = False
 
     @classmethod
     def from_file_results(
@@ -428,6 +435,7 @@ class ParseResult:
             result.project_root = plan.project_root
             result.module_distributions = plan.module_distributions
             result.virtual = plan.virtual
+            result.star_fixes = plan.star_fixes
         for file_result in file_results:
             if file_result.module is not None:
                 module = file_result.module

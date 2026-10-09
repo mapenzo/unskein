@@ -46,6 +46,8 @@ def test_scan_help_lists_exit_codes() -> None:
     assert "--include-tests" in output
     assert "--no-include-tests" in output
     assert "--no-follow-symlinks" in output
+    assert "--star-fixes" in output
+    assert "--no-star-fixes" in output
     assert "Exit codes" in output
 
 

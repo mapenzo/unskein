@@ -177,7 +177,8 @@ para paquetes Python distribuibles).
   sexta a la novena (entre distribuciones) solo con distribuciones con nombre, la décima
   (import de un módulo inexistente) solo cuando el import rompe al ejecutarse, la
   undécima (extensión opcional usada como obligatoria) solo con módulos compilados o stubs,
-  y la duodécima (import con asterisco) solo con `from x import *` fuera de fachada.
+  y la duodécima (import con asterisco) solo con `from x import *` fuera de fachada y con
+  `--star-fixes` (apagada por defecto: releer los módulos implicados cuesta entre un 15 y un 20 %).
 - **Módulos virtuales** = módulos sin `.py` parseado: espacios de nombres (PEP 420),
   extensiones compiladas (`.so`/`.pyd`/`.pyx` o maturin `module-name`) y módulos solo stub
   (`.pyi`). Nodos marcados (`virtual=<VirtualKind>`), sin aristas de salida (en compilados y

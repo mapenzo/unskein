@@ -300,7 +300,7 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     wildcards: list[WildcardModule] = []
     if findings_config.enabled:
         missing = find_missing_modules(result, scripts)
-        wildcards = summarize_wildcards(result, scripts)
+        wildcards = summarize_wildcards(result, scripts) if result.star_fixes else []
         findings = [
             *findings,
             *distribution_analysis.findings,

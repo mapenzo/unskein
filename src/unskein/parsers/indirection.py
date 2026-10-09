@@ -481,9 +481,10 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     Whole-module imports of a package are replaced by one edge per module their
     attributes come from (see `expand_package_access`); external imports are kept
     as they are; edges that resolve back to their own source are dropped; warnings
-    are deduplicated. Star imports whose names cannot be known (module not parsed,
-    computed ``__all__``, a cycle of star imports) get a ``STAR_IMPORT`` warning. The
-    input is not mutated.
+    are deduplicated. With ``star_fixes`` on, star imports whose names cannot be known
+    (module not parsed, computed ``__all__``, a cycle of star imports) get a ``STAR_IMPORT``
+    warning; with it off, every star import of a project module outside a facade gets a
+    ``STAR_NOT_ANALYZED`` warning. The input is not mutated.
 
     Args:
         result: Parse result whose imports should be resolved.
@@ -497,18 +498,27 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     # Virtual modules have no file, but chains walk through them to their submodules.
     module_names = frozenset(module.name for module in result.modules) | frozenset(result.virtual)
     warnings = dict.fromkeys(result.warnings)
-    every_star = star_imports(result.modules, result.re_exports)
-    result = _with_surfaces(result, every_star)
-    by_name = {module.name: module for module in result.modules}
-    cycles = star_cycles(every_star)
-    for module in result.modules:
-        for line, base in module.stars.statements:
-            unknown = (module.name, base) in cycles or (
-                wildcard_names(base, by_name, every_star) is None
-            )
-            if base != module.name and unknown:
-                warning = ParseWarning(WarningCode.STAR_IMPORT, module.file_path, line, base)
-                warnings[warning] = None
+    if result.star_fixes:
+        every_star = star_imports(result.modules, result.re_exports)
+        result = _with_surfaces(result, every_star)
+        by_name = {module.name: module for module in result.modules}
+        cycles = star_cycles(every_star)
+        for module in result.modules:
+            for line, base in module.stars.statements:
+                unknown = (module.name, base) in cycles or (
+                    wildcard_names(base, by_name, every_star) is None
+                )
+                if base != module.name and unknown:
+                    warning = ParseWarning(WarningCode.STAR_IMPORT, module.file_path, line, base)
+                    warnings[warning] = None
+    else:
+        for module in result.modules:
+            for line, base in module.stars.statements:
+                if base != module.name:
+                    warning = ParseWarning(
+                        WarningCode.STAR_NOT_ANALYZED, module.file_path, line, base
+                    )
+                    warnings[warning] = None
     modules = []
     for module in result.modules:
         imports = []

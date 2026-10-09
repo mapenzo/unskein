@@ -18,7 +18,7 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "star_project"
 
 def _parse(root: Path = FIXTURE):
     """Discover and parse a project, before re-export resolution."""
-    adapter = PythonAdapter(AnalysisConfig())
+    adapter = PythonAdapter(AnalysisConfig(star_fixes=True))
     return adapter.parse(sorted(adapter.discover_files(root, pathspec.PathSpec([]))), root)
 
 

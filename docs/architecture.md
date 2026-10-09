@@ -892,6 +892,14 @@ módulo empaquetado distinto de los importadores **define** alguno
 
 ### Regla 12: imports con asterisco (`graph/stars.py`)
 
+**Opcional** (`AnalysisConfig.star_fixes`, `--star-fixes`, `[analysis] star_fixes`; apagada por
+defecto): releer los módulos implicados cuesta entre un 15 y un 20 % en litellm (mediana 2,77 s apagada, igual que `develop`; 3,10 s encendida). Apagada, el
+parser no guarda lecturas ni imports dinámicos (`ParsePlan.star_fixes` → `ParseResult.star_fixes`),
+`resolve_indirection` da un `STAR_NOT_ANALYZED` por cada sentencia de un módulo del proyecto fuera
+de fachada (las externas y la estrella de un paquete a sí mismo no avisan), `analyze` no calcula
+`summarize_wildcards` y no hay hallazgo. Encendida, `STAR_NOT_ANALYZED` desaparece y
+`STAR_IMPORT` queda solo para lo que no se puede saber.
+
 `summarize_wildcards(result, scripts)`: para cada `from B import *` fuera de fachada de
 código empaquetado que no es script, los nombres que necesita y el arreglo.
 

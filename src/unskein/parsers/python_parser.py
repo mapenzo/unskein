@@ -656,13 +656,13 @@ def parse_file(
     collector.attach_usage(tree)
     exports = module_exports(tree)
     reads: tuple[str, ...] = ()
-    if collector.wildcards:
+    if collector.wildcards and config.star_fixes:
         reads = collect_read_names(tree)
         if exports.declares_all:
             reads = tuple(sorted({*reads, *exports.names}))
     dynamic = (
         collect_dynamic_imports(tree)
-        if any(hint in source for hint in DYNAMIC_IMPORT_HINTS)
+        if config.star_fixes and any(hint in source for hint in DYNAMIC_IMPORT_HINTS)
         else ()
     )
     stars = StarImports(tuple(collector.wildcards), reads, dynamic)
@@ -827,6 +827,7 @@ class PythonAdapter(LanguageAdapter):
             module_distributions,
             layout.root,
             virtual=dict(sorted(virtual.items())),
+            star_fixes=self.config.star_fixes,
         )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:

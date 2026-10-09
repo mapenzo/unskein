@@ -39,6 +39,12 @@
 # the project.
 # follow_symlinks = false
 
+# Work out, for each `from x import *`, the explicit import to write (finding
+# "Wildcard import"). Off by default: it rereads the modules involved, which
+# adds 15 to 20 % to a scan of a large project. Star imports are then only
+# listed as warnings.
+# star_fixes = false
+
 # Encoding for files that declare none and cannot be detected. Never
 # overrides a PEP 263 coding cookie or a BOM.
 # default_encoding = "utf-8"

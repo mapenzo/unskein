@@ -98,13 +98,16 @@ Architecture health: fair.
   Rust extension at all; tach sees it only once it is named in its configuration, and
   neither tach nor mypy tells the guarded import apart from the five that would raise
   `ImportError` without the extension.
-- **Star imports**: one finding per module imported with `from x import *` outside a
-  package facade. For each statement it gives the explicit import to write when it can prove
-  it safe, and says why otherwise. On litellm it fixes 64 of 74 statements and explains the
-  other 10 (7 import cycles, 3 names that may be unbound); applying the fixes leaves every
-  one of its 2663 modules importing exactly as before. removestar's rewrite of the same files
-  makes `import litellm` fail (a name another module imports through a star was dropped),
-  along with 1515 other modules.
+- **Star imports** (opt in with `--star-fixes`): one finding per module imported with
+  `from x import *` outside a package facade. For each statement it gives the explicit
+  import to write when it can prove it safe, and says why otherwise. Without the option,
+  star imports are only listed as warnings and the scan costs nothing extra. On litellm it
+  fixes 64 of 74 statements and explains the other 10 (7 import cycles, 3 names that may be
+  unbound); applying the fixes leaves every one of its 2663 modules importing exactly as
+  before, while removestar's rewrite of the same files makes `import litellm` fail (a name
+  another module imports through a star was dropped), along with 1515 other modules. The
+  option rereads the modules involved: 15 to 20 % more time on a project of 2,900
+  modules.
 - **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,
@@ -184,6 +187,7 @@ unskein scan . --exclude "migrations/"        # skip paths (repeatable)
 unskein scan . --min-severity medium           # hide low-severity findings
 unskein scan . -o report.md                    # also save the report as Markdown
 unskein scan . --lang es                       # informe en español
+unskein scan . --star-fixes                    # the explicit import for each `from x import *`
 ```
 
 Paths in `.gitignore` are skipped automatically. To exclude code that *is* tracked in

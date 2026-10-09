@@ -132,20 +132,10 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     way or to drop the fallback. A name taken from a facade that imports it in such a `try`
     counts as guarded too.
     It does not follow control flow: an earlier check (`if available():`) is not seen.
-  - **Wildcard import**: one finding per module imported with `from x import *` outside a
-    package facade. For each statement it gives the explicit import to write, but only when
-    it can prove it safe; otherwise it says why ("no safe fix": a needed name may be unbound,
-    for example under `TYPE_CHECKING`; the two modules import each other; or a submodule
-    another module may have loaded). The names come from the whole project: those the module
-    reads, those other analyzed modules import from it or read as its attributes, and those
-    that pass on to modules that star-import it; when in doubt a name is kept. A module used
-    by itself, loaded with `importlib.import_module`, or re-exported by a facade without
-    `__all__` (public API) keeps every name. A statement that needs nothing can be removed
-    (the line loads the module when imported, so removing it also drops its load-time
-    effects). A star whose names cannot be known (a computed `__all__`, a star of an external
-    module upstream) stays a warning. Tests only count when they are analyzed: run with
-    `--include-tests` before applying the fixes, and scan the project root, not a package
-    directory, so packaged code is recognised.
+  - **Wildcard import** (only with `--star-fixes`, see "Star imports and `--star-fixes`"):
+    one finding per module imported with `from x import *` outside a package facade, with
+    the explicit import to write for each statement when unskein can prove it safe, and
+    the reason when it cannot.
   - **Cycle between distributions**: distributions that import each other; it says which
     edge to cut.
 
@@ -156,8 +146,9 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   recommendation. Problems naming modules that do not exist are discarded, and
   the report says how many.
 - **Analysis warnings**: files skipped or imports that could not be resolved
-  (star imports outside package facades whose names cannot be known, because the module
-  was not parsed or computes its `__all__`; relative
+  (star imports outside package facades: not analyzed unless you pass `--star-fixes`, and
+  with it only those whose names cannot be known, because the module was not parsed or
+  computes its `__all__`; relative
   imports beyond the top package, files too large, unparseable or too slow to parse,
   re-export cycles or chains too long). A warning never stops the analysis.
 
@@ -183,6 +174,7 @@ unskein scan [PATH] [options]
 | `--include-tests` / `--no-include-tests` | Also analyze test code (off by default). |
 | `--findings` / `--no-findings` | Show or hide the findings section (shown by default). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Follow symlinked folders (off by default). |
+| `--star-fixes` / `--no-star-fixes` | Work out the explicit import for each `from x import *` (off by default; see "Star imports"). |
 | `--encoding NAME` | Fallback encoding for files that declare none. |
 | `--lang es\|en` | Report language. |
 | `-o`, `--output FILE` | Also save the Markdown report to a file. |
@@ -201,6 +193,47 @@ unskein scan . --min-severity high           # only high-severity AI problems
 Other commands: `unskein init` and `unskein config save` (see Configuration), `unskein guide` (this
 guide, `--lang` to pick its language; `unskein guide > guide.md` saves it) and
 `unskein --version`.
+
+## Star imports and `--star-fixes`
+
+`from x import *` hides which names a module takes from `x`. By default unskein does not
+work them out: it lists each one as a warning ("Star imports not analyzed") and the scan
+costs nothing extra. Pass `--star-fixes` (or set `star_fixes = true` under `[analysis]` in
+`.unskein.toml`) and it works out, for every star import, the explicit import to write:
+
+```bash
+unskein scan . --no-ai --star-fixes
+```
+
+The report then has a "Wildcard import" finding per module that others import with `*`:
+
+```
+- `app.types` (5 modules, 5 statements; they use 0 to 4 of 4 names; 1 uses nothing)
+  - `app/api.py:1`: `from app.types import A, B`
+  - `app/dead.py:1`: remove (it uses nothing; the line loads `app.types` when imported, ...)
+  - `app/m.py:1`: no safe fix: `app.b` may leave `Foo` unbound when the star runs (...)
+```
+
+How to read and use it:
+
+- **The fix is only given when unskein can prove it safe**, using the whole project: the
+  names the module reads, the ones other modules import from it or read as its attributes,
+  and the ones that pass on to modules that star-import it. When in doubt a name is kept.
+  A module used by itself, loaded with `importlib.import_module`, or re-exported by a
+  package without `__all__` (public API) keeps every name.
+- **"No safe fix"** says why instead of guessing: a name may be unbound when the star runs
+  (it is defined under `TYPE_CHECKING`, inside an `if`, or deleted), the two modules import
+  each other, or the module reads a submodule that another module may have imported.
+  Review those by hand.
+- **"Remove"** means the statement needs no name. The line still loads the module when it
+  is imported, so removing it also drops that module's load-time effects: check it.
+- **Before applying the fixes**, run with `--include-tests` (a test may import a name
+  through the module) and analyze the project root, not a package folder, so unskein
+  recognises your packaged code.
+- unskein never edits your files: you copy the line.
+- **Cost**: it rereads the modules involved. On a project of about 2,900 modules the scan
+  took 15 to 20 % longer; with the option off it costs nothing.
+- **Limits**: names read through `eval`, `globals()` or a computed `getattr` are not seen.
 
 ## Untangling: `untangle`
 
@@ -409,7 +442,8 @@ From 500 files, parsing runs in parallel with up to 8 processes (tune
 `parallel_threshold` and `max_workers` in `.unskein.toml`). Files of 5 MB or more
 are skipped with a warning, and in parallel parsing a file that takes more
 than 30 s is skipped too. `--verbose` prints the duration and the peak memory
-of the run, measured locally and never sent anywhere.
+of the run, measured locally and never sent anywhere. `--star-fixes` adds work
+(15 to 20 % on a project of 2,900 modules) and is off by default.
 
 ## Troubleshooting
 

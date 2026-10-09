@@ -128,7 +128,7 @@ SCENARIOS = {
 
 def _analyzed(root: Path) -> AnalysisResult:
     """Discover, parse, resolve and analyze a project."""
-    adapter = PythonAdapter(AnalysisConfig())
+    adapter = PythonAdapter(AnalysisConfig(star_fixes=True))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)))
 
@@ -176,7 +176,7 @@ def test_applying_the_fixes_keeps_the_behavior(make_project: MakeProject, name: 
 def test_a_star_whose_names_are_unknown_further_up_warns(make_project: MakeProject) -> None:
     files, _ = SCENARIOS["unknown_star_upstream"]
     root = make_project({"app/__init__.py": "", **files})
-    adapter = PythonAdapter(AnalysisConfig())
+    adapter = PythonAdapter(AnalysisConfig(star_fixes=True))
     parsed = adapter.parse(sorted(adapter.discover_files(root, pathspec.PathSpec([]))), root)
     stars = {
         (w.path.name, w.line)

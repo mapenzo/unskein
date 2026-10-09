@@ -34,6 +34,7 @@ from unskein.ai.prompts import (
     ground_report,
     shrink_context,
 )
+from unskein.config import AnalysisConfig
 from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
 from unskein.graph.packages import PackageEdge
@@ -42,16 +43,17 @@ from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.python_parser import PythonAdapter
 
 
-def analyze_fixture(root: Path) -> AnalysisResult:
+def analyze_fixture(root: Path, star_fixes: bool = False) -> AnalysisResult:
     """Discover, parse, resolve and analyze a fixture project.
 
     Args:
         root: Fixture project directory.
+        star_fixes: Whether star imports are analyzed for their fix.
 
     Returns:
         The analysis of the fixture.
     """
-    adapter = PythonAdapter()
+    adapter = PythonAdapter(AnalysisConfig(star_fixes=star_fixes))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)))
 
@@ -732,7 +734,7 @@ def test_system_prompt_explains_wildcard_imports() -> None:
 
 
 def test_wildcard_findings_reach_the_context_with_their_fixes() -> None:
-    context = build_context(analyze_fixture(STAR_ROOT))
+    context = build_context(analyze_fixture(STAR_ROOT, star_fixes=True))
     summary = next(f for f in context.findings if f.kind == "wildcard_import")
     assert summary.evidence["fixes"].startswith("app/annot.py:1 from app.types import D")
     assert context.finding_counts["wildcard_import"] == 5

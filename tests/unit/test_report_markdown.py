@@ -55,16 +55,17 @@ def _problem(severity: str) -> Problem:
     )
 
 
-def analyzed(root: Path) -> AnalysisResult:
+def analyzed(root: Path, star_fixes: bool = False) -> AnalysisResult:
     """Discover, parse, resolve and analyze a fixture project.
 
     Args:
         root: Fixture project directory.
+        star_fixes: Whether star imports are analyzed for their fix.
 
     Returns:
         The analysis of the fixture.
     """
-    adapter = PythonAdapter()
+    adapter = PythonAdapter(AnalysisConfig(star_fixes=star_fixes))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)))
 
@@ -971,7 +972,7 @@ STAR_ROOT = Path(__file__).parent.parent / "fixtures" / "star_project"
 
 
 def test_wildcard_findings_en() -> None:
-    report = render(STAR_ROOT, analyzed(STAR_ROOT))
+    report = render(STAR_ROOT, analyzed(STAR_ROOT, star_fixes=True))
     assert "### Wildcard import (5)" in report
     assert (
         "- `app.types` (5 modules, 5 statements; they use 0 to 4 of 4 names; 1 uses nothing; "
@@ -1002,7 +1003,7 @@ def test_wildcard_findings_en() -> None:
 
 
 def test_wildcard_findings_es() -> None:
-    report = render(STAR_ROOT, analyzed(STAR_ROOT), Lang.ES)
+    report = render(STAR_ROOT, analyzed(STAR_ROOT, star_fixes=True), Lang.ES)
     assert "### Import con asterisco (5)" in report
     assert (
         "- `app.types` (5 módulos, 5 sentencias; usan de 0 a 4 de 4 nombres; 1 no usa nada; "
@@ -1024,7 +1025,7 @@ def test_wildcard_fixes_show_every_statement_and_name(make_project) -> None:
     for number in range(7):
         files[f"app/m{number}.py"] = "from app.types import *\n\n\n" + reader
     root = make_project(files)
-    report = render(root, analyzed(root))
+    report = render(root, analyzed(root, star_fixes=True))
     assert "`from app.types import " + ", ".join(names) + "`" in report
     assert "`app/m6.py:1`" in report
     assert "more" not in report.split("### Wildcard import")[1]
@@ -1036,7 +1037,7 @@ def test_every_wildcard_finding_is_listed(make_project) -> None:
         files[f"app/t{number:02d}.py"] = "A = 1\n"
         files[f"app/u{number:02d}.py"] = f"from app.t{number:02d} import *\nprint(A)\n"
     root = make_project(files)
-    section = render(root, analyzed(root)).split("### Wildcard import (12)")[1]
+    section = render(root, analyzed(root, star_fixes=True)).split("### Wildcard import (12)")[1]
     assert "- `app.t11` (" in section
 
 
@@ -1050,7 +1051,7 @@ def test_kept_names_are_grouped_by_the_module_that_needs_them(make_project) -> N
             "app/user2.py": "from app.m import Y\n",
         }
     )
-    report = render(root, analyzed(root))
+    report = render(root, analyzed(root, star_fixes=True))
     assert "(kept for `app.user`: `X`; kept for `app.user2`: `Y`)" in report
     assert "2 names kept because other modules import them through the modules" in report
 
@@ -1063,7 +1064,7 @@ def test_a_package_star_imported_by_itself_and_by_others_shows_both(make_project
             "app/use.py": "from app.selfp import *\nprint(A)\n",
         }
     )
-    report = render(root, analyzed(root))
+    report = render(root, analyzed(root, star_fixes=True))
     assert "  - `app/use.py:1`: `from app.selfp import A`" in report
     assert "  - `app/selfp/__init__.py:1`: remove (it imports itself" in report
 
@@ -1072,11 +1073,13 @@ def test_one_name_reads_in_the_singular(make_project) -> None:
     root = make_project(
         {"app/__init__.py": "", "app/b.py": "A = 1\n", "app/m.py": "from app.b import *\n"}
     )
-    assert "(1 module, 1 statement; it uses 0 of 1 name;" in render(root, analyzed(root))
+    assert "(1 module, 1 statement; it uses 0 of 1 name;" in render(
+        root, analyzed(root, star_fixes=True)
+    )
 
 
 def test_the_recommendation_warns_when_tests_are_not_analyzed() -> None:
-    report = render(STAR_ROOT, analyzed(STAR_ROOT))
+    report = render(STAR_ROOT, analyzed(STAR_ROOT, star_fixes=True))
     assert "--include-tests" in report.split("### Wildcard import")[1]
 
 
@@ -1089,7 +1092,7 @@ def test_a_module_used_by_itself_keeps_every_name_and_says_why(make_project) -> 
             "app/user.py": "import app.m\n\n\ndef f(handler):\n    return handler(app.m)\n",
         }
     )
-    report = render(root, analyzed(root))
+    report = render(root, analyzed(root, star_fixes=True))
     assert (
         "`from app.b import X, Y` (all kept: `app.m` is used by itself elsewhere, through a "
         "star import whose names cannot be known, or re-exported by a package facade without "
@@ -1131,13 +1134,13 @@ def test_a_module_used_by_itself_keeps_every_name_and_says_why(make_project) -> 
 )
 def test_statements_without_a_safe_fix_say_why(make_project, files, expected) -> None:
     root = make_project({"app/__init__.py": "", **files})
-    report = render(root, analyzed(root))
+    report = render(root, analyzed(root, star_fixes=True))
     assert expected in report
     assert "1 without a safe fix" in report
 
 
 def test_the_wildcard_explanation_says_names_are_kept_when_in_doubt() -> None:
-    report = render(STAR_ROOT, analyzed(STAR_ROOT))
+    report = render(STAR_ROOT, analyzed(STAR_ROOT, star_fixes=True))
     section = report.split("### Wildcard import")[1]
     assert "when in doubt" in section
     assert "read as its attributes" in section

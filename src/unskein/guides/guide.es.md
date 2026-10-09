@@ -138,21 +138,10 @@ detección.
     o quitar el respaldo. Un nombre tomado de una fachada que lo importa en ese `try` también
     cuenta como protegido. No sigue el flujo de control: una comprobación previa
     (`if available():`) no se ve.
-  - **Import con asterisco**: un hallazgo por módulo importado con `from x import *` fuera de
-    una fachada. Para cada sentencia da el import explícito que escribir, pero solo cuando
-    puede demostrar que es seguro; si no, dice por qué («sin arreglo seguro»: un nombre
-    necesario puede quedar sin ligar, por ejemplo bajo `TYPE_CHECKING`; los dos módulos se
-    importan entre sí; o un submódulo que otro módulo puede haber cargado). Los nombres salen
-    del proyecto entero: los que el módulo lee, los que otros módulos analizados importan
-    desde él o leen como atributos suyos, y los que pasan a quienes lo importan con asterisco;
-    ante la duda, el nombre se conserva. Un módulo que se usa entero, que se carga con
-    `importlib.import_module` o que re-exporta una fachada sin `__all__` (API pública)
-    conserva todos sus nombres. Una sentencia que no necesita nada se puede eliminar (la línea
-    carga el módulo al importar, así que borrarla también quita sus efectos al cargar). Un
-    import con asterisco cuyos nombres no se pueden saber (`__all__` calculado, una estrella de
-    un módulo externo en la cadena) se queda como aviso. Los tests solo cuentan si se
-    analizan: ejecuta con `--include-tests` antes de aplicar los arreglos, y analiza la raíz
-    del proyecto, no la carpeta de un paquete, para que se reconozca el código empaquetado.
+  - **Import con asterisco** (solo con `--star-fixes`, ver «Imports con asterisco y
+    `--star-fixes`»): un hallazgo por módulo importado con `from x import *` fuera de una
+    fachada, con el import explícito que escribir en cada sentencia cuando unskein puede
+    demostrar que es seguro, y el motivo cuando no puede.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 
@@ -163,8 +152,9 @@ detección.
   recomendación. Los problemas que nombran módulos inexistentes se descartan,
   y el informe dice cuántos.
 - **Advertencias del análisis**: archivos omitidos o imports que no se
-  pudieron resolver (imports con asterisco fuera de las fachadas cuyos nombres no se
-  pueden saber, porque el módulo no se pudo analizar o calcula su `__all__`; imports relativos fuera del paquete raíz, archivos demasiado grandes, no
+  pudieron resolver (imports con asterisco fuera de las fachadas: sin analizar salvo que
+  pases `--star-fixes`, y con ella solo los que no se pueden saber, porque el módulo no se
+  pudo analizar o calcula su `__all__`; imports relativos fuera del paquete raíz, archivos demasiado grandes, no
   analizables o demasiado lentos, ciclos o cadenas de re-exports demasiado largas). Una
   advertencia nunca detiene el análisis.
 
@@ -190,6 +180,7 @@ unskein scan [RUTA] [opciones]
 | `--include-tests` / `--no-include-tests` | Analiza también el código de tests (desactivado por defecto). |
 | `--findings` / `--no-findings` | Muestra u oculta la sección de hallazgos (se muestra por defecto). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Sigue carpetas enlazadas (desactivado por defecto). |
+| `--star-fixes` / `--no-star-fixes` | Calcula el import explícito de cada `from x import *` (desactivado por defecto; ver «Imports con asterisco»). |
 | `--encoding NOMBRE` | Encoding de reserva para archivos que no declaran ninguno. |
 | `--lang es\|en` | Idioma del informe. |
 | `-o`, `--output ARCHIVO` | Guarda también el informe Markdown en un archivo. |
@@ -208,6 +199,51 @@ unskein scan . --min-severity high           # solo problemas de IA de severidad
 Otros comandos: `unskein init` y `unskein config save` (ver Configuración), `unskein guide` (esta
 guía, `--lang` para elegir su idioma; `unskein guide > guia.md` la guarda) y
 `unskein --version`.
+
+## Imports con asterisco y `--star-fixes`
+
+`from x import *` oculta qué nombres toma un módulo de `x`. Por defecto unskein no los
+calcula: los lista como aviso («Imports con asterisco sin analizar») y el análisis no
+cuesta nada más. Pasa `--star-fixes` (o pon `star_fixes = true` en `[analysis]` de
+`.unskein.toml`) y calcula, para cada import con asterisco, el import explícito que
+escribir:
+
+```bash
+unskein scan . --no-ai --star-fixes
+```
+
+El informe trae entonces un hallazgo «Import con asterisco» por cada módulo que otros
+importan con `*`:
+
+```
+- `app.types` (5 módulos, 5 sentencias; usan de 0 a 4 de 4 nombres; 1 no usa nada)
+  - `app/api.py:1`: `from app.types import A, B`
+  - `app/dead.py:1`: eliminar (no usa nada; la línea carga `app.types` al importar, ...)
+  - `app/m.py:1`: sin arreglo seguro: `app.b` puede dejar `Foo` sin ligar cuando corre la estrella (...)
+```
+
+Cómo leerlo y usarlo:
+
+- **El arreglo solo se da cuando unskein puede demostrar que es seguro**, con el proyecto
+  entero: los nombres que el módulo lee, los que otros módulos importan desde él o leen
+  como atributos suyos, y los que pasan a quienes lo importan con asterisco. Ante la duda,
+  el nombre se conserva. Un módulo que se usa entero, que se carga con
+  `importlib.import_module` o que re-exporta un paquete sin `__all__` (API pública)
+  conserva todos sus nombres.
+- **«Sin arreglo seguro»** dice el motivo en vez de adivinar: un nombre puede quedar sin
+  ligar cuando corre la estrella (se define bajo `TYPE_CHECKING`, dentro de un `if` o se
+  borra), los dos módulos se importan entre sí, o el módulo lee un submódulo que otro
+  módulo puede haber importado. Revísalos a mano.
+- **«Eliminar»** significa que la sentencia no necesita ningún nombre. La línea aun así
+  carga el módulo al importar, así que borrarla también quita los efectos de esa carga:
+  compruébalo.
+- **Antes de aplicar los arreglos**, ejecuta con `--include-tests` (un test puede importar
+  un nombre a través del módulo) y analiza la raíz del proyecto, no la carpeta de un
+  paquete, para que unskein reconozca tu código empaquetado.
+- unskein nunca edita tus archivos: copias la línea.
+- **Coste**: vuelve a leer los módulos implicados. En un proyecto de unos 2.900 módulos el
+  análisis tardó entre un 15 y un 20 % más; con la opción apagada no cuesta nada.
+- **Límites**: no ve los nombres leídos con `eval`, `globals()` o un `getattr` calculado.
 
 ## Desenredar: `untangle`
 
@@ -423,7 +459,8 @@ A partir de 500 archivos, el parseo se hace en paralelo con hasta 8 procesos
 archivos de 5 MB o más se omiten con una advertencia, y en el parseo paralelo
 también se omite un archivo que tarde más de 30 s. `--verbose` muestra la
 duración y el pico de memoria, medidos en local y nunca enviados a ningún
-sitio.
+sitio. `--star-fixes` añade trabajo (entre un 15 y un 20 % en un proyecto de 2.900
+módulos) y está desactivada por defecto.
 
 ## Problemas frecuentes
 
