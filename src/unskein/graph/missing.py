@@ -80,6 +80,23 @@ def _closest(name: str, known: frozenset[str]) -> str:
     return ""
 
 
+def _inside_native(closest: str, result: ParseResult) -> bool:
+    """Tell whether a missing name sits under compiled code or a stub.
+
+    Compiled code can register submodules unskein cannot see, so a name under it is not
+    known to be missing.
+
+    Args:
+        closest: Closest existing ancestor of the missing name.
+        result: Parsed project.
+
+    Returns:
+        True when that ancestor is a compiled extension or a stub-only module.
+    """
+    found = result.virtual.get(closest)
+    return found is not None and found.kind.is_native
+
+
 def _collect(result: ParseResult, scripts: Collection[str]) -> dict[str, _Missing]:
     """Tally the imports of modules that do not exist, made by packaged code.
 
@@ -155,7 +172,8 @@ def find_missing_modules(result: ParseResult, scripts: Collection[str]) -> list[
 
     Imports under ``TYPE_CHECKING``, guarded ones and those of unpackaged code stay
     warnings only. A module that exists as a stub or a compiled extension is in the
-    project index, so its imports are never missing. The fix comes from evidence: the
+    project index, so its imports are never missing, and a name under one is not known
+    to be missing either (compiled code can register submodules). The fix comes from evidence: the
     module that defines each imported name, or the statement that none does.
 
     Args:
@@ -168,7 +186,7 @@ def find_missing_modules(result: ParseResult, scripts: Collection[str]) -> list[
     definitions = _definitions(result, scripts)
     findings = []
     for name, entry in sorted(_collect(result, scripts).items()):
-        if entry.first is None:
+        if entry.first is None or _inside_native(entry.closest, result):
             continue
         evidence: Evidence = {
             "required": entry.counts[ImportUse.REQUIRED],

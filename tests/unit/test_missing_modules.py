@@ -167,3 +167,14 @@ def test_definitions_skip_scripts_and_the_importer(make_project: MakeProject) ->
     )
     (finding,) = _missing(root)
     assert finding.evidence["fix"] == "restore_or_remove"
+
+
+def test_submodule_of_compiled_code_is_not_called_missing(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/_native.cpython-312-x86_64-linux-gnu.so": "",
+            "app/a.py": "def f():\n    from app._native.sub import go\n    return go\n",
+        }
+    )
+    assert _missing(root) == []
