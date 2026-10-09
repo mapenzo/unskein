@@ -85,6 +85,14 @@ detección.
     código muerto o un punto de entrada que se ejecuta desde fuera del código.
   - **Violación de capas**: solo si declaras `[layers]`: un módulo de una capa inferior
     importa uno de una capa superior.
+  - **Dependencia no declarada**: una distribución del repositorio importa otra que su
+    manifiesto no declara; instalada sola, falla al importar.
+  - **Dependencia opcional usada como requerida**: la declara solo en un extra, pero la
+    importa al cargarse y sin `try`/`except ImportError`.
+  - **Import de código no empaquetado**: importa código que ninguna distribución
+    empaqueta (solo existe en el repositorio).
+  - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
+    arista cortar.
 
   Los umbrales son relativos al proyecto (percentiles, con un mínimo absoluto) y se
   pueden ajustar en `[findings]`. Los hallazgos nunca cambian el código de salida.

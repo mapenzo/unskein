@@ -651,3 +651,11 @@ def test_system_prompt_explains_layer_violations() -> None:
 def test_system_prompt_says_cycles_and_tangles_are_import_time() -> None:
     assert "at import time" in SYSTEM_PROMPT
     assert "TYPE_CHECKING" in SYSTEM_PROMPT
+
+
+def test_context_serializes_distribution_findings_with_their_fix() -> None:
+    root = Path(__file__).parent.parent / "fixtures" / "distributions_monorepo"
+    context = build_context(analyze_fixture(root))
+    assert context.finding_counts["undeclared_dependency"] == 1
+    (undeclared,) = [f for f in context.findings if f.kind == "undeclared_dependency"]
+    assert undeclared.evidence["requirement"] == '"core>=2.3.0"'

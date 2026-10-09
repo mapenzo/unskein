@@ -660,3 +660,88 @@ def test_coupled_intro_and_consumers_note_are_separate_paragraphs() -> None:
     note = next(i for i, line in enumerate(lines) if line.startswith("Consumers:"))
     assert lines[note - 1] == ""
     assert lines[note - 2] != ""
+
+
+DISTRIBUTIONS_ROOT = Path(__file__).parent.parent / "fixtures" / "distributions_monorepo"
+
+
+def _distributions_report(lang: Lang) -> str:
+    """Render the report of the distributions fixture without AI.
+
+    Args:
+        lang: Report language.
+
+    Returns:
+        The Markdown report.
+    """
+    return render(DISTRIBUTIONS_ROOT, analyzed(DISTRIBUTIONS_ROOT), lang)
+
+
+def test_distributions_section_and_installability_es() -> None:
+    report = _distributions_report(Lang.ES)
+    assert "## Distribuciones" in report
+    assert (
+        "| `core-plugins` | 2 | `core` | no: `plugins/core_plugins/__init__.py:1 → core` |"
+        in report
+    )
+    assert "2 distribuciones; 2 no se pueden instalar solas." in report
+
+
+def test_undeclared_dependency_line_and_fix_en() -> None:
+    report = _distributions_report(Lang.EN)
+    assert (
+        "- `core-plugins` → `core` (2 required, 0 lazy, 0 guarded; "
+        "first: `plugins/core_plugins/__init__.py:1`)" in report
+    )
+    assert (
+        '  - Fix: add `"core>=2.3.0"` to `[project] dependencies` in `plugins/pyproject.toml`'
+        in report
+    )
+
+
+def test_cycle_lists_each_edge_with_its_status_en() -> None:
+    report = _distributions_report(Lang.EN)
+    assert "- `core` ↔ `core-plugins`" in report
+    assert (
+        "  - `core` → `core-plugins`: optional (extra `plugins`); 0 required, 0 lazy, 1 guarded"
+        in report
+    )
+    assert "  - `core-plugins` → `core`: undeclared; 2 required, 0 lazy, 0 guarded" in report
+    assert "  - Fix: cut `core` → `core-plugins`" in report
+
+
+def test_unpackaged_import_fix_es() -> None:
+    report = _distributions_report(Lang.ES)
+    assert "`legacy/` no lo empaqueta ninguna distribución" in report
+
+
+def test_distributions_section_comes_after_packages_and_before_scripts_en() -> None:
+    report = _distributions_report(Lang.EN)
+    distributions = report.index("## Distributions")
+    assert report.index("## Most coupled modules") > distributions
+
+
+def test_no_distributions_section_without_named_distributions(simple_project: Path) -> None:
+    plain = render(simple_project, analyzed(simple_project))
+    assert "Distribuciones" not in plain
+    assert "Distributions" not in plain
+
+
+def test_optional_required_line_and_fix_en(tmp_path: Path) -> None:
+    files = {
+        "pyproject.toml": '[project]\nname = "a"\nversion = "1"\n'
+        '[project.optional-dependencies]\nx = ["b"]\n',
+        "a/__init__.py": "import b_pkg\n",
+        "bdist/pyproject.toml": '[project]\nname = "b"\nversion = "1"\ndependencies = []\n'
+        '[tool.uv.build-backend]\nmodule-root = ""\nmodule-name = "b_pkg"\n',
+        "bdist/b_pkg/__init__.py": "",
+    }
+    for relative, content in files.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(content)
+    report = render(tmp_path, analyzed(tmp_path))
+    assert "- `a` → `b` (1 required, 0 lazy, 0 guarded; first: `a/__init__.py:1`)" in report
+    assert (
+        "  - Fix: move `b` from the extras `x` to the required dependencies in `pyproject.toml`, "
+        "or guard the import at `a/__init__.py:1` with `try`/`except ImportError`" in report
+    )

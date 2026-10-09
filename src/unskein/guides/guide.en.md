@@ -79,6 +79,14 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     entry point run from outside the code.
   - **Layer violation**: only when you declare `[layers]`: a module of a lower layer
     imports one of a higher layer.
+  - **Undeclared dependency**: a distribution in the repository imports another one its
+    manifest does not declare; installed alone, it fails on import.
+  - **Optional dependency used as required**: declared only in an extra, but imported at
+    load time without `try`/`except ImportError`.
+  - **Import of unpackaged code**: imports code that no distribution ships (it only exists
+    in the repository).
+  - **Cycle between distributions**: distributions that import each other; it says which
+    edge to cut.
 
   Thresholds are relative to the project (percentiles, with an absolute minimum) and can
   be tuned in `[findings]`. Findings never change the exit code.

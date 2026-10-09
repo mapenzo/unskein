@@ -6,7 +6,8 @@ from enum import StrEnum
 from pathlib import Path
 
 from unskein.ai.models import AIFailure, AIReport, Problem, Severity
-from unskein.graph.findings import Finding, FindingKind
+from unskein.graph.distributions import LIST_SEPARATOR, DistributionSummary
+from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
@@ -22,6 +23,13 @@ MAX_PACKAGES_IN_TABLE = 15
 MAX_PACKAGE_EDGES_SHOWN = 10
 MIN_PACKAGES_SHOWN = 2
 NOT_MEASURED = "—"
+MIN_DISTRIBUTIONS_SHOWN = 2
+# Kinds whose line shows the uses behind an edge between a distribution and its target.
+EDGE_FINDINGS = (
+    FindingKind.UNDECLARED_DEPENDENCY,
+    FindingKind.OPTIONAL_REQUIRED,
+    FindingKind.UNPACKAGED_IMPORT,
+)
 
 
 class AIStatus(StrEnum):
@@ -104,6 +112,8 @@ def render_report(context: ReportContext, lang: Lang) -> str:
     packages = _packages(context.result, lang)
     if packages:
         sections.append(packages)
+    if _shows_distributions(context.result):
+        sections.append(_distributions(context.result, lang))
     if context.result.scripts:
         sections.append(_scripts(context.result, lang))
     sections.append(_coupled(context.result, lang))
@@ -165,6 +175,16 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     if result.findings:
         key = "one" if len(result.findings) == 1 else "other"
         lines.append(t(f"report.summary_findings.{key}", lang, count=len(result.findings)))
+    if _shows_distributions(result):
+        blocked = sum(1 for summary in result.distributions if summary.installable is False)
+        lines.append(
+            t(
+                "report.summary_distributions",
+                lang,
+                count=len(result.distributions),
+                blocked=blocked,
+            )
+        )
     if context.ai_report:
         health = t(f"report.health.{context.ai_report.architecture_health}", lang)
         lines += ["", context.ai_report.summary, "", t("report.health", lang, health=health)]
@@ -384,6 +404,78 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
     return lines
 
 
+def _shows_distributions(result: AnalysisResult) -> bool:
+    """Tell whether the report shows the distributions of the project.
+
+    Args:
+        result: The deterministic analysis.
+
+    Returns:
+        True with at least ``MIN_DISTRIBUTIONS_SHOWN`` named distributions, or when one
+        imports code no distribution ships.
+    """
+    return len(result.distributions) >= MIN_DISTRIBUTIONS_SHOWN or any(
+        finding.kind is FindingKind.UNPACKAGED_IMPORT for finding in result.findings
+    )
+
+
+def _backticked(names: list[str] | tuple[str, ...]) -> str:
+    """Return names in backticks, joined by commas.
+
+    Args:
+        names: Names to show.
+
+    Returns:
+        The joined names, or ``NOT_MEASURED`` when there are none.
+    """
+    return LIST_SEPARATOR.join(f"`{name}`" for name in names) or NOT_MEASURED
+
+
+def _installable(summary: DistributionSummary, lang: Lang) -> str:
+    """Render whether a distribution can be installed alone.
+
+    Args:
+        summary: The distribution's summary.
+        lang: Report language.
+
+    Returns:
+        "yes", "no" with what blocks it, or "unknown".
+    """
+    if summary.installable is None:
+        return t("report.installable.unknown", lang)
+    if summary.installable:
+        return t("report.installable.yes", lang)
+    return t("report.installable.no", lang, blocker=summary.blocker)
+
+
+def _distributions(result: AnalysisResult, lang: Lang) -> list[str]:
+    """Build the distributions section: what each one uses and whether it installs alone.
+
+    Args:
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        Markdown lines of the section.
+    """
+    lines = [
+        f"## {t('report.distributions', lang)}",
+        "",
+        t("report.distributions_intro", lang),
+        "",
+        f"| {t('report.distribution', lang)} | {t('report.package_modules', lang)} "
+        f"| {t('report.distribution_uses', lang)} "
+        f"| {t('report.distribution_installable', lang)} |",
+        "|---|---:|---|---|",
+    ]
+    for summary in result.distributions:
+        lines.append(
+            f"| `{summary.name}` | {summary.modules} | {_backticked(summary.uses)} "
+            f"| {_installable(summary, lang)} |"
+        )
+    return lines
+
+
 def _scripts(result: AnalysisResult, lang: Lang) -> list[str]:
     """Build the scripts section: one line per directory with what its scripts use.
 
@@ -435,9 +527,7 @@ def _findings(result: AnalysisResult, lang: Lang) -> list[str]:
             f"*{t('report.recommendation', lang)}:* {t(f'finding.{kind}.recommendation', lang)}",
             "",
         ]
-        lines += [
-            _finding_line(finding, result.impact, lang) for finding in group[:MAX_FINDINGS_PER_KIND]
-        ]
+        lines += [_finding_line(finding, result, lang) for finding in group[:MAX_FINDINGS_PER_KIND]]
         hidden = len(group) - MAX_FINDINGS_PER_KIND
         if hidden > 0:
             lines.append(f"- {t('report.more', lang, count=hidden)}")
@@ -445,18 +535,94 @@ def _findings(result: AnalysisResult, lang: Lang) -> list[str]:
     return lines[:-1]
 
 
-def _finding_line(finding: Finding, impact: dict[str, int], lang: Lang) -> str:
+def _uses(evidence: Evidence, lang: Lang) -> str:
+    """Render how many required, lazy and guarded imports a finding counts.
+
+    Args:
+        evidence: Evidence of the finding; a missing count is zero.
+        lang: Report language.
+
+    Returns:
+        The counts as text.
+    """
+    return t(
+        "finding.uses",
+        lang,
+        required=evidence.get("required", 0),
+        lazy=evidence.get("lazy", 0),
+        guarded=evidence.get("guarded", 0),
+    )
+
+
+def _fix_text(finding: Finding, lang: Lang) -> str:
+    """Render the deterministic fix of a distribution finding.
+
+    Args:
+        finding: A finding of rules 6-9.
+        lang: Report language.
+
+    Returns:
+        The fix, ready to copy.
+    """
+    evidence = finding.evidence
+    extras = str(evidence.get("extras", ""))
+    values = {
+        **evidence,
+        "source": finding.modules[0],
+        "target": finding.modules[-1],
+        "extras": _backticked(extras.split(LIST_SEPARATOR)) if extras else NOT_MEASURED,
+    }
+    return t(f"finding.fix.{evidence['fix']}", lang, **values)
+
+
+def _distribution_finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
+    """Render a finding of rules 6-9: its edge or cycle, then its fix as sub-items.
+
+    Args:
+        finding: A finding of rules 6-9.
+        result: The deterministic analysis, for the edges inside a cycle.
+        lang: Report language.
+
+    Returns:
+        A multi-line Markdown list item.
+    """
+    fix = f"  - {t('finding.fix', lang)}: {_fix_text(finding, lang)}"
+    if finding.kind in EDGE_FINDINGS:
+        source, target = finding.modules
+        first = t("finding.first", lang, first=finding.evidence["first"])
+        return f"- `{source}` → `{target}` ({_uses(finding.evidence, lang)}; {first})\n{fix}"
+    members = set(finding.modules)
+    lines = [f"- {' ↔ '.join(f'`{member}`' for member in finding.modules)}"]
+    for edge in result.distribution_edges:
+        if edge.source in members and edge.target in members:
+            status = t(f"finding.status.{edge.status}", lang, extras=_backticked(edge.extras))
+            uses = t(
+                "finding.uses",
+                lang,
+                required=edge.counts.required,
+                lazy=edge.counts.lazy,
+                guarded=edge.counts.guarded,
+            )
+            lines.append(f"  - `{edge.source}` → `{edge.target}`: {status}; {uses}")
+    return "\n".join([*lines, fix])
+
+
+def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
     Args:
         finding: The finding to render.
-        impact: Measured impact per module; a bottleneck shows its own when present.
+        result: The deterministic analysis; a bottleneck shows its measured impact, a
+            cycle between distributions its edges.
         lang: Report language.
 
     Returns:
-        One Markdown list item.
+        One Markdown list item; with sub-items for the findings of rules 6-9.
     """
     evidence = finding.evidence
+    impact = result.impact
+    if finding.kind in (*EDGE_FINDINGS, FindingKind.DISTRIBUTION_CYCLE):
+        return _distribution_finding_line(finding, result, lang)
     if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
         source, target = finding.modules
         return (
