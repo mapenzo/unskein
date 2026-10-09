@@ -73,7 +73,10 @@ detección.
   un paquete de espacio de nombres. Si algún módulo lo importa, aparece en el grafo sin
   archivo y con Ce 0, marcado *(espacio de nombres)*, contado aparte en el resumen y en
   las métricas generales, y fuera de los hallazgos de módulos (sí puede ser destino de una
-  violación de capas). `import a.b` seguido de `a.b.c.f()` depende de `a.b.c`.
+  violación de capas). `import a.b` seguido de `a.b.c.f()` depende de `a.b.c`. Si el
+  espacio de nombres no tiene ningún paquete normal por encima (`google/cloud/` sin
+  `__init__.py`), otras distribuciones pueden completarlo: lo que el proyecto no tiene ahí
+  se queda en aviso, nunca en hallazgo.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto

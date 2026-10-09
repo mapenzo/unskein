@@ -837,3 +837,22 @@ def test_missing_module_line_and_fix_en() -> None:
         "  - Fix: `app.helpers.gone` does not exist and no module of the project defines "
         "`helper`: restore the module or remove the import" in report
     )
+
+
+def test_missing_module_fix_lists_each_symbol_es(tmp_path: Path) -> None:
+    files = {
+        "app/__init__.py": "",
+        "app/models.py": "class Model: ...\n",
+        "app/util.py": "def helper(): ...\n",
+        "app/other.py": "def helper(): ...\n",
+        "app/a.py": "from app.gone import helper, Model, Nowhere\n",
+    }
+    for relative, content in files.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(content)
+    report = render(tmp_path, analyzed(tmp_path), Lang.ES)
+    assert (
+        "  - Arreglo: importa `Model` desde `app.models`, que lo define; `helper` desde "
+        "`app.other`, que lo define (y en 1 módulo(s) más); ningún módulo del proyecto "
+        "define `Nowhere`" in report
+    )

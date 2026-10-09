@@ -51,3 +51,18 @@ def test_namespace_is_a_layer_violation_target(tmp_path: Path) -> None:
 def test_namespace_belongs_to_its_package_without_counting_as_a_module() -> None:
     packages = {p.name: p.modules for p in _analyzed().packages}
     assert packages == {"app": 4, "app.types": 2}
+
+
+def test_namespace_imported_only_by_scripts_is_not_a_node(tmp_path: Path) -> None:
+    files = {
+        "pyproject.toml": '[project]\nname = "app"\n[tool.setuptools]\npackages = ["app"]\n',
+        "app/__init__.py": "",
+        "app/types/models.py": "",
+        "tools/run.py": "import app.types\ndef f(x):\n    return x(app.types)\n",
+    }
+    for relative, content in files.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(content)
+    result = _analyzed(tmp_path)
+    assert result.namespaces == frozenset()
+    assert "app.types" not in result.graph

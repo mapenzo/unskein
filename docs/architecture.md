@@ -428,6 +428,15 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   (`ParsePlan.namespaces`) y, si todos son de una misma distribución con nombre, la añade a
   `module_distributions`.
 
+  Un espacio de nombres es **abierto** cuando todos sus ancestros, el primer segmento
+  incluido, también lo son (`google.cloud` en un repo `google-cloud-mylib`): otras
+  distribuciones pueden aportar porciones, así que un import bajo él que el proyecto no tiene
+  (`google.protobuf`) puede estar instalado. Se queda en aviso, como antes, sin arista ni
+  hallazgo (`ProjectIndex.is_open_namespace`). Bajo un paquete normal (`litellm.types`, con
+  `litellm/__init__.py`) es **cerrado** y lo que falta es inexistente. Un espacio de nombres
+  no tiene código: `from ns import X` solo puede ser un submódulo, y si `ns.X` no existe se
+  pide `ns.X` (aviso y, si es cerrado, regla 10).
+
   **Tipo de import (`ImportKind`)**: `MODULE` (nivel de módulo, también en clases,
   `try/except` e `if`), `LAZY` (cuerpo de una función o método) y `TYPE_CHECKING`
   (cuerpo de un `if TYPE_CHECKING:`, también `typing.TYPE_CHECKING`; se reconoce por
@@ -818,8 +827,10 @@ aplicados) y construye el grafo real.
 ### Espacios de nombres en el grafo
 
 `build_graph` marca con `namespace=True` cada espacio de nombres que recibe alguna arista
-(los que nadie importa no son nodos). Sin archivo ni aristas de salida: Ce = 0, nunca en
-ciclos ni marañas. `AnalysisResult.namespaces` los lista. Quedan fuera de las reglas 1-5
+(los que nadie importa no son nodos; los que solo importan scripts quedan fuera del grafo
+de módulos, como los scripts). Sin archivo ni aristas de salida: Ce = 0, nunca en ciclos ni
+marañas. Cuentan en el percentil de acoplamiento como cualquier nodo, así que pueden salir en
+«Módulos con mayor acoplamiento», marcados. `AnalysisResult.namespaces` los lista. Quedan fuera de las reglas 1-5
 como las fachadas, pero pueden ser destino de una violación de capas; en paquetes son su
 propio paquete y no suman en «Módulos». En las reglas 6-9 heredan la distribución de sus
 módulos. El informe los cuenta aparte («N módulos + K espacios de nombres») y marca su
@@ -828,13 +839,17 @@ nombre con *(espacio de nombres)*.
 ### Regla 10: import de un módulo inexistente (`graph/missing.py`)
 
 `find_missing_modules(result, scripts)`: un hallazgo `MISSING_MODULE` por nombre pedido
-(`requested`) con alguna sentencia que rompe: origen empaquetado y no script, uso
-`REQUIRED` o `LAZY` (`import_use`). `TYPE_CHECKING`, protegidos y código no empaquetado
-quedan como aviso, y también un módulo que existe sin `.py` (stub `.pyi`, `__init__.pyi` o
-binario `.so`/`.pyd` junto a su paquete). Evidencia: `required`, `lazy`, `guarded`, `first`
-(`ruta:línea`), `importers` (hasta 5), `closest`, `symbols`, `fix`. Arreglo, solo con
-evidencia: `import_from` (`defined_in`, `also_defined`) cuando otro módulo **define** el
-símbolo (`ModuleInfo.defined_names`: `def`, `class` o asignación, nunca un import), si no
+(`requested`) con alguna sentencia que rompe: uso `REQUIRED` o `LAZY` (`import_use`). Solo
+cuenta código empaquetado que no es script (tests y scripts quedan fuera de los recuentos).
+`TYPE_CHECKING` y protegidos quedan como aviso, y también un módulo que existe sin `.py`
+(stub `.pyi`, `__init__.pyi` o binario `.so`/`.pyd` en cualquiera de los directorios de su
+ancestro; un directorio ilegible cuenta como «no está» y nunca detiene el análisis).
+`closest` sale del nombre pedido, no del destino tras resolver re-exports. Evidencia:
+`required`, `lazy`, `guarded`, `first` (`ruta:línea`), `importers` (hasta 5), `closest`,
+`symbols`, `fix`. Arreglo, solo con evidencia y **por símbolo**: `import_from` con
+`defined_in` (`símbolo:módulo`, …), `also_defined` (`símbolo:n`, …) y `undefined` cuando un
+módulo empaquetado distinto de los importadores **define** alguno
+(`ModuleInfo.defined_names`: `def`, `class` o asignación, nunca un import); si ninguno,
 `restore_or_remove`. Sin sugerencias por nombre parecido.
 
 ### Hallazgos entre distribuciones (`graph/distributions.py`)

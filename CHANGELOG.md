@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at load time or in a function, unguarded, so it raises `ImportError` when it runs. The
   fix names the module that defines the symbol, or says that none does.
   `TYPE_CHECKING`, guarded and test imports stay warnings, and so do modules that exist
-  as a `.pyi` stub or a compiled extension.
+  as a `.pyi` stub or a compiled extension, and names under a namespace package that other
+  distributions can complete (`google.*`).
 - Monorepos without configuration: every `pyproject.toml`, `setup.py` or `setup.cfg`
   marks a distribution, and its files take the name Python imports them by (uv,
   maturin, hatch, poetry and setuptools declarations are read; `setup.py` is never

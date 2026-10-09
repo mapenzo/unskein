@@ -1,5 +1,6 @@
 """Dependencies between the distributions of a project: uses, rules 6-9 and installability."""
 
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
@@ -345,12 +346,15 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     return collector
 
 
-def _target_files(name: str, files: Mapping[str, Path]) -> list[Path]:
+def _target_files(
+    name: str, files: Mapping[str, Path], ordered: list[tuple[str, Path]]
+) -> list[Path]:
     """Return the file of a module, or the files under a namespace package.
 
     Args:
         name: Imported module or namespace package.
         files: Source file per parsed module.
+        ordered: The same pairs sorted by module name, computed once by the caller.
 
     Returns:
         The files that make up the target.
@@ -358,7 +362,13 @@ def _target_files(name: str, files: Mapping[str, Path]) -> list[Path]:
     if name in files:
         return [files[name]]
     prefix = f"{name}{NAME_SEPARATOR}"
-    return [path for module, path in sorted(files.items()) if module.startswith(prefix)]
+    start = bisect_left(ordered, (prefix,))
+    found = []
+    for module, path in ordered[start:]:
+        if not module.startswith(prefix):
+            break
+        found.append(path)
+    return found
 
 
 def _common_directory(paths: list[Path], root: Path | None) -> str:
@@ -676,11 +686,12 @@ def analyze_distributions(result: ParseResult, scripts: Collection[str]) -> Dist
             status, extras, groups = _status(infos[source], target)
             edges.append(DistributionEdge(source, target, counter.freeze(), status, extras, groups))
     files = {module.name: module.file_path for module in result.modules}
+    ordered = sorted(files.items())
     uses = []
     for (source, package), counter in sorted(collector.unpackaged.items()):
         if source in infos:
             targets = tuple(sorted(collector.unpackaged_targets[source, package]))
-            paths = [path for target in targets for path in _target_files(target, files)]
+            paths = [path for target in targets for path in _target_files(target, files, ordered)]
             directory = _common_directory(paths, result.project_root)
             uses.append(UnpackagedUse(source, package, counter.freeze(), targets, directory))
     context = _Context(infos, result.project_root)

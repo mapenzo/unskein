@@ -177,3 +177,36 @@ def test_names_read_through_nested_namespaces_are_found(make_project: MakeProjec
         _parse(root), {"app.ship.rates.table": ["RATE", "OTHER"]}, encoding=None
     )
     assert found == {"app.ship.rates.table": frozenset({"RATE"})}
+
+
+def test_open_namespace_imports_that_do_not_resolve_stay_warnings(
+    make_project: MakeProject,
+) -> None:
+    root = make_project(
+        {
+            "src/google/cloud/mylib/__init__.py": "from google.protobuf import message\n"
+            "import google.api_core.exceptions\nfrom google.cloud import storage\n",
+            "src/google/cloud/mylib/client.py": "",
+        }
+    )
+    result = _parse(root)
+    assert _imports(result, "google.cloud.mylib") == []
+    details = sorted(w.detail for w in result.warnings if w.code is WarningCode.UNRESOLVED_IMPORT)
+    assert details == ["google.api_core.exceptions", "google.cloud.storage", "google.protobuf"]
+
+
+def test_from_closed_namespace_import_of_a_non_submodule_is_missing(
+    make_project: MakeProject,
+) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/types/models.py": "",
+            "app/llms/client.py": "from ..types import Model\n",
+        }
+    )
+    result = _parse(root)
+    (edge,) = _imports(result, "app.llms.client")
+    assert (edge.target, edge.requested, edge.symbol_name) == ("app.types", "app.types.Model", None)
+    (warning,) = [w for w in result.warnings if w.code is WarningCode.UNRESOLVED_IMPORT]
+    assert warning.detail == "app.types.Model -> app.types"

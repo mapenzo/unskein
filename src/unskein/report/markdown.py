@@ -9,7 +9,7 @@ from unskein.ai.models import AIFailure, AIReport, Problem, Severity
 from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, DistributionSummary
 from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
-from unskein.graph.missing import FIX_IMPORT_FROM
+from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
 
@@ -663,6 +663,49 @@ def _distribution_finding_line(finding: Finding, result: AnalysisResult, lang: L
     return "\n".join([*lines, fix])
 
 
+def _pairs(value: object) -> list[tuple[str, str]]:
+    """Split ``symbol:value`` pairs of the evidence.
+
+    Args:
+        value: Evidence value such as ``"Model:app.models, helper:app.util"``.
+
+    Returns:
+        The pairs, in order.
+    """
+    pairs = []
+    for item in str(value).split(LIST_SEPARATOR):
+        symbol, _, rest = item.partition(PAIR_SEPARATOR)
+        if symbol:
+            pairs.append((symbol, rest))
+    return pairs
+
+
+def _import_from_text(evidence: Evidence, lang: Lang) -> str:
+    """Render the ``import_from`` fix: each symbol with the module that defines it.
+
+    Args:
+        evidence: Evidence of a ``MISSING_MODULE`` finding with ``fix = import_from``.
+        lang: Report language.
+
+    Returns:
+        The fix text, ending with the symbols no module defines, if any.
+    """
+    others = dict(_pairs(evidence["also_defined"]))
+    items = []
+    for symbol, module in _pairs(evidence["defined_in"]):
+        count = int(others.get(symbol, 0))
+        extra = t("finding.also_defined", lang, count=count) if count else ""
+        items.append(
+            t("finding.fix.import_from.item", lang, symbol=symbol, module=module, others=extra)
+        )
+    text = t("finding.fix.import_from", lang, items=DETAIL_SEPARATOR.join(items))
+    undefined = str(evidence.get("undefined", ""))
+    if undefined:
+        symbols = _backticked(undefined.split(LIST_SEPARATOR))
+        text += DETAIL_SEPARATOR + t("finding.fix.undefined", lang, symbols=symbols)
+    return text
+
+
 def _missing_module_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render a finding of rule 10: the missing module, its uses, then its fix.
 
@@ -680,15 +723,7 @@ def _missing_module_line(finding: Finding, result: AnalysisResult, lang: Lang) -
     symbols = str(evidence["symbols"])
     names = _backticked(symbols.split(LIST_SEPARATOR)) if symbols else ""
     if evidence["fix"] == FIX_IMPORT_FROM:
-        others = int(evidence["also_defined"])
-        extra = t("finding.also_defined", lang, count=others) if others else ""
-        text = t(
-            "finding.fix.import_from",
-            lang,
-            symbols=names,
-            defined_in=evidence["defined_in"],
-            others=extra,
-        )
+        text = _import_from_text(evidence, lang)
     elif names:
         text = t("finding.fix.restore_or_remove", lang, module=module, symbols=names)
     else:

@@ -70,7 +70,10 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   namespace package. When a module imports it, it appears in the graph with no file and
   Ce 0, marked *(namespace package)*, counted apart in the summary and the general
   metrics, and outside the module findings (it can still be the target of a layer
-  violation). `import a.b` followed by `a.b.c.f()` depends on `a.b.c`.
+  violation). `import a.b` followed by `a.b.c.f()` depends on `a.b.c`. When the
+  namespace has no regular package above it (`google/cloud/` with no `__init__.py`), other
+  distributions can complete it: what the project lacks there stays a warning, never a
+  finding.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.

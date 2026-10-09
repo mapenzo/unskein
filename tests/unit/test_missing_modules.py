@@ -63,8 +63,8 @@ def test_symbol_defined_elsewhere_gives_import_from(make_project: MakeProject) -
     )
     (finding,) = _missing(root)
     assert finding.evidence["fix"] == "import_from"
-    assert finding.evidence["defined_in"] == "app.other"
-    assert finding.evidence["also_defined"] == 1
+    assert finding.evidence["defined_in"] == "helper:app.other"
+    assert finding.evidence["also_defined"] == "helper:1"
     assert finding.evidence["required"] == 1
 
 
@@ -110,3 +110,70 @@ def test_names_bound_by_imports_are_not_definitions(make_project: MakeProject) -
     )
     (finding,) = _missing(root)
     assert finding.evidence["fix"] == "restore_or_remove"
+
+
+def test_fix_names_the_defining_module_of_each_symbol(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/models.py": "class Model: ...\n",
+            "app/util.py": "def helper(): ...\n",
+            "app/a.py": "from app.gone import helper, Model, Nowhere\n",
+        }
+    )
+    (finding,) = _missing(root)
+    assert finding.evidence["fix"] == "import_from"
+    assert finding.evidence["defined_in"] == "Model:app.models, helper:app.util"
+    assert finding.evidence["undefined"] == "Nowhere"
+
+
+def test_closest_and_stub_check_ignore_re_export_resolution(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "from app.real import X\n",
+            "app/real.py": "X = 1\n",
+            "app/missing.pyi": "X: int\n",
+            "app/user.py": "from app.missing import X\n",
+        }
+    )
+    assert _missing(root) == []
+
+
+def test_counts_only_packaged_statements(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "app"\n',
+            "app/__init__.py": "",
+            "app/a.py": "def f():\n    import app.gone\n",
+            "tests/test_a.py": "import app.gone\nimport app.gone\n",
+        }
+    )
+    (finding,) = _missing(root)
+    assert (finding.evidence["required"], finding.evidence["lazy"]) == (0, 1)
+    assert finding.evidence["importers"] == "app.a"
+
+
+def test_definitions_skip_scripts_and_the_importer(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "app"\n',
+            "app/__init__.py": "",
+            "app/a.py": "helper = None\ndef f():\n    from app.gone import helper\n",
+            "tools/run.py": "def helper(): ...\n",
+        }
+    )
+    (finding,) = _missing(root)
+    assert finding.evidence["fix"] == "restore_or_remove"
+
+
+def test_unreadable_directory_does_not_abort(make_project: MakeProject, monkeypatch) -> None:
+    root = make_project(
+        {"app/__init__.py": "", "app/a.py": "def f():\n    from app.sub.gone import x\n"}
+    )
+    (root / "app" / "sub").mkdir()
+
+    def denied(self):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(Path, "iterdir", denied)
+    assert [f.modules for f in _missing(root)] == [("app.sub.gone",)]

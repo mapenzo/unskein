@@ -752,9 +752,14 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.EN: "Restore the module, import the name from the module that defines it, or "
         "remove the import.",
     },
-    "finding.fix.import_from": {
-        Lang.ES: "importa {symbols} desde `{defined_in}`, que lo define{others}",
-        Lang.EN: "import {symbols} from `{defined_in}`, which defines it{others}",
+    "finding.fix.import_from": {Lang.ES: "importa {items}", Lang.EN: "import {items}"},
+    "finding.fix.import_from.item": {
+        Lang.ES: "`{symbol}` desde `{module}`, que lo define{others}",
+        Lang.EN: "`{symbol}` from `{module}`, which defines it{others}",
+    },
+    "finding.fix.undefined": {
+        Lang.ES: "ningún módulo del proyecto define {symbols}",
+        Lang.EN: "no module of the project defines {symbols}",
     },
     "finding.fix.restore_or_remove": {
         Lang.ES: "`{module}` no existe y ningún módulo del proyecto define {symbols}: "

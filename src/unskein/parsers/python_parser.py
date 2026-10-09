@@ -249,6 +249,24 @@ class ProjectIndex:
         """
         return name in self.namespaces
 
+    def is_open_namespace(self, name: str) -> bool:
+        """Return whether a namespace package has no regular package above it.
+
+        Other distributions can add portions to such a namespace (``google.cloud``), so
+        a name under it that the project lacks may still be installed. A namespace under
+        a regular package (``litellm.types`` under ``litellm/__init__.py``) is closed.
+
+        Args:
+            name: Dotted module name.
+
+        Returns:
+            True when the name and every ancestor of it are namespace packages.
+        """
+        parts = name.split(NAME_SEPARATOR)
+        return all(
+            NAME_SEPARATOR.join(parts[:end]) in self.namespaces for end in range(1, len(parts) + 1)
+        )
+
     def is_package(self, name: str) -> bool:
         """Return whether a project module has submodules.
 
@@ -374,7 +392,9 @@ class _ImportCollector:
             )
             return None
         target = self.index.closest_module(name)
-        if target is None:
+        if target is None or (target != name and self.index.is_open_namespace(target)):
+            # An open namespace can get portions from other distributions: what the project
+            # lacks there may be installed, so it is only a warning, with no edge.
             self.warn(WarningCode.UNRESOLVED_IMPORT, line, name)
             return None
         if target != name:
@@ -494,7 +514,8 @@ class _ImportCollector:
                 continue
             binding = Binding(alias.asname or alias.name, "", f"{FROM_OBJECT}{base}.{alias.name}")
             submodule = f"{base}.{alias.name}"
-            if submodule in self.index.modules:
+            # A namespace package has no code: a name taken from it can only be a submodule.
+            if submodule in self.index.modules or self.index.is_namespace(base):
                 self.add(
                     submodule, None, node.lineno, kind=kind, binding=binding, is_guarded=is_guarded
                 )

@@ -367,3 +367,17 @@ def test_namespace_targets_carry_their_distribution(make_project: MakeProject) -
     )
     (finding,) = _by_kind(_analyzed(root))[FindingKind.UNDECLARED_DEPENDENCY]
     assert finding.modules == ("a", "b")
+
+
+def test_unpackaged_namespace_target_names_its_directory(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[build-system]\nbuild-backend = "hatchling.build"\n'
+            '[project]\nname = "core"\ndependencies = []\n',
+            "core/__init__.py": "import legacy.tools\ndef f(x):\n    return x(legacy.tools)\n",
+            "legacy/tools/run.py": "",
+            "legacy/tools/more.py": "",
+        }
+    )
+    (finding,) = _by_kind(_analyzed(root))[FindingKind.UNPACKAGED_IMPORT]
+    assert finding.evidence["directory"] == "legacy/tools/"

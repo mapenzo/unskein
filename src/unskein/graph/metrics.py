@@ -251,15 +251,24 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     full_graph = build_graph(result)
     unpackaged = {m.name for m in result.modules if not m.is_packaged}
     scripts = find_scripts(full_graph, unpackaged)
-    graph = nx.subgraph_view(full_graph, filter_node=lambda node: node not in scripts)
+    # A namespace package only scripts import is no part of the measured system either.
+    script_only = {
+        name
+        for name in result.namespaces
+        if name in full_graph
+        and all(importer in scripts for importer in full_graph.predecessors(name))
+    }
+    hidden = scripts | script_only
+    graph = nx.subgraph_view(full_graph, filter_node=lambda node: node not in hidden)
     coupling = compute_coupling(graph)
     for module, consumers in count_consumers(full_graph, scripts).items():
-        coupling[module].consumers = consumers
+        if module in coupling:
+            coupling[module].consumers = consumers
     import_graph = import_time_graph(graph)
     cycles, cycles_truncated = find_cycles(import_graph)
     tangles = find_tangles(import_graph)
     facades = {m.name for m in result.modules if m.file_path.name == PACKAGE_INIT_FILE}
-    namespaces = frozenset(name for name in result.namespaces if name in full_graph)
+    namespaces = frozenset(name for name in result.namespaces if name in graph)
     high_coupling = find_high_coupling(coupling)
     findings = find_findings(
         full_graph,
