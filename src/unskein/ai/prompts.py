@@ -14,9 +14,11 @@ from unskein.ai.models import (
     CycleSummary,
     FindingSummary,
     ModuleCoupling,
+    NativeSummary,
     PackageEdgeSummary,
     TangleSummary,
 )
+from unskein.graph.coupling import CouplingMetrics
 from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import AnalysisResult
 from unskein.i18n import Lang
@@ -33,6 +35,7 @@ MAX_CYCLE_MEMBERS_IN_PROMPT = 8
 MAX_MODULES_IN_PROMPT = 15
 MAX_FINDINGS_PER_KIND_IN_PROMPT = 5
 MAX_PACKAGE_EDGES_IN_PROMPT = 10
+MAX_NATIVE_IN_PROMPT = 15
 INSTABILITY_DECIMALS = 2
 MAX_PROMPT_CHARS = 16_000
 
@@ -72,6 +75,12 @@ A layer_violation finding names, in layer_from and layer_to, two layers the user
 the importing module sits in the lower layer.
 namespaces lists namespace packages (directories without __init__.py): they have no code,
 so their ca says how many modules import them, not that the node needs refactoring.
+native lists compiled extensions and stub-only modules: their code cannot be read, so
+their ce is unknown (not low; ce and instability are null for them) and cycles through
+them cannot be seen; works_without says whether every packaged use is guarded or type-only.
+An optional_native_required finding: the code guards the import of a compiled module in
+one place (it expects it can be missing) and imports it unguarded elsewhere, where it raises
+ImportError; its fix (guard_or_drop_fallback) is already computed: repeat it.
 A missing_module finding is an import of a project module that does not exist and raises
 ImportError when it runs; its fix (import_from with defined_in, or restore_or_remove) is
 already computed from the code: repeat it, do not guess another module.
@@ -130,7 +139,7 @@ def build_context(result: AnalysisResult) -> AIContext:
                 evidence["impact"] = result.impact[finding.modules[0]]
             summaries.append(FindingSummary(finding.kind.value, list(finding.modules), evidence))
     return AIContext(
-        total_modules=result.graph.number_of_nodes() - len(result.namespaces),
+        total_modules=result.graph.number_of_nodes() - len(result.virtual),
         namespaces=sorted(
             metrics.module
             for metrics in ranked[:MAX_MODULES_IN_PROMPT]
@@ -148,13 +157,7 @@ def build_context(result: AnalysisResult) -> AIContext:
         total_cycles=len(result.cycles),
         cycles_truncated=result.cycles_truncated,
         top_coupled_modules=[
-            ModuleCoupling(
-                module=metrics.module,
-                ca=metrics.afferent,
-                ce=metrics.efferent,
-                instability=round(metrics.instability, INSTABILITY_DECIMALS),
-            )
-            for metrics in ranked[:MAX_MODULES_IN_PROMPT]
+            _coupling(metrics, result) for metrics in ranked[:MAX_MODULES_IN_PROMPT]
         ],
         warning_counts=dict(sorted(warning_counts.items())),
         findings=summaries,
@@ -166,6 +169,38 @@ def build_context(result: AnalysisResult) -> AIContext:
         total_package_edges=len(result.package_edges),
         hidden_tangles=_tangle_summaries(result.hidden_tangles),
         total_hidden_tangles=len(result.hidden_tangles),
+        native=[
+            NativeSummary(
+                native.name,
+                native.kind.value,
+                native.works_without,
+                len(native.unguarded),
+                native.guarded,
+            )
+            for native in result.native[:MAX_NATIVE_IN_PROMPT]
+        ],
+        total_native=len(result.native),
+    )
+
+
+def _coupling(metrics: CouplingMetrics, result: AnalysisResult) -> ModuleCoupling:
+    """Return the coupling of one module for the prompt; Ce is unknown for compiled code.
+
+    Args:
+        metrics: The module's coupling metrics.
+        result: The deterministic analysis, to tell compiled and stub-only modules.
+
+    Returns:
+        Ca, Ce and instability, with Ce and instability None when they cannot be known.
+    """
+    kind = result.virtual.get(metrics.module)
+    if kind is not None and kind.is_native:
+        return ModuleCoupling(metrics.module, metrics.afferent, None, None)
+    return ModuleCoupling(
+        metrics.module,
+        metrics.afferent,
+        metrics.efferent,
+        round(metrics.instability, INSTABILITY_DECIMALS),
     )
 
 

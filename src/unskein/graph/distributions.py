@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 import networkx as nx
 
 from unskein.graph.findings import Evidence, Finding, FindingKind
+from unskein.parsers.layout import relative_path
 from unskein.parsers.models import (
     DistributionInfo,
     ImportEdge,
@@ -264,22 +265,6 @@ def import_use(edge: ImportEdge) -> ImportUse | None:
     return ImportUse.REQUIRED if edge.kind is ImportKind.MODULE else ImportUse.LAZY
 
 
-def relative_path(path: Path, root: Path | None) -> str:
-    """Return a path as POSIX, relative to the project root when it lies under it.
-
-    Args:
-        path: File path.
-        root: Absolute project directory, if known.
-
-    Returns:
-        The relative POSIX path, or the path as given.
-    """
-    absolute = path.absolute()
-    if root is not None and absolute.is_relative_to(root):
-        return absolute.relative_to(root).as_posix()
-    return path.as_posix()
-
-
 def _location(relative: str, line: int | None) -> str:
     """Return ``path:line`` for an import statement.
 
@@ -310,12 +295,13 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     # Unparsed files (too large, syntax errors) still belong to their distribution.
     distribution_of: dict[str, str | None] = dict(result.module_distributions)
     distribution_of.update((module.name, module.distribution) for module in result.modules)
-    # Namespace packages have no file: their distribution and packaging come from their modules.
-    for namespace in result.namespaces:
-        distribution_of.setdefault(namespace, None)
+    # Virtual modules have no parsed file: their distribution comes from the plan (or, for
+    # namespace packages, from their modules).
+    for name in result.virtual:
+        distribution_of.setdefault(name, None)
     packaged = {module.name for module in result.modules if module.is_packaged}
     packaged.update(result.module_distributions)
-    packaged.update(name for name, shipped in result.namespaces.items() if shipped)
+    packaged.update(name for name, virtual in result.virtual.items() if virtual.is_packaged)
     # Sorted by relative POSIX path, so "first" is the same on every platform; computed
     # once per module (Path.relative_to is slow on tens of thousands of imports).
     sources = sorted(

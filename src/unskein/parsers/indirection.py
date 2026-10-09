@@ -49,6 +49,60 @@ def build_reexport_index(
     return index
 
 
+def guarded_reexports(
+    re_exports: list[ReExport], star_names: Mapping[tuple[str, str], tuple[str, ...]] | None = None
+) -> frozenset[tuple[str, str]]:
+    """Return the (facade, symbol) pairs whose winning re-export is guarded.
+
+    The same first-wins rule as `build_reexport_index` decides which re-export counts.
+
+    Args:
+        re_exports: Re-exports detected by the parser, in code order.
+        star_names: Names each (facade, star-imported module) pair brings in.
+
+    Returns:
+        The pairs the facade imports inside a ``try`` or ``suppress`` for import errors.
+    """
+    star_names = star_names or {}
+    winners: dict[tuple[str, str], bool] = {}
+    for re_export in re_exports:
+        exporting, original = re_export.exporting_module, re_export.original_module
+        if re_export.symbol_name == STAR_EXPORT:
+            for name in star_names.get((exporting, original), ()):
+                winners.setdefault((exporting, name), re_export.is_guarded)
+        else:
+            winners.setdefault((exporting, re_export.symbol_name), re_export.is_guarded)
+    return frozenset(pair for pair, is_guarded in winners.items() if is_guarded)
+
+
+def passes_guard(
+    module: str, symbol: str | None, index: ReExportIndex, guarded: frozenset[tuple[str, str]]
+) -> bool:
+    """Tell whether a symbol's re-export chain goes through a guarded re-export.
+
+    A facade that imports the symbol in a ``try`` for import errors falls back when the
+    module is missing, so its users do not fail either.
+
+    Args:
+        module: Module the symbol is imported from.
+        symbol: Imported symbol, or None for a whole-module import.
+        index: Re-export index built by `build_reexport_index`.
+        guarded: Guarded re-exports, from `guarded_reexports`.
+
+    Returns:
+        True when some step of the chain is guarded.
+    """
+    visited: set[str] = set()
+    while symbol is not None and (module, symbol) in index and module not in visited:
+        if (module, symbol) in guarded:
+            return True
+        visited.add(module)
+        if len(visited) > MAX_RESOLUTION_DEPTH:
+            return False
+        module = index[(module, symbol)]
+    return False
+
+
 def star_exports(modules: Sequence[ModuleInfo], re_exports: Sequence[ReExport]) -> StarNames:
     """Return, for each star import in a facade, the names it brings into the facade.
 
@@ -193,7 +247,11 @@ def resolve_access(
 
 
 def expand_package_access(
-    edge: ImportEdge, *, modules: frozenset[str], index: ReExportIndex
+    edge: ImportEdge,
+    *,
+    modules: frozenset[str],
+    index: ReExportIndex,
+    guarded: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[list[ImportEdge], list[ParseWarning]]:
     """Replace the import of a package by one edge per module its attributes come from.
 
@@ -205,6 +263,7 @@ def expand_package_access(
         edge: Internal whole-module import edge.
         modules: Names of the project modules.
         index: Re-export index built by `build_reexport_index`.
+        guarded: Guarded re-exports: an edge whose every chain goes through one is guarded.
 
     Returns:
         The replacement edges, one per distinct defining module and in module order
@@ -214,6 +273,7 @@ def expand_package_access(
         return [edge], []
     warnings: list[ParseWarning] = []
     symbols: dict[str, set[str | None]] = {}
+    unguarded: set[str] = set()
     for chain in edge.accessed:
         target, symbol, chain_warnings = resolve_access(
             edge.target, chain, modules=modules, index=index
@@ -221,6 +281,8 @@ def expand_package_access(
         warnings += chain_warnings
         if target != edge.source:
             symbols.setdefault(target, set()).add(symbol)
+            if not passes_guard(*walk_submodules(edge.target, chain, modules), index, guarded):
+                unguarded.add(target)
     expanded = [
         replace(
             edge,
@@ -228,6 +290,7 @@ def expand_package_access(
             symbol_name=next(iter(found)) if len(found) == 1 else None,
             accessed=(),
             escapes=False,
+            is_guarded=edge.is_guarded or target not in unguarded,
         )
         for target, found in sorted(symbols.items())
     ]
@@ -248,11 +311,11 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     Returns:
         A new parse result with resolved import targets.
     """
-    index = build_reexport_index(result.re_exports, star_exports(result.modules, result.re_exports))
-    # Namespace packages have no file, but chains walk through them to their submodules.
-    module_names = frozenset(module.name for module in result.modules) | frozenset(
-        result.namespaces
-    )
+    stars = star_exports(result.modules, result.re_exports)
+    index = build_reexport_index(result.re_exports, stars)
+    guarded = guarded_reexports(result.re_exports, stars)
+    # Virtual modules have no file, but chains walk through them to their submodules.
+    module_names = frozenset(module.name for module in result.modules) | frozenset(result.virtual)
     warnings = dict.fromkeys(result.warnings)
     modules = []
     for module in result.modules:
@@ -263,7 +326,7 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
                 continue
             if edge.symbol_name is None:
                 expanded, edge_warnings = expand_package_access(
-                    edge, modules=module_names, index=index
+                    edge, modules=module_names, index=index, guarded=guarded
                 )
                 imports.extend(expanded)
                 warnings.update(dict.fromkeys(edge_warnings))
@@ -271,6 +334,9 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
             target, edge_warnings = resolve_target(edge.target, edge.symbol_name, index)
             warnings.update(dict.fromkeys(edge_warnings))
             if target != edge.source:
-                imports.append(replace(edge, target=target))
+                is_guarded = edge.is_guarded or passes_guard(
+                    edge.target, edge.symbol_name, index, guarded
+                )
+                imports.append(replace(edge, target=target, is_guarded=is_guarded))
         modules.append(replace(module, imports=imports))
     return replace(result, modules=modules, warnings=list(warnings))

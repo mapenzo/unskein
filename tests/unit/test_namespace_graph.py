@@ -18,7 +18,8 @@ def _analyzed(root: Path = FIXTURE, config: FindingsConfig | None = None):
 def test_imported_namespaces_are_marked_nodes() -> None:
     result = _analyzed()
     assert result.namespaces == frozenset({"app.types"})
-    assert result.graph.nodes["app.types"]["namespace"] is True
+    assert result.graph.nodes["app.types"]["virtual"] == "namespace"
+    assert result.virtual == {"app.types": "namespace"}
     assert "app.types.llms" not in result.graph
 
 

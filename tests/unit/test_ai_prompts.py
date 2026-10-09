@@ -12,6 +12,7 @@ from unskein.ai.models import (
     AIReport,
     CycleSummary,
     ModuleCoupling,
+    NativeSummary,
     PackageEdgeSummary,
     Problem,
     TangleSummary,
@@ -21,6 +22,7 @@ from unskein.ai.prompts import (
     MAX_CYCLES_IN_PROMPT,
     MAX_FINDINGS_PER_KIND_IN_PROMPT,
     MAX_MODULES_IN_PROMPT,
+    MAX_NATIVE_IN_PROMPT,
     MAX_PACKAGE_EDGES_IN_PROMPT,
     MAX_PROMPT_CHARS,
     MAX_TANGLE_MEMBERS_IN_PROMPT,
@@ -680,3 +682,42 @@ def test_system_prompt_explains_namespaces() -> None:
 
 def test_system_prompt_explains_missing_module_findings() -> None:
     assert "missing_module" in SYSTEM_PROMPT
+
+
+NATIVE_ROOT = Path(__file__).parent.parent / "fixtures" / "native_project"
+
+
+def test_context_lists_native_modules_and_counts_only_py_modules() -> None:
+    context = build_context(analyze_fixture(NATIVE_ROOT))
+    assert context.total_modules == 5
+    assert context.native[1] == NativeSummary(
+        module="pkg._native", kind="compiled", works_without=False, unguarded=1, guarded=1
+    )
+    assert [summary.module for summary in context.native] == [
+        "pkg._cy",
+        "pkg._native",
+        "pkg._speed",
+        "pkg.fast._impl",
+        "pkg.stubonly",
+    ]
+
+
+def test_system_prompt_explains_native_modules_and_rule_11() -> None:
+    assert "native lists compiled extensions" in SYSTEM_PROMPT
+    assert "optional_native_required" in SYSTEM_PROMPT
+
+
+def test_native_list_is_capped_with_its_real_total(make_project) -> None:
+    files = {"app/__init__.py": ""}
+    for number in range(MAX_NATIVE_IN_PROMPT + 3):
+        files[f"app/_n{number:02d}.pyi"] = ""
+        files[f"app/u{number:02d}.py"] = f"from app import _n{number:02d}\n"
+    context = build_context(analyze_fixture(make_project(files)))
+    assert len(context.native) == MAX_NATIVE_IN_PROMPT
+    assert context.total_native == MAX_NATIVE_IN_PROMPT + 3
+
+
+def test_compiled_modules_have_unknown_ce_for_the_ai() -> None:
+    context = build_context(analyze_fixture(NATIVE_ROOT))
+    (native,) = [m for m in context.top_coupled_modules if m.module == "pkg._native"]
+    assert (native.ca, native.ce, native.instability) == (3, None, None)

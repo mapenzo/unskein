@@ -3,7 +3,7 @@ from pathlib import Path
 
 from unskein.config import AnalysisConfig
 from unskein.parsers.indirection import resolve_indirection
-from unskein.parsers.models import WarningCode
+from unskein.parsers.models import VirtualKind, WarningCode
 from unskein.parsers.python_parser import ProjectIndex, PythonAdapter
 
 MakeProject = Callable[[dict[str, str]], Path]
@@ -210,3 +210,24 @@ def test_from_closed_namespace_import_of_a_non_submodule_is_missing(
     assert (edge.target, edge.requested, edge.symbol_name) == ("app.types", "app.types.Model", None)
     (warning,) = [w for w in result.warnings if w.code is WarningCode.UNRESOLVED_IMPORT]
     assert warning.detail == "app.types.Model -> app.types"
+
+
+def test_native_names_are_modules_and_make_namespaces_above_them() -> None:
+    index = ProjectIndex.from_names(
+        {"app", "app.core"}, native={"app.fast._impl": VirtualKind.COMPILED}
+    )
+    assert index.virtual == {
+        "app.fast": VirtualKind.NAMESPACE,
+        "app.fast._impl": VirtualKind.COMPILED,
+    }
+    assert "app.fast._impl" in index.modules
+    assert not index.is_package("app.fast._impl")
+    assert index.namespaces == frozenset({"app.fast"})
+
+
+def test_stub_init_is_a_regular_package_that_closes_the_namespace() -> None:
+    index = ProjectIndex.from_names({"acme.sub.x"}, native={"acme.sub": VirtualKind.STUB})
+    assert index.virtual == {"acme": VirtualKind.NAMESPACE, "acme.sub": VirtualKind.STUB}
+    assert index.is_package("acme.sub")
+    assert not index.is_namespace("acme.sub")
+    assert not index.is_open_namespace("acme.sub")

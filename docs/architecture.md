@@ -259,6 +259,9 @@ Dos riesgos distintos que esto evita:
 
 ### Poda de directorios excluidos
 
+`walk_files` recibe las extensiones que se buscan: Python pide `.py` más las pruebas de
+módulos sin `.py` (`.pyi`, `.so`, `.pyd`, `.pyx`), en un solo recorrido.
+
 `walk_files` no entra en los directorios que el spec de excludes ya descarta
 (`.venv/`, `build/`, `tests/`…): antes de iterar los archivos de cada directorio
 quita de `dirnames` los subdirectorios cuya ruta relativa + `/` casa con el spec. Así
@@ -419,14 +422,35 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   ninguno. Relativo más allá del paquete raíz → warning, se omite. Auto-import → sin
   arista.
 
-  **Paquetes de espacio de nombres (PEP 420).** `ProjectIndex.from_names` deriva
-  `namespaces`: todo prefijo con punto de un nombre importable (sin `/`) que no es un
-  módulo (`litellm.types.utils` existe y `litellm.types` no). Están en `modules` y en
-  `packages` (`is_namespace`), así que importarlos es exacto y sin aviso, y
-  `walk_submodules` los atraviesa. Un directorio sin código Python nunca lo es. `plan_parse`
-  (`_namespace_owners`, una pasada) dice si una distribución empaqueta todos sus módulos
-  (`ParsePlan.namespaces`) y, si todos son de una misma distribución con nombre, la añade a
-  `module_distributions`.
+  **Módulos virtuales (`VirtualKind`).** `ProjectIndex.virtual` guarda cada módulo sin
+  `.py` parseado y su tipo; todos están en `modules`, así que importarlos es exacto y sin
+  aviso. `ParsePlan.virtual`/`ParseResult.virtual` (`VirtualModule`: tipo, si se empaqueta
+  y la prueba de que existe) viajan al resultado.
+
+  - **Espacios de nombres (PEP 420), `NAMESPACE`.** `ProjectIndex.from_names` los deriva:
+    todo prefijo con punto de un nombre importable (sin `/`) que no es un módulo
+    (`litellm.types.utils` existe y `litellm.types` no). También están en `packages`
+    (`is_namespace`) y `walk_submodules` los atraviesa. Un directorio sin código Python ni
+    pruebas nunca lo es. `plan_parse` (`_namespace_owners`, una pasada) dice si una
+    distribución empaqueta todos sus módulos y, si todos son de una misma distribución con
+    nombre, la añade a `module_distributions`.
+  - **Extensiones compiladas (`COMPILED`) y stubs (`STUB`)** (`parsers/native.py`).
+    `discover_files` recoge en el mismo recorrido `.pyi`, `.so`, `.pyd` y `.pyx`, con los
+    excludes salvo `.gitignore` (`load_evidence_spec`: un binario compilado en su sitio suele
+    estar ignorado por git y sí existe; los directorios se podan igual que siempre). Un
+    enlace simbólico roto no es prueba. `plan_parse` no los parsea: `find_native_modules` los nombra con el
+    layout como si fueran `.py` (el nombre hasta el primer punto:
+    `_speed.cpython-314-x86_64-linux-gnu.so` → `_speed`; `__init__.pyi` → el paquete) y
+    añade el `module-name` completo de `[tool.maturin]` (`Distribution.native_declarations`,
+    con su línea; uno mal formado da `INVALID_MODULE_NAME`). Es `COMPILED` con binario,
+    `.pyx` o maturin; `STUB` con solo `.pyi`. No cuenta un nombre que ya es un `.py` (el
+    stub de un módulo puro se ignora) ni uno fuera de los paquetes de primer nivel. Son
+    nombres importables al derivar espacios de nombres (un `.so` solo en `pkg/fast/` hace de
+    `pkg.fast` un espacio de nombres) y un `__init__.pyi` marca un paquete normal que cierra
+    el espacio de nombres (sin compilar, Python lo vería como espacio de nombres, pero ese
+    stub suele acompañar a un `__init__` compilado o generado; tratarlo como existente evita
+    un falso «no existe»). Los imports de un `.pyi` nunca son aristas: describen tipos, no
+    lo que el binario importa al ejecutarse.
 
   Un espacio de nombres es **abierto** cuando todos sus ancestros, el primer segmento
   incluido, también lo son (`google.cloud` en un repo `google-cloud-mylib`): otras
@@ -824,26 +848,34 @@ aplicados) y construye el grafo real.
   los módulos que definen cada símbolo. Los usos que no se pueden resolver siguen
   apuntando a la fachada, y ahí sí es un dato real.
 
-### Espacios de nombres en el grafo
+### Módulos virtuales en el grafo
 
-`build_graph` marca con `namespace=True` cada espacio de nombres que recibe alguna arista
-(los que nadie importa no son nodos; los que solo importan scripts quedan fuera del grafo
-de módulos, como los scripts). Sin archivo ni aristas de salida: Ce = 0, nunca en ciclos ni
-marañas. Cuentan en el percentil de acoplamiento como cualquier nodo, así que pueden salir en
-«Módulos con mayor acoplamiento», marcados. `AnalysisResult.namespaces` los lista. Quedan fuera de las reglas 1-5
-como las fachadas, pero pueden ser destino de una violación de capas; en paquetes son su
-propio paquete y no suman en «Módulos». En las reglas 6-9 heredan la distribución de sus
-módulos. El informe los cuenta aparte («N módulos + K espacios de nombres») y marca su
-nombre con *(espacio de nombres)*.
+`build_graph` pone en el atributo `virtual` (`VIRTUAL_ATTRIBUTE`) el `VirtualKind` de cada
+módulo virtual que recibe alguna arista (los que nadie importa no son nodos; los que solo
+importan scripts quedan fuera del grafo de módulos, como los scripts). Sin aristas de
+salida: Ce = 0, nunca en ciclos ni marañas. Cuentan en el percentil de acoplamiento como
+cualquier nodo. `AnalysisResult.virtual` los lista (`namespaces` es una vista). Quedan fuera
+de las reglas 1-5 como las fachadas, pero pueden ser destino de una violación de capas.
+
+- Espacios de nombres: Ce 0 es verdad (no tienen código); en paquetes son su propio paquete
+  y no suman en «Módulos»; en las reglas 6-9 heredan la distribución de sus módulos.
+- Compilados y stubs: el informe muestra Ce `?` e inestabilidad `—` (lo que importan no se
+  ve; «0,00» diría «estable»). Son módulos de su paquete padre (nota en la tabla de
+  paquetes); su distribución es la de su ruta o la del `pyproject.toml` que los declara.
+
+El informe los cuenta aparte («N módulos + K espacios de nombres + J extensiones compiladas
++ S solo stub», cada sumando solo si > 0) y marca su nombre con *(espacio de nombres)*,
+*(extensión compilada)* o *(solo stub)*.
 
 ### Regla 10: import de un módulo inexistente (`graph/missing.py`)
 
 `find_missing_modules(result, scripts)`: un hallazgo `MISSING_MODULE` por nombre pedido
 (`requested`) con alguna sentencia que rompe: uso `REQUIRED` o `LAZY` (`import_use`). Solo
 cuenta código empaquetado que no es script (tests y scripts quedan fuera de los recuentos).
-`TYPE_CHECKING` y protegidos quedan como aviso, y también un módulo que existe sin `.py`
-(stub `.pyi`, `__init__.pyi` o binario `.so`/`.pyd` en cualquiera de los directorios de su
-ancestro; un directorio ilegible cuenta como «no está» y nunca detiene el análisis).
+`TYPE_CHECKING` y protegidos quedan como aviso. Un módulo que existe como stub o extensión
+compilada está en el índice, así que sus imports no llevan `requested` y nunca son
+inexistentes (la regla no lee el disco), y un nombre bajo uno de ellos tampoco se da por
+inexistente: el código compilado puede registrar submódulos (`_inside_native`).
 `closest` sale del nombre pedido, no del destino tras resolver re-exports. Evidencia:
 `required`, `lazy`, `guarded`, `first` (`ruta:línea`), `importers` (hasta 5), `closest`,
 `symbols`, `fix`. Arreglo, solo con evidencia y **por símbolo**: `import_from` con
@@ -851,6 +883,31 @@ ancestro; un directorio ilegible cuenta como «no está» y nunca detiene el an�
 módulo empaquetado distinto de los importadores **define** alguno
 (`ModuleInfo.defined_names`: `def`, `class` o asignación, nunca un import); si ninguno,
 `restore_or_remove`. Sin sugerencias por nombre parecido.
+
+### Frontera nativa y regla 11 (`graph/native.py`)
+
+Antes, `resolve_indirection` lleva la protección de la fachada al importador: si un
+`__init__.py` importa un nombre dentro de un `try` para errores de import
+(`ReExport.is_guarded`, `guarded_reexports`, `passes_guard`), quien lo toma de la fachada
+tampoco falla sin el módulo, y su arista queda protegida.
+
+`summarize_native(result, graph, scripts)`: un `NativeModule` por módulo `COMPILED`/`STUB`
+que algún módulo importa (un binario que nadie importa, como una biblioteca de ctypes, no
+dice nada), ordenado por nombre, con su prueba, su Ca y sus usos desde código empaquetado que no es
+script (tests y scripts fuera): `required`, `lazy`, `guarded` (`import_use`), `type_only`
+(`TYPE_CHECKING`), todos los `ruta:línea` sin protección (`unguarded`) y el primero
+protegido. `works_without` = ningún uso sin protección. Se calcula siempre
+(`AnalysisResult.native`) y el informe lo muestra en «Frontera nativa», con la nota de que
+lo que importa el código compilado, y los ciclos que pasen por él, no se ven.
+
+`find_optional_native_required(natives)` (regla 11, `OPTIONAL_NATIVE_REQUIRED`): un hallazgo
+por módulo con **algún uso protegido** (el código cuenta con que falte) **y algún uso
+requerido o perezoso sin protección**. Sin ningún uso protegido no hay hallazgo: la
+extensión es obligatoria y el código es coherente. Evidencia: `kind`, `guarded`,
+`first_guarded`, `required`, `lazy`, `unguarded` (hasta 5), `unguarded_total`, `fix`
+(`guard_or_drop_fallback`: protegerlos igual o quitar el respaldo). Límite: no sigue el flujo
+de control, así que una comprobación previa (`if available():`) no se ve; el texto pide
+verificar cada línea.
 
 ### Hallazgos entre distribuciones (`graph/distributions.py`)
 
@@ -1214,13 +1271,16 @@ Estructura del reporte:
 ```
 # Análisis de <proyecto>
 ## Resumen                          (con o sin IA — nunca vacío)
-## Métricas generales             (fila «Espacios de nombres» solo si hay alguno)
+## Métricas generales             (filas «Espacios de nombres», «Extensiones compiladas» y
+                                    «Módulos solo stub» solo si hay alguno)
 ## Ciclos de dependencia
 ## Paquetes                         (si hay resumen por paquetes)
 ## Distribuciones                   (con ≥ 2 distribuciones con nombre o alguna no instalable:
                                     módulos, qué usa y ¿instalable sola?)
 ## Scripts                          (solo si hay scripts: por directorio de primer nivel,
                                     con recuento y paquetes que usan)
+## Frontera nativa                  (solo con extensiones compiladas o stubs: prueba, Ca,
+                                    usos, ¿funciona sin él? y salida desconocida)
 ## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado; columna
                                     Consumidores solo si algún módulo tiene)
 ## Problemas señalados (IA)         (siempre presente: los problemas si hay AIReport;

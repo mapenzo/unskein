@@ -77,6 +77,17 @@ detección.
   espacio de nombres no tiene ningún paquete normal por encima (`google/cloud/` sin
   `__init__.py`), otras distribuciones pueden completarlo: lo que el proyecto no tiene ahí
   se queda en aviso, nunca en hallazgo.
+- **Extensiones compiladas y stubs**: un módulo sin `.py` que existe como binario (`.so`,
+  `.pyd`), fuente Cython (`.pyx`), `module-name` de `[tool.maturin]` o solo stub `.pyi`
+  aparece en el grafo marcado *(extensión compilada)* o *(solo stub)*, con su Ca exacto y
+  su Ce como `?`: lo que importa el código compilado no se ve (los imports del `.pyi` son
+  tipos, no dependencias). `from pkg import _native` y `from pkg._native import X` llevan
+  al mismo nodo, sin aviso. La sección **Frontera nativa** dice, por módulo, qué lo
+  prueba, cómo lo usa el código empaquetado (requeridos / perezosos / protegidos / solo
+  tipos) y si funciona sin él; un binario que nadie importa no aparece. `.gitignore` no se
+  aplica a stubs ni binarios (un `.so` compilado en su sitio suele estar ignorado por git y
+  sí existe); `.unskeinignore` y `--exclude`, sí. Un nombre bajo código compilado nunca se
+  informa como módulo inexistente: la extensión puede aportarlo.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto
@@ -120,6 +131,13 @@ detección.
     función y sin protegerlo, un módulo del proyecto que no existe; al ejecutarse lanza
     `ImportError`. Los de `TYPE_CHECKING`, los protegidos y los de tests quedan como aviso.
     El arreglo nombra el módulo que define el símbolo, o dice que ninguno lo define.
+  - **Extensión opcional usada como obligatoria**: el código protege el import de un
+    módulo compilado (o solo stub) en un sitio, porque cuenta con que puede faltar, y lo
+    importa sin protección en otros, donde lanza `ImportError` si falta. Lista las
+    `ruta:línea` sin protección (hasta cinco, con el total); el arreglo es protegerlas igual
+    o quitar el respaldo. Un nombre tomado de una fachada que lo importa en ese `try` también
+    cuenta como protegido. No sigue el flujo de control: una comprobación previa
+    (`if available():`) no se ve.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 

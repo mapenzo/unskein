@@ -2,8 +2,8 @@
 
 import ast
 from collections import defaultdict
-from collections.abc import Collection, Iterator
-from dataclasses import dataclass
+from collections.abc import Collection, Iterator, Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pathspec
@@ -23,8 +23,11 @@ from unskein.parsers.models import (
     ParseTask,
     ParseWarning,
     ReExport,
+    VirtualKind,
+    VirtualModule,
     WarningCode,
 )
+from unskein.parsers.native import EVIDENCE_SUFFIXES, find_native_modules, is_evidence
 from unskein.parsers.usage import collect_name_usage
 
 # Import statements only occur in statement lists; ``handlers`` holds ExceptHandler
@@ -199,44 +202,62 @@ class ProjectIndex:
         top_level: First segments of those names (the project's top-level packages).
         packages: Modules that have submodules, i.e. the package facades (their ``__init__.py``).
         unpackaged: Modules no distribution ships (named by path or by their place under the root).
-        namespaces: Packages without an ``__init__.py`` (PEP 420): dotted prefixes of importable
-            names that are not modules themselves. They are also in ``modules`` and ``packages``.
+        virtual: Modules with no ``.py`` file, by name: namespace packages (dotted prefixes
+            of importable names that are not modules themselves), compiled extensions and
+            stubs. All of them are in ``modules``; namespace packages are also in ``packages``.
     """
 
     modules: frozenset[str]
     top_level: frozenset[str]
     packages: frozenset[str]
     unpackaged: frozenset[str] = frozenset()
-    namespaces: frozenset[str] = frozenset()
+    # A dict cannot be hashed; the other fields identify the index.
+    virtual: dict[str, VirtualKind] = field(default_factory=dict, hash=False)
 
     @classmethod
     def from_names(
-        cls, names: set[str], unpackaged: frozenset[str] = frozenset()
+        cls,
+        names: set[str],
+        unpackaged: frozenset[str] = frozenset(),
+        native: Mapping[str, VirtualKind] | None = None,
     ) -> "ProjectIndex":
         """Build the index from the project's module names.
 
         Names that are paths (files no import can reach) are kept as modules but
         never become top-level packages, so they cannot make an import internal.
         Every dotted prefix of an importable name that is not a module is a namespace
-        package (a directory without ``__init__.py``).
+        package (a directory without ``__init__.py``). Compiled extensions and stubs are
+        importable names too: one in a directory with no ``.py`` makes that directory a
+        namespace package, and an ``__init__.pyi`` makes its directory a regular package.
 
         Args:
-            names: Names of all project modules.
+            names: Names of all parsed project modules.
             unpackaged: Those of them no distribution ships.
+            native: Compiled extensions and stubs with no ``.py`` file, by name.
 
         Returns:
             The index over those names.
         """
-        importable = {name for name in names if PATH_SEPARATOR not in name}
+        native = native or {}
+        importable = {name for name in names | native.keys() if PATH_SEPARATOR not in name}
         prefixes = {
             NAME_SEPARATOR.join(parts[:end])
             for parts in (name.split(NAME_SEPARATOR) for name in importable)
             for end in range(1, len(parts))
         }
-        namespaces = frozenset(prefixes - importable)
-        modules = frozenset(names) | namespaces
+        namespaces = prefixes - importable
+        virtual = {name: VirtualKind.NAMESPACE for name in namespaces} | dict(native)
+        modules = frozenset(names) | frozenset(virtual)
         top_level = frozenset(name.split(NAME_SEPARATOR)[0] for name in importable)
-        return cls(modules, top_level, frozenset(prefixes & modules), unpackaged, namespaces)
+        packages = frozenset(prefixes & modules)
+        return cls(modules, top_level, packages, unpackaged, dict(sorted(virtual.items())))
+
+    @property
+    def namespaces(self) -> frozenset[str]:
+        """Return the namespace packages: packages without an ``__init__.py`` (PEP 420)."""
+        return frozenset(
+            name for name, kind in self.virtual.items() if kind is VirtualKind.NAMESPACE
+        )
 
     def is_namespace(self, name: str) -> bool:
         """Return whether a name is a namespace package (a package without ``__init__.py``).
@@ -247,7 +268,7 @@ class ProjectIndex:
         Returns:
             True when some module lives under it but no file is it.
         """
-        return name in self.namespaces
+        return self.virtual.get(name) is VirtualKind.NAMESPACE
 
     def is_open_namespace(self, name: str) -> bool:
         """Return whether a namespace package has no regular package above it.
@@ -264,7 +285,7 @@ class ProjectIndex:
         """
         parts = name.split(NAME_SEPARATOR)
         return all(
-            NAME_SEPARATOR.join(parts[:end]) in self.namespaces for end in range(1, len(parts) + 1)
+            self.is_namespace(NAME_SEPARATOR.join(parts[:end])) for end in range(1, len(parts) + 1)
         )
 
     def is_package(self, name: str) -> bool:
@@ -510,7 +531,7 @@ class _ImportCollector:
                     self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
                 self.add(base, None, node.lineno, kind=kind, is_guarded=is_guarded)
                 if is_star_reexport:
-                    self.re_exports.append(ReExport(self.source, base, STAR_EXPORT))
+                    self.re_exports.append(ReExport(self.source, base, STAR_EXPORT, is_guarded))
                 continue
             binding = Binding(alias.asname or alias.name, "", f"{FROM_OBJECT}{base}.{alias.name}")
             submodule = f"{base}.{alias.name}"
@@ -525,7 +546,7 @@ class _ImportCollector:
             )
             if self.is_package and target is not None and target != self.source:
                 exported = alias.asname or alias.name
-                self.re_exports.append(ReExport(self.source, target, exported))
+                self.re_exports.append(ReExport(self.source, target, exported, is_guarded))
 
     def attach_usage(self, tree: ast.Module) -> None:
         """Record on each package import how the module uses the name it binds.
@@ -686,19 +707,29 @@ class PythonAdapter(LanguageAdapter):
         return [".py"]
 
     def discover_files(
-        self, root: Path, exclude_spec: pathspec.PathSpec, follow_symlinks: bool = False
+        self,
+        root: Path,
+        exclude_spec: pathspec.PathSpec,
+        follow_symlinks: bool = False,
+        *,
+        evidence_spec: pathspec.PathSpec | None = None,
     ) -> Iterator[Path]:
-        """Yield the Python files under root that are not excluded.
+        """Yield the Python files under root that are not excluded, plus stubs and binaries.
 
         Args:
             root: Project directory to walk.
             exclude_spec: Combined exclude patterns; matching paths are skipped.
             follow_symlinks: Whether to descend into symlinked directories.
+            evidence_spec: Patterns for stubs and binaries instead of ``exclude_spec``
+                (see ``load_evidence_spec``); None uses ``exclude_spec``.
 
         Returns:
-            An iterator over the Python files to analyze.
+            An iterator over the Python files to analyze and the files that prove a module
+            exists without a ``.py`` (stubs, binaries, Cython sources).
         """
-        return walk_files(root, tuple(self.file_extensions), exclude_spec, follow_symlinks)
+        extensions = (*self.file_extensions, *EVIDENCE_SUFFIXES)
+        file_specs = dict.fromkeys(EVIDENCE_SUFFIXES, evidence_spec) if evidence_spec else None
+        return walk_files(root, extensions, exclude_spec, follow_symlinks, file_specs=file_specs)
 
     def normalize_module_name(self, file_path: Path, root: Path) -> str:
         """Return the module name of a file, from the distribution that ships it.
@@ -721,7 +752,8 @@ class PythonAdapter(LanguageAdapter):
         """Name every file first, so imports can be classified against the whole project.
 
         Args:
-            files: Python source files to parse.
+            files: Python source files to parse, and evidence files (stubs, binaries,
+                Cython sources) that are only named.
             root: Project directory the files belong to.
 
         Returns:
@@ -729,15 +761,33 @@ class PythonAdapter(LanguageAdapter):
             layout warnings, the entry points its distributions declare, the named
             distributions with the distribution of each module, and the project root.
         """
-        layout, warnings = build_layout(root, files, self.config.source_roots)
-        named, collisions = name_files(layout, files)
+        sources = [path for path in files if not is_evidence(path)]
+        layout, warnings = build_layout(root, sources, self.config.source_roots)
+        named, collisions = name_files(layout, sources)
         tasks = [(path, name.name) for path, name in named]
+        names = {name for _, name in tasks}
+        native, native_distributions = find_native_modules(
+            layout, [path for path in files if is_evidence(path)], names
+        )
         unpackaged = frozenset(name.name for _, name in named if not name.is_packaged)
-        index = ProjectIndex.from_names({name for _, name in tasks}, unpackaged)
+        index = ProjectIndex.from_names(
+            names, unpackaged, {name: module.kind for name, module in native.items()}
+        )
         module_distributions = {
             name.name: name.distribution for _, name in named if name.distribution is not None
         }
-        namespaces = _namespace_owners(index, [name for _, name in named], module_distributions)
+        module_distributions.update(native_distributions)
+        native_names = [
+            ModuleName(name, module.is_packaged, native_distributions.get(name))
+            for name, module in native.items()
+        ]
+        namespaces = _namespace_owners(
+            index, [*(name for _, name in named), *native_names], module_distributions
+        )
+        virtual = {
+            name: VirtualModule(VirtualKind.NAMESPACE, shipped)
+            for name, shipped in namespaces.items()
+        } | native
         return ParsePlan(
             tasks,
             index,
@@ -746,7 +796,7 @@ class PythonAdapter(LanguageAdapter):
             layout.distribution_infos,
             module_distributions,
             layout.root,
-            namespaces=namespaces,
+            virtual=dict(sorted(virtual.items())),
         )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:

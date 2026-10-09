@@ -3,10 +3,10 @@
 from collections import defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass, field
-from pathlib import Path
 
-from unskein.graph.distributions import ImportUse, import_use, relative_path
+from unskein.graph.distributions import ImportUse, import_use
 from unskein.graph.findings import Evidence, Finding, FindingKind
+from unskein.parsers.layout import relative_path
 from unskein.parsers.models import ParseResult
 
 MAX_IMPORTERS_SHOWN = 5
@@ -17,11 +17,6 @@ FIX_IMPORT_FROM = "import_from"
 FIX_RESTORE_OR_REMOVE = "restore_or_remove"
 BREAKING_USES = (ImportUse.REQUIRED, ImportUse.LAZY)
 NAME_SEPARATOR = "."
-PACKAGE_INIT_FILE = "__init__.py"
-# A module with no .py source can still exist: a type stub or a compiled extension.
-STUB_SUFFIX = ".pyi"
-STUB_INIT = "__init__.pyi"
-COMPILED_SUFFIXES = (".so", ".pyd")
 
 
 @dataclass(slots=True)
@@ -86,72 +81,21 @@ def _closest(name: str, known: frozenset[str]) -> str:
     return ""
 
 
-def _package_directories(name: str, result: ParseResult) -> list[Path]:
-    """Return the directories of a package; a namespace package can have several.
+def _inside_native(closest: str, result: ParseResult) -> bool:
+    """Tell whether a missing name sits under compiled code or a stub.
+
+    Compiled code can register submodules unskein cannot see, so a name under it is not
+    known to be missing.
 
     Args:
-        name: Dotted name of an existing package.
+        closest: Closest existing ancestor of the missing name.
         result: Parsed project.
 
     Returns:
-        Its directories, sorted; empty when it is a plain module (it holds no submodules).
+        True when that ancestor is a compiled extension or a stub-only module.
     """
-    depth = len(name.split(NAME_SEPARATOR))
-    directories: set[Path] = set()
-    for module in result.modules:
-        is_facade = module.file_path.name == PACKAGE_INIT_FILE
-        if module.name == name:
-            if not is_facade:
-                return []
-            directories.add(module.file_path.parent)
-        elif module.name.startswith(f"{name}{NAME_SEPARATOR}"):
-            below = len(module.name.split(NAME_SEPARATOR)) - depth + (1 if is_facade else 0)
-            directories.add(module.file_path.parents[below - 1])
-    return sorted(directories)
-
-
-def _has_stub_or_binary(candidate: Path) -> bool:
-    """Tell whether a module path exists as a stub or a compiled binary.
-
-    Args:
-        candidate: Path of the module without suffix.
-
-    Returns:
-        True for a ``.pyi`` stub, an ``__init__.pyi`` or a compiled extension next to it;
-        False also when the directory cannot be read (the scan never stops on it).
-    """
-    try:
-        if candidate.with_suffix(STUB_SUFFIX).is_file() or (candidate / STUB_INIT).is_file():
-            return True
-        if not candidate.parent.is_dir():
-            return False
-        stem = f"{candidate.name}."
-        return any(
-            path.name.startswith(stem) and path.suffix in COMPILED_SUFFIXES
-            for path in candidate.parent.iterdir()
-        )
-    except OSError:
-        return False
-
-
-def _exists_without_source(name: str, closest: str, result: ParseResult) -> bool:
-    """Tell whether a module that has no ``.py`` file exists as a stub or a compiled binary.
-
-    Args:
-        name: Dotted name the import asked for.
-        closest: Its closest existing ancestor.
-        result: Parsed project.
-
-    Returns:
-        True when one of the ancestor's directories holds a stub or a binary for it.
-    """
-    if not closest:
-        return False
-    rest = name.split(NAME_SEPARATOR)[len(closest.split(NAME_SEPARATOR)) :]
-    return any(
-        _has_stub_or_binary(directory.joinpath(*rest))
-        for directory in _package_directories(closest, result)
-    )
+    found = result.virtual.get(closest)
+    return found is not None and found.kind.is_native
 
 
 def _collect(result: ParseResult, scripts: Collection[str]) -> dict[str, _Missing]:
@@ -168,7 +112,7 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> dict[str, _Missin
         What is imported from each missing module, by its name; ``first`` is set only
         when some statement breaks (required or lazy).
     """
-    known = frozenset(module.name for module in result.modules) | frozenset(result.namespaces)
+    known = frozenset(module.name for module in result.modules) | frozenset(result.virtual)
     missing: defaultdict[str, _Missing] = defaultdict(_Missing)
     # Only packaged modules with a broken import: relative paths are slow on many files.
     sources = sorted(
@@ -228,9 +172,10 @@ def find_missing_modules(result: ParseResult, scripts: Collection[str]) -> list[
     """Apply rule 10: packaged code imports a module that does not exist, unguarded.
 
     Imports under ``TYPE_CHECKING``, guarded ones and those of unpackaged code stay
-    warnings only, and so do modules that exist without a ``.py`` file (a stub or a
-    compiled extension). The fix comes from evidence: the module that defines each
-    imported name, or the statement that none does.
+    warnings only. A module that exists as a stub or a compiled extension is in the
+    project index, so its imports are never missing, and a name under one is not known
+    to be missing either (compiled code can register submodules). The fix comes from evidence: the
+    module that defines each imported name, or the statement that none does.
 
     Args:
         result: Parsed project, re-exports resolved.
@@ -242,7 +187,7 @@ def find_missing_modules(result: ParseResult, scripts: Collection[str]) -> list[
     definitions = _definitions(result, scripts)
     findings = []
     for name, entry in sorted(_collect(result, scripts).items()):
-        if entry.first is None or _exists_without_source(name, entry.closest, result):
+        if entry.first is None or _inside_native(entry.closest, result):
             continue
         evidence: Evidence = {
             "required": entry.counts[ImportUse.REQUIRED],

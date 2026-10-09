@@ -16,10 +16,11 @@ from unskein.graph.distributions import (
 from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
 from unskein.graph.missing import find_missing_modules
+from unskein.graph.native import NativeModule, find_optional_native_required, summarize_native
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
 from unskein.graph.scripts import ScriptGroup, count_consumers, find_scripts, group_scripts
-from unskein.parsers.models import ImportKind, ParseResult, ParseWarning
+from unskein.parsers.models import ImportKind, ParseResult, ParseWarning, VirtualKind
 
 MAX_CYCLES = 100
 HIGH_COUPLING_PERCENTILE = 90
@@ -54,7 +55,9 @@ class AnalysisResult:
         script_groups: Scripts by top-level directory, most first.
         distributions: Installability of each named distribution, by name.
         distribution_edges: Imports between distributions with what each declares.
-        namespaces: Namespace packages that are nodes of the graph; they have no file.
+        virtual: Graph nodes with no parsed file (namespace packages, compiled extensions,
+            stubs), with their kind, sorted.
+        native: How packaged code uses each compiled extension and stub-only module, by name.
     """
 
     graph: nx.DiGraph
@@ -74,7 +77,15 @@ class AnalysisResult:
     script_groups: list[ScriptGroup] = field(default_factory=list)
     distributions: list[DistributionSummary] = field(default_factory=list)
     distribution_edges: list[DistributionEdge] = field(default_factory=list)
-    namespaces: frozenset[str] = frozenset()
+    virtual: dict[str, VirtualKind] = field(default_factory=dict)
+    native: list[NativeModule] = field(default_factory=list)
+
+    @property
+    def namespaces(self) -> frozenset[str]:
+        """Return the namespace packages among the graph nodes."""
+        return frozenset(
+            name for name, kind in self.virtual.items() if kind is VirtualKind.NAMESPACE
+        )
 
 
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
@@ -251,10 +262,10 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     full_graph = build_graph(result)
     unpackaged = {m.name for m in result.modules if not m.is_packaged}
     scripts = find_scripts(full_graph, unpackaged)
-    # A namespace package only scripts import is no part of the measured system either.
+    # A virtual module only scripts import is no part of the measured system either.
     script_only = {
         name
-        for name in result.namespaces
+        for name in result.virtual
         if name in full_graph
         and all(importer in scripts for importer in full_graph.predecessors(name))
     }
@@ -268,21 +279,28 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     cycles, cycles_truncated = find_cycles(import_graph)
     tangles = find_tangles(import_graph)
     facades = {m.name for m in result.modules if m.file_path.name == PACKAGE_INIT_FILE}
-    namespaces = frozenset(name for name in result.namespaces if name in graph)
+    virtual = {name: module.kind for name, module in result.virtual.items() if name in graph}
+    namespaces = frozenset(name for name, kind in virtual.items() if kind is VirtualKind.NAMESPACE)
     high_coupling = find_high_coupling(coupling)
     findings = find_findings(
         full_graph,
         coupling,
         findings_config,
-        packages=facades | namespaces,
+        packages=facades | virtual.keys(),
         scripts=scripts,
-        namespaces=namespaces,
+        virtual=frozenset(virtual),
     )
     distribution_analysis = analyze_distributions(result, scripts)
+    native = summarize_native(result, graph, scripts)
     impact_targets = _impact_targets(high_coupling, findings)
     if findings_config.enabled:
         missing = find_missing_modules(result, scripts)
-        findings = [*findings, *distribution_analysis.findings, *missing]
+        findings = [
+            *findings,
+            *distribution_analysis.findings,
+            *missing,
+            *find_optional_native_required(native),
+        ]
     package_metrics, package_edges = summarize_project_packages(
         graph, findings_config.package_depth, facades=facades, virtual=namespaces
     )
@@ -304,5 +322,6 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         script_groups=group_scripts(full_graph, scripts),
         distributions=distribution_analysis.summaries,
         distribution_edges=distribution_analysis.edges,
-        namespaces=namespaces,
+        virtual=virtual,
+        native=native,
     )

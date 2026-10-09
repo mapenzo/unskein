@@ -15,9 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Finding: import of a module that does not exist. It fires when packaged code imports it
   at load time or in a function, unguarded, so it raises `ImportError` when it runs. The
   fix names the module that defines the symbol, or says that none does.
-  `TYPE_CHECKING`, guarded and test imports stay warnings, and so do modules that exist
-  as a `.pyi` stub or a compiled extension, and names under a namespace package that other
-  distributions can complete (`google.*`).
+  `TYPE_CHECKING`, guarded and test imports stay warnings, and so do names under a
+  namespace package that other distributions can complete (`google.*`).
+- Compiled extensions and stubs: a module that exists as a `.so`/`.pyd` binary, a Cython
+  `.pyx`, a `[tool.maturin]` `module-name` or only a `.pyi` stub is a marked node of the
+  graph (*compiled extension* or *stub only*) with its exact Ca and an unknown Ce. Imports
+  of it are exact and no longer "internal import not found" warnings, whether written
+  `from pkg import _native` or `from pkg._native import X`.
+- Native boundary section: for each compiled or stub-only module, what proves it exists,
+  how packaged code uses it (required, lazy, guarded, type-only) and whether it works
+  without it.
+- Finding: optional extension used as required. The code guards the import of a compiled
+  module in one place and imports it unguarded elsewhere, where it raises `ImportError`
+  when the extension is missing. It lists the unguarded lines (up to five, with the total);
+  the fix is to guard them the same way or to drop the fallback.
 - Monorepos without configuration: every `pyproject.toml`, `setup.py` or `setup.cfg`
   marks a distribution, and its files take the name Python imports them by (uv,
   maturin, hatch, poetry and setuptools declarations are read; `setup.py` is never
@@ -42,6 +53,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The module count of the report and of the AI context counts parsed `.py` modules only;
+  namespace packages, compiled extensions and stubs are counted apart.
+- `discover_files` also yields `.pyi`, `.so`, `.pyd` and `.pyx` files (they are named, never
+  parsed). `.gitignore` does not apply to them (an in-place build is usually git-ignored);
+  `.unskeinignore` and `--exclude` do.
+- A name taken from a package facade that imports it inside a `try` for import errors now
+  counts as a guarded import for its users too (the facade falls back instead of failing).
 - `import a.b` followed by `a.b.c.x` now depends on `a.b.c`, the module really used,
   and `import a` plus `import a.b` are analyzed together (they bind the same `a`).
 - In projects with nested manifests, module names follow the distribution that ships

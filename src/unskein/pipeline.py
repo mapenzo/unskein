@@ -52,8 +52,11 @@ def parse_all(
 ) -> ParseResult:
     """Parse every file, sequentially or in parallel depending on project size.
 
+    Only source files count towards the threshold: files that are only named (stubs,
+    binaries) cost nothing to parse.
+
     Args:
-        files: Source files to parse.
+        files: Discovered files, as returned by ``discover_files``.
         adapter: Language adapter that knows how to parse them.
         root: Project root the files belong to.
         config: Analysis settings, including the parallelization threshold.
@@ -61,7 +64,8 @@ def parse_all(
     Returns:
         The combined parse result for all files.
     """
-    if not should_parallelize(len(files), config):
+    sources = sum(1 for path in files if path.suffix in adapter.file_extensions)
+    if not should_parallelize(sources, config):
         return adapter.parse(files, root)
     return _parse_parallel(files, adapter, root, config)
 

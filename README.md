@@ -89,6 +89,15 @@ Architecture health: fair.
   apart. unskein needs no environment, and its fix comes from the code: it names the
   module that defines the symbol, or says that none does. On litellm it found two such
   imports, one of them to a module deleted in a refactor.
+- **Native boundary**: compiled extensions (`.so`, `.pyd`, Cython `.pyx`, maturin
+  `module-name`) and stub-only modules (`.pyi`) are nodes with their exact Ca and an
+  unknown Ce, since what compiled code imports cannot be read. A section lists, for each
+  one, what proves it exists, how packaged code uses it and whether it works without it,
+  and a finding flags an extension the code guards in one place (expecting it can be
+  missing) but imports unguarded elsewhere. On litellm, grimp and pydeps do not see its
+  Rust extension at all; tach sees it only once it is named in its configuration, and
+  neither tach nor mypy tells the guarded import apart from the five that would raise
+  `ImportError` without the extension.
 - **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,

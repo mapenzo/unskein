@@ -1,6 +1,8 @@
 from collections.abc import Callable
 from pathlib import Path
 
+import pathspec
+
 from unskein.config import AnalysisConfig, FindingsConfig
 from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import analyze
@@ -13,7 +15,8 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "namespace_project"
 def _missing(root: Path, config: FindingsConfig | None = None) -> list:
     """Return the rule 10 findings of a project."""
     adapter = PythonAdapter(AnalysisConfig())
-    parsed = adapter.resolve_indirection(adapter.parse(sorted(root.rglob("*.py")), root))
+    files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
+    parsed = adapter.resolve_indirection(adapter.parse(files, root))
     return [f for f in analyze(parsed, config).findings if f.kind is FindingKind.MISSING_MODULE]
 
 
@@ -166,14 +169,12 @@ def test_definitions_skip_scripts_and_the_importer(make_project: MakeProject) ->
     assert finding.evidence["fix"] == "restore_or_remove"
 
 
-def test_unreadable_directory_does_not_abort(make_project: MakeProject, monkeypatch) -> None:
+def test_submodule_of_compiled_code_is_not_called_missing(make_project: MakeProject) -> None:
     root = make_project(
-        {"app/__init__.py": "", "app/a.py": "def f():\n    from app.sub.gone import x\n"}
+        {
+            "app/__init__.py": "",
+            "app/_native.cpython-312-x86_64-linux-gnu.so": "",
+            "app/a.py": "def f():\n    from app._native.sub import go\n    return go\n",
+        }
     )
-    (root / "app" / "sub").mkdir()
-
-    def denied(self):
-        raise PermissionError("denied")
-
-    monkeypatch.setattr(Path, "iterdir", denied)
-    assert [f.modules for f in _missing(root)] == [("app.sub.gone",)]
+    assert _missing(root) == []

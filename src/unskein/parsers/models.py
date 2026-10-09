@@ -29,6 +29,8 @@ class WarningCode(StrEnum):
             the shallower one keeps it.
         INVALID_REQUIREMENT: A declared dependency (or an included dependency group) has
             no usable name; it is ignored.
+        INVALID_MODULE_NAME: A manifest declares a compiled module whose name is not dotted
+            identifiers; it is ignored.
     """
 
     STAR_IMPORT = "star_import"
@@ -44,6 +46,7 @@ class WarningCode(StrEnum):
     MODULE_NAME_COLLISION = "module_name_collision"
     INVALID_REQUIREMENT = "invalid_requirement"
     DUPLICATE_DISTRIBUTION_NAME = "duplicate_distribution_name"
+    INVALID_MODULE_NAME = "invalid_module_name"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +108,45 @@ class ImportKind(StrEnum):
 
 
 _KIND_STRENGTH = {ImportKind.MODULE: 2, ImportKind.LAZY: 1, ImportKind.TYPE_CHECKING: 0}
+
+
+class VirtualKind(StrEnum):
+    """What a module of the project with no parsed ``.py`` file is.
+
+    Attributes:
+        NAMESPACE: A package without ``__init__.py`` (PEP 420): it has no code at all.
+        COMPILED: A compiled extension (a binary, a Cython source or a maturin
+            declaration): its code exists but cannot be read, so what it imports is unknown.
+        STUB: Only a ``.pyi`` stub: it exists for type checkers, and whether a build makes
+            it importable is unknown.
+    """
+
+    NAMESPACE = "namespace"
+    COMPILED = "compiled"
+    STUB = "stub"
+
+    @property
+    def is_native(self) -> bool:
+        """Whether the module has code unskein cannot read (compiled or stub only)."""
+        return self is not VirtualKind.NAMESPACE
+
+
+@dataclass(frozen=True, slots=True)
+class VirtualModule:
+    """A module of the project with no parsed ``.py`` file.
+
+    Attributes:
+        kind: What it is.
+        is_packaged: Whether a distribution ships it; for a namespace package, whether one
+            ships every module under it.
+        evidence: What proves it exists, sorted: POSIX paths relative to the project root
+            of its stubs, binaries and Cython sources, or ``pyproject.toml:line`` of a
+            maturin declaration; empty for namespace packages.
+    """
+
+    kind: VirtualKind
+    is_packaged: bool = True
+    evidence: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -230,11 +272,14 @@ class ReExport:
         exporting_module: Module that re-exports the symbol (the facade).
         original_module: Module the facade imports the symbol from.
         symbol_name: Name under which the facade exposes the symbol.
+        is_guarded: Whether the facade's import sits in a ``try`` or ``suppress`` for
+            import errors: without its module the facade falls back, it does not fail.
     """
 
     exporting_module: str
     original_module: str
     symbol_name: str
+    is_guarded: bool = False
 
 
 @dataclass(slots=True)
@@ -272,8 +317,8 @@ class ParsePlan:
         distributions: Named distributions of the project.
         module_distributions: Distribution of each module that one ships.
         project_root: Absolute project directory, for relative paths in findings.
-        namespaces: Namespace packages, each with whether a distribution ships every
-            module under it.
+        virtual: Modules with no parsed file (namespace packages, compiled extensions,
+            stubs), by name, sorted.
     """
 
     tasks: list[ParseTask]
@@ -283,7 +328,7 @@ class ParsePlan:
     distributions: tuple[DistributionInfo, ...] = ()
     module_distributions: dict[str, str] = field(default_factory=dict)
     project_root: Path | None = None
-    namespaces: dict[str, bool] = field(default_factory=dict)
+    virtual: dict[str, VirtualModule] = field(default_factory=dict)
 
 
 @dataclass
@@ -301,8 +346,8 @@ class ParseResult:
         project_root: Absolute project directory; None when parsed without a plan.
         module_distributions: Distribution of every module a named one ships, parsed or
             not (a file skipped as too large still belongs to its distribution).
-        namespaces: Namespace packages, each with whether a distribution ships every
-            module under it.
+        virtual: Modules with no parsed file (namespace packages, compiled extensions,
+            stubs), by name, sorted.
     """
 
     modules: list[ModuleInfo]
@@ -313,7 +358,7 @@ class ParseResult:
     distributions: tuple[DistributionInfo, ...] = ()
     project_root: Path | None = None
     module_distributions: dict[str, str] = field(default_factory=dict)
-    namespaces: dict[str, bool] = field(default_factory=dict)
+    virtual: dict[str, VirtualModule] = field(default_factory=dict)
 
     @classmethod
     def from_file_results(
@@ -341,7 +386,7 @@ class ParseResult:
             result.distributions = plan.distributions
             result.project_root = plan.project_root
             result.module_distributions = plan.module_distributions
-            result.namespaces = plan.namespaces
+            result.virtual = plan.virtual
         for file_result in file_results:
             if file_result.module is not None:
                 module = file_result.module

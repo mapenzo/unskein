@@ -10,8 +10,9 @@ from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, Distribution
 from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
+from unskein.graph.native import NativeModule
 from unskein.i18n import Lang, t, translate_warning
-from unskein.parsers.models import ParseWarning, WarningCode
+from unskein.parsers.models import ParseWarning, VirtualKind, WarningCode
 
 SEVERITY_ORDER: dict[Severity, int] = {"low": 0, "medium": 1, "high": 2}
 MAX_MODULES_IN_TABLE = 15
@@ -21,9 +22,23 @@ MAX_TANGLE_MEMBERS_SHOWN = 10
 MAX_HIDDEN_TANGLES_SHOWN = 10
 MAX_FINDINGS_PER_KIND = 10
 MAX_PACKAGES_IN_TABLE = 15
+MAX_NATIVE_IN_TABLE = 15
 MAX_PACKAGE_EDGES_SHOWN = 10
 MIN_PACKAGES_SHOWN = 2
 NOT_MEASURED = "—"
+# Ce of compiled code: its imports cannot be read.
+UNKNOWN_VALUE = "?"
+MARKER_KEYS = {
+    VirtualKind.NAMESPACE: "report.namespace_marker",
+    VirtualKind.COMPILED: "report.compiled_marker",
+    VirtualKind.STUB: "report.stub_marker",
+}
+# Order of the virtual counts in the summary and the general metrics.
+VIRTUAL_COUNT_KEYS = (
+    (VirtualKind.NAMESPACE, "report.summary_namespaces", "report.metric.namespaces"),
+    (VirtualKind.COMPILED, "report.summary_compiled", "report.metric.compiled"),
+    (VirtualKind.STUB, "report.summary_stubs", "report.metric.stubs"),
+)
 MIN_DISTRIBUTIONS_SHOWN = 2
 CYCLE_SEPARATOR = " ↔ "
 DETAIL_SEPARATOR = "; "
@@ -119,6 +134,8 @@ def render_report(context: ReportContext, lang: Lang) -> str:
         sections.append(_distributions(context.result, lang))
     if context.result.scripts:
         sections.append(_scripts(context.result, lang))
+    if context.result.native:
+        sections.append(_native_boundary(context.result, lang))
     sections.append(_coupled(context.result, lang))
     if context.result.findings_enabled:
         sections.append(_findings(context.result, lang))
@@ -129,19 +146,32 @@ def render_report(context: ReportContext, lang: Lang) -> str:
 
 
 def _module_count(result: AnalysisResult) -> int:
-    """Return how many modules the graph has; namespace packages are not modules.
+    """Return how many ``.py`` modules the graph has; virtual modules are counted apart.
 
     Args:
         result: The deterministic analysis.
 
     Returns:
-        Nodes of the graph that are files.
+        Nodes of the graph that are parsed files.
     """
-    return result.graph.number_of_nodes() - len(result.namespaces)
+    return result.graph.number_of_nodes() - len(result.virtual)
+
+
+def _virtual_count(result: AnalysisResult, kind: VirtualKind) -> int:
+    """Return how many graph nodes are virtual modules of one kind.
+
+    Args:
+        result: The deterministic analysis.
+        kind: Kind to count.
+
+    Returns:
+        The count.
+    """
+    return sum(1 for found in result.virtual.values() if found is kind)
 
 
 def _module_name(name: str, result: AnalysisResult, lang: Lang) -> str:
-    """Render a module name, marked when it is a namespace package with no file.
+    """Render a module name, marked when it has no parsed file.
 
     Args:
         name: Dotted module name.
@@ -149,11 +179,71 @@ def _module_name(name: str, result: AnalysisResult, lang: Lang) -> str:
         lang: Report language.
 
     Returns:
-        The name in backticks, followed by the namespace marker when it applies.
+        The name in backticks, followed by the marker of its kind when it is virtual.
     """
-    if name in result.namespaces:
-        return f"`{name}` {t('report.namespace_marker', lang)}"
+    kind = result.virtual.get(name)
+    if kind is not None:
+        return f"`{name}` {t(MARKER_KEYS[kind], lang)}"
     return f"`{name}`"
+
+
+def _efferent(name: str, result: AnalysisResult) -> str:
+    """Render the Ce of a module; unknown for compiled code and stubs.
+
+    Args:
+        name: Dotted module name.
+        result: The deterministic analysis.
+
+    Returns:
+        The count, or ``UNKNOWN_VALUE``.
+    """
+    kind = result.virtual.get(name)
+    if kind is not None and kind.is_native:
+        return UNKNOWN_VALUE
+    return str(result.coupling_metrics[name].efferent)
+
+
+def _instability(name: str, result: AnalysisResult) -> str:
+    """Render the instability of a module; not measured when its Ce is unknown.
+
+    Args:
+        name: Dotted module name.
+        result: The deterministic analysis.
+
+    Returns:
+        Two decimals, or ``NOT_MEASURED``.
+    """
+    kind = result.virtual.get(name)
+    if kind is not None and kind.is_native:
+        return NOT_MEASURED
+    return f"{result.coupling_metrics[name].instability:.2f}"
+
+
+def _plural_key(count: int, is_truncated: bool = False) -> str:
+    """Return the catalog suffix for a count: ``one`` only for exactly one.
+
+    Args:
+        count: The number shown.
+        is_truncated: Whether it is a lower bound (``100+``), always plural.
+
+    Returns:
+        ``"one"`` or ``"other"``.
+    """
+    return "one" if count == 1 and not is_truncated else "other"
+
+
+def _counted(key_prefix: str, count: int, lang: Lang) -> str:
+    """Render a count with its noun in the singular or the plural.
+
+    Args:
+        key_prefix: Catalog key without its ``.one``/``.other`` suffix.
+        count: The number.
+        lang: Report language.
+
+    Returns:
+        The count and its noun.
+    """
+    return t(f"{key_prefix}.{_plural_key(count)}", lang, count=count)
 
 
 def _cycle_count(result: AnalysisResult) -> str:
@@ -179,21 +269,27 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         Markdown lines of the section.
     """
     result = context.result
-    namespaces = ""
-    if result.namespaces:
-        key = "one" if len(result.namespaces) == 1 else "other"
-        namespaces = t(f"report.summary_namespaces.{key}", lang, count=len(result.namespaces))
+    virtual = ""
+    for kind, key_prefix, _ in VIRTUAL_COUNT_KEYS:
+        count = _virtual_count(result, kind)
+        if count:
+            key = _plural_key(count)
+            virtual += t(f"{key_prefix}.{key}", lang, count=count)
     scripts = ""
     if result.scripts:
-        key = "one" if len(result.scripts) == 1 else "other"
+        key = _plural_key(len(result.scripts))
         scripts = t(f"report.summary_scripts.{key}", lang, count=len(result.scripts))
     counts = t(
         "report.summary_counts",
         lang,
-        modules=_module_count(result),
-        scripts=f"{namespaces}{scripts}",
-        dependencies=result.graph.number_of_edges(),
-        cycles=_cycle_count(result),
+        modules=_counted("report.summary_modules", _module_count(result), lang),
+        scripts=f"{virtual}{scripts}",
+        dependencies=_counted("report.summary_dependencies", result.graph.number_of_edges(), lang),
+        cycles=t(
+            f"report.summary_cycles.{_plural_key(len(result.cycles), result.cycles_truncated)}",
+            lang,
+            count=_cycle_count(result),
+        ),
     )
     lines = [f"## {t('report.summary', lang)}", "", counts]
     if result.high_coupling_modules:
@@ -203,7 +299,7 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
             lang,
             module=_module_name(top.module, result, lang),
             ca=top.afferent,
-            ce=top.efferent,
+            ce=_efferent(top.module, result),
         )
         lines.append(top_line)
     if result.tangles:
@@ -212,7 +308,7 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     if result.hidden_tangles:
         lines.append(_tangle_summary(result.hidden_tangles, lang, "report.summary_hidden"))
     if result.findings:
-        key = "one" if len(result.findings) == 1 else "other"
+        key = _plural_key(len(result.findings))
         lines.append(t(f"report.summary_findings.{key}", lang, count=len(result.findings)))
     if _shows_distributions(result):
         blocked = sum(1 for summary in result.distributions if summary.installable is False)
@@ -258,8 +354,10 @@ def _metrics(result: AnalysisResult, lang: Lang) -> list[str]:
         Markdown lines of the section.
     """
     rows = [("report.metric.modules", _module_count(result))]
-    if result.namespaces:
-        rows.append(("report.metric.namespaces", len(result.namespaces)))
+    for kind, _, metric_key in VIRTUAL_COUNT_KEYS:
+        count = _virtual_count(result, kind)
+        if count:
+            rows.append((metric_key, count))
     if result.scripts:
         rows.append(("report.metric.scripts", len(result.scripts)))
     rows += [
@@ -377,6 +475,8 @@ def _packages(result: AnalysisResult, lang: Lang) -> list[str]:
             f"| `{package.name}` | {package.modules} | {package.afferent} "
             f"| {package.efferent} | {package.instability:.2f} |"
         )
+    if any(kind.is_native for kind in result.virtual.values()):
+        lines += ["", t("report.packages_native_note", lang)]
     if len(result.packages) > MAX_PACKAGES_IN_TABLE:
         lines += [
             "",
@@ -390,7 +490,7 @@ def _packages(result: AnalysisResult, lang: Lang) -> list[str]:
     if result.package_edges:
         lines += ["", f"### {t('report.package_edges', lang)}", ""]
         for edge in result.package_edges[:MAX_PACKAGE_EDGES_SHOWN]:
-            key = "one" if edge.imports == 1 else "other"
+            key = _plural_key(edge.imports)
             label = t(f"report.package_edge.{key}", lang, imports=edge.imports)
             lines.append(f"- `{edge.source}` → `{edge.target}` ({label})")
         hidden = len(result.package_edges) - MAX_PACKAGE_EDGES_SHOWN
@@ -430,8 +530,8 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
         m = result.coupling_metrics[name]
         consumers = f" | {m.consumers}" if has_consumers else ""
         lines.append(
-            f"| {_module_name(name, result, lang)} | {m.afferent} | {m.efferent} "
-            f"| {m.instability:.2f} "
+            f"| {_module_name(name, result, lang)} | {m.afferent} | {_efferent(name, result)} "
+            f"| {_instability(name, result)} "
             f"| {result.impact.get(name, NOT_MEASURED)}{consumers} |"
         )
     if len(modules) > MAX_MODULES_IN_TABLE:
@@ -530,7 +630,7 @@ def _scripts(result: AnalysisResult, lang: Lang) -> list[str]:
     """
     lines = [f"## {t('report.scripts', lang)}", "", t("report.scripts_intro", lang), ""]
     for group in result.script_groups:
-        key = "one" if group.scripts == 1 else "other"
+        key = _plural_key(group.scripts)
         uses = ", ".join(f"`{use}`" for use in group.uses) or NOT_MEASURED
         lines.append(
             t(
@@ -733,6 +833,92 @@ def _missing_module_line(finding: Finding, result: AnalysisResult, lang: Lang) -
     return f"- `{module}` ({_uses(evidence, lang)}{DETAIL_SEPARATOR}{first})\n{fix}"
 
 
+def _native_works(native: NativeModule, lang: Lang) -> str:
+    """Render whether packaged code runs without a native module.
+
+    Args:
+        native: One row of the native boundary.
+        lang: Report language.
+
+    Returns:
+        "yes", or "no" with the number of unguarded uses and the first one.
+    """
+    if native.works_without:
+        return t("report.native_works.yes", lang)
+    key = _plural_key(len(native.unguarded))
+    return t(
+        f"report.native_works.no.{key}",
+        lang,
+        count=len(native.unguarded),
+        first=native.unguarded[0],
+    )
+
+
+def _native_boundary(result: AnalysisResult, lang: Lang) -> list[str]:
+    """Build the native boundary: each compiled or stub-only module and how it is used.
+
+    Args:
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        Markdown lines of the section.
+    """
+    lines = [
+        f"## {t('report.native', lang)}",
+        "",
+        t("report.native_intro", lang),
+        "",
+        f"| {t('report.module', lang)} | {t('report.native_kind', lang)} "
+        f"| {t('report.native_evidence', lang)} | Ca | {t('report.native_uses', lang)} "
+        f"| {t('report.native_works', lang)} | {t('report.native_out', lang)} |",
+        "|---|---|---|---:|---|---|---|",
+    ]
+    for native in result.native[:MAX_NATIVE_IN_TABLE]:
+        uses = f"{native.required} / {native.lazy} / {native.guarded} / {native.type_only}"
+        lines.append(
+            f"| `{native.name}` | {t(f'report.native_kind.{native.kind}', lang)} "
+            f"| {_backticked(native.evidence)} | {native.afferent} | {uses} "
+            f"| {_native_works(native, lang)} | {t(f'report.native_out.{native.kind}', lang)} |"
+        )
+    hidden = len(result.native) - MAX_NATIVE_IN_TABLE
+    if hidden > 0:
+        lines += ["", t("report.more", lang, count=hidden)]
+    return [*lines, "", t("report.native_note", lang)]
+
+
+def _native_finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
+    """Render a finding of rule 11: its uses, the unguarded locations, then the fix.
+
+    Args:
+        finding: An ``OPTIONAL_NATIVE_REQUIRED`` finding.
+        result: The deterministic analysis, to mark the module with its kind.
+        lang: Report language.
+
+    Returns:
+        A multi-line Markdown list item.
+    """
+    evidence = finding.evidence
+    (module,) = finding.modules
+    guarded = t("finding.native_guarded", lang, first=evidence["first_guarded"])
+    shown = str(evidence["unguarded"]).split(LIST_SEPARATOR)
+    locations = _backticked(shown)
+    hidden = int(evidence["unguarded_total"]) - len(shown)
+    if hidden > 0:
+        locations += f" ({t('report.more', lang, count=hidden)})"
+    fix = t(
+        "finding.fix.guard_or_drop_fallback",
+        lang,
+        first_guarded=evidence["first_guarded"],
+        module=module,
+    )
+    return (
+        f"- {_module_name(module, result, lang)} ({_uses(evidence, lang)}{DETAIL_SEPARATOR}"
+        f"{guarded})\n  - {t('finding.native_unguarded', lang)}: {locations}\n"
+        f"  - {t('finding.fix', lang)}: {fix}"
+    )
+
+
 def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
@@ -751,6 +937,8 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
         return _distribution_finding_line(finding, result, lang)
     if finding.kind is FindingKind.MISSING_MODULE:
         return _missing_module_line(finding, result, lang)
+    if finding.kind is FindingKind.OPTIONAL_NATIVE_REQUIRED:
+        return _native_finding_line(finding, result, lang)
     if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
         source, target = finding.modules
         return (

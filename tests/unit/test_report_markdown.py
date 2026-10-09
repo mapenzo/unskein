@@ -25,6 +25,7 @@ from unskein.report.markdown import (
     MAX_FINDINGS_PER_KIND,
     MAX_HIDDEN_TANGLES_SHOWN,
     MAX_MODULES_IN_TABLE,
+    MAX_NATIVE_IN_TABLE,
     MAX_PACKAGE_EDGES_SHOWN,
     MAX_PACKAGES_IN_TABLE,
     MAX_TANGLE_MEMBERS_SHOWN,
@@ -856,3 +857,111 @@ def test_missing_module_fix_lists_each_symbol_es(tmp_path: Path) -> None:
         "`app.other`, que lo define (y en 1 módulo(s) más); ningún módulo del proyecto "
         "define `Nowhere`" in report
     )
+
+
+NATIVE_ROOT = Path(__file__).parent.parent / "fixtures" / "native_project"
+
+
+def test_summary_counts_compiled_and_stub_modules_apart_en() -> None:
+    report = render(NATIVE_ROOT, analyzed(NATIVE_ROOT))
+    assert "5 modules + 4 compiled extensions + 1 stub-only module + 1 script," in report
+    assert "| Compiled extensions | 4 |" in report
+    assert "| Stub-only modules | 1 |" in report
+
+
+def test_summary_counts_compiled_and_stub_modules_apart_es() -> None:
+    report = render(NATIVE_ROOT, analyzed(NATIVE_ROOT), Lang.ES)
+    assert "5 módulos + 4 extensiones compiladas + 1 módulo solo stub + 1 script," in report
+    assert "| Extensiones compiladas | 4 |" in report
+    assert "| Módulos solo stub | 1 |" in report
+
+
+def test_native_module_has_unknown_efferent_coupling_in_the_table() -> None:
+    result = replace(analyzed(NATIVE_ROOT), high_coupling_modules=["pkg._native", "pkg.stubonly"])
+    report = render(NATIVE_ROOT, result)
+    assert "| `pkg._native` *(compiled extension)* | 3 | ? | — |" in report
+    assert "| `pkg.stubonly` *(stub only)* | 1 | ? | — |" in report
+    assert "Most coupled module: `pkg._native` *(compiled extension)* (Ca 3, Ce ?)." in report
+
+
+def test_projects_without_native_modules_do_not_mention_them(simple_project: Path) -> None:
+    report = render(simple_project, analyzed(simple_project))
+    assert "compiled" not in report.lower()
+    assert "stub" not in report.lower()
+
+
+def test_native_boundary_section_en() -> None:
+    report = render(NATIVE_ROOT, analyzed(NATIVE_ROOT))
+    assert "## Native boundary" in report
+    assert (
+        "| `pkg._native` | compiled extension | `pkg/_native.pyi`, `pyproject.toml:10` | 3 "
+        "| 0 / 1 / 1 / 1 | no: 1 unguarded use (`pkg/api.py:8`) | unknown (compiled code) |"
+    ) in report
+    assert (
+        "| `pkg.stubonly` | stub only | `pkg/stubonly.pyi` | 1 | 1 / 0 / 0 / 0 "
+        "| no: 1 unguarded use (`pkg/api.py:2`) | unknown (stub only) |"
+    ) in report
+    assert "cycles that go through it cannot be seen either" in report
+
+
+def test_native_boundary_section_es() -> None:
+    report = render(NATIVE_ROOT, analyzed(NATIVE_ROOT), Lang.ES)
+    assert "## Frontera nativa" in report
+    assert (
+        "| no: 1 uso sin protección (`pkg/api.py:8`) | desconocida (código compilado) |" in report
+    )
+
+
+def test_native_boundary_says_yes_when_every_use_is_guarded(make_project) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/_native.pyi": "",
+            "app/loader.py": (
+                "try:\n    from app import _native\nexcept ImportError:\n    _native = None\n"
+            ),
+        }
+    )
+    assert "| 0 / 0 / 1 / 0 | yes |" in render(root, analyzed(root))
+
+
+def test_rule_11_line_lists_the_unguarded_uses_and_the_fix() -> None:
+    report = render(NATIVE_ROOT, analyzed(NATIVE_ROOT))
+    assert "### Optional extension used as required (1)" in report
+    assert (
+        "- `pkg._native` *(compiled extension)* (0 required, 1 lazy, 1 guarded; "
+        "guarded at `pkg/loader.py:3`)\n"
+        "  - Unguarded: `pkg/api.py:8`\n"
+        "  - Fix: guard those imports like `pkg/loader.py:3` does, or drop that fallback if "
+        "`pkg._native` is required."
+    ) in report
+
+
+def test_projects_without_native_modules_have_no_boundary(simple_project: Path) -> None:
+    assert "## Native boundary" not in render(simple_project, analyzed(simple_project))
+
+
+def test_summary_uses_the_singular_for_one_en(make_project, circular_imports: Path) -> None:
+    single = make_project({"app/__init__.py": "", "app/a.py": "import app\n"})
+    assert "2 modules, 1 internal dependency, 0 dependency cycles." in render(
+        single, analyzed(single)
+    )
+    assert ", 1 dependency cycle." in render(circular_imports, analyzed(circular_imports))
+
+
+def test_summary_uses_the_singular_for_one_es(make_project) -> None:
+    single = make_project({"app.py": ""})
+    report = render(single, analyzed(single), Lang.ES)
+    assert "1 módulo, 0 dependencias internas, 0 ciclos de dependencia." in report
+
+
+def test_native_boundary_table_is_capped(make_project) -> None:
+    files = {"app/__init__.py": ""}
+    for number in range(MAX_NATIVE_IN_TABLE + 2):
+        files[f"app/_n{number:02d}.pyi"] = ""
+        files[f"app/u{number:02d}.py"] = f"from app import _n{number:02d}\n"
+    root = make_project(files)
+    report = render(root, analyzed(root))
+    assert "| `app._n14` |" in report
+    assert "| `app._n15` |" not in report
+    assert "…and 2 more" in report
