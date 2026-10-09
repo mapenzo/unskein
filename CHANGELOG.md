@@ -11,10 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Finding: wildcard import. One finding per module imported with `from x import *` outside
   a package facade, with the explicit import to write for each statement. The names come
-  from the whole project: those the module reads, those other modules (tests included)
-  import from it, and those that pass on to modules that star-import it. A statement that
-  needs nothing is to be removed, and `from . import *` of a package into itself without
-  `__all__` too.
+  from the whole project: those the module reads (also through `del` and `+=`), those
+  other analyzed modules import from it or read as its attributes, and those that pass on
+  to modules that star-import it; when in doubt a name is kept. A statement that needs
+  nothing can be removed, and so can `from . import *` of a package into itself without
+  `__all__`. Stars whose names cannot be known (a computed `__all__`, a cycle of star
+  imports) get no fix and stay warnings. Tests only count when analyzed
+  (`--include-tests`).
 
 - Namespace packages (PEP 420, directories without `__init__.py`): importing one is no
   longer an "internal import not found" warning. They appear in the graph as marked

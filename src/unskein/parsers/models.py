@@ -172,6 +172,11 @@ class ImportEdge:
             optional by contract.
         requested: Name the statement asked for when that module does not exist (``target``
             is then its closest existing ancestor); None otherwise.
+        attribute_reads: Attributes the module reads through the name a whole-module import
+            of a module (not a package) binds, sorted (``W`` for ``import app.m`` and
+            ``app.m.W``); they tell which names a star import in the target must keep.
+        attribute_escapes: Whether that name is used by itself, or its use could not be
+            analyzed, so any attribute of the target may be read.
     """
 
     source: str
@@ -184,6 +189,8 @@ class ImportEdge:
     escapes: bool = False
     is_guarded: bool = False
     requested: str | None = None
+    attribute_reads: tuple[str, ...] = ()
+    attribute_escapes: bool = False
 
 
 class ManifestStyle(StrEnum):

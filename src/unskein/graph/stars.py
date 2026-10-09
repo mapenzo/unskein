@@ -7,9 +7,11 @@ from enum import StrEnum
 from pathlib import Path
 
 from unskein.graph.findings import Evidence, Finding, FindingKind
+from unskein.parsers.indirection import Star, star_cycles, star_imports, wildcard_names
 from unskein.parsers.layout import relative_path
-from unskein.parsers.models import STAR_EXPORT, ModuleInfo, ParseResult
+from unskein.parsers.models import ModuleInfo, ParseResult
 
+# Caps of the fixes sent to the AI; the report shows every statement and name.
 MAX_FIXES_SHOWN = 5
 MAX_NAMES_SHOWN = 20
 LIST_SEPARATOR = ", "
@@ -18,9 +20,6 @@ LINE_SEPARATOR = ":"
 NAME_SEPARATOR = "."
 KIND_MODULE = "module"
 KIND_SELF = "self"
-
-# A star statement: (line, star-imported module).
-Star = tuple[int, str]
 
 
 class WildcardAction(StrEnum):
@@ -47,7 +46,7 @@ class WildcardFix:
         action: What to do with it.
         names: Names the explicit import must list, sorted.
         kept: Those of them the importer never reads: other modules need them through it.
-        kept_for: First module that needs a kept name.
+        kept_for: (module that needs it, name) for each kept name, sorted.
         defined_elsewhere: (origin module, name) of names the star-imported module only
             passes on, sorted.
         external: Names that reach it from a third-party import, sorted.
@@ -58,7 +57,7 @@ class WildcardFix:
     action: WildcardAction
     names: tuple[str, ...] = ()
     kept: tuple[str, ...] = ()
-    kept_for: str | None = None
+    kept_for: tuple[tuple[str, str], ...] = ()
     defined_elsewhere: tuple[tuple[str, str], ...] = ()
     external: tuple[str, ...] = ()
 
@@ -105,126 +104,132 @@ class WildcardModule:
         return sum(len(fix.kept) for fix in self.fixes)
 
 
-def _stars_of(result: ParseResult) -> dict[str, list[Star]]:
-    """Return the star imports of every module, facades included, in code order.
+@dataclass(frozen=True, slots=True)
+class _Context:
+    """Project-wide data the fixes need.
 
-    Args:
-        result: Parsed project.
-
-    Returns:
-        Each module's star statements; facade re-exports have no line (0).
-    """
-    stars: defaultdict[str, list[Star]] = defaultdict(list)
-    for re_export in result.re_exports:
-        if re_export.symbol_name == STAR_EXPORT:
-            stars[re_export.exporting_module].append((0, re_export.original_module))
-    for module in result.modules:
-        stars[module.name].extend(
-            (line, base) for line, base in module.wildcards if base != module.name
-        )
-    return stars
-
-
-def _star_names(
-    base: str, by_name: Mapping[str, ModuleInfo], stars: Mapping[str, list[Star]]
-) -> frozenset[str] | None:
-    """Return the names ``from base import *`` brings, following nested star imports.
-
-    Args:
-        base: Star-imported module.
+    Attributes:
         by_name: Parsed modules by name.
-        stars: Star imports of every module.
-
-    Returns:
-        The names; None when some module on the way was not parsed or computes ``__all__``.
+        providers: Star statements that bring each name, per module.
+        demand: Names each module must provide.
+        needer: First module needing each (module, name) through someone else.
+        root: Project root, for relative paths.
     """
-    names: set[str] = set()
-    seen = {base}
-    pending = [base]
-    while pending:
-        module = by_name.get(pending.pop())
-        if module is None or module.has_dynamic_all:
-            return None
-        names.update(module.public_names)
-        if module.declares_all:
-            continue
-        for _, nested in stars.get(module.name, []):
-            if nested not in seen:
-                seen.add(nested)
-                pending.append(nested)
-    return frozenset(names)
+
+    by_name: Mapping[str, ModuleInfo]
+    providers: Mapping[str, dict[str, list[Star]]]
+    demand: Mapping[str, set[str]]
+    needer: Mapping[tuple[str, str], str]
+    root: Path | None
 
 
-def _owners(
-    module: ModuleInfo | None, statements: list[Star], brings: Mapping[str, frozenset[str] | None]
-) -> dict[str, Star]:
-    """Return which star statement of a module provides each name: the last one wins.
+def _providers(
+    statements: list[Star], brings: Mapping[str, frozenset[str] | None]
+) -> dict[str, list[Star]]:
+    """Return, for each name, every star statement of a module that brings it.
+
+    Every one is kept, not only the last: stars in alternative branches (``try`` and
+    ``except``, ``if`` and ``else``) may each be the one that runs, and an explicit import
+    of a name the module also binds keeps the same meaning whatever the order.
 
     Args:
-        module: The importing module, if parsed.
-        statements: Its star statements, in code order.
+        statements: The module's star statements, in code order.
         brings: Names each star-imported module brings.
 
     Returns:
-        The owning statement of each name the module does not bind itself.
+        The statements that bring each name.
     """
-    own = set(module.bound_names) if module is not None else set()
-    owners: dict[str, Star] = {}
+    providers: defaultdict[str, list[Star]] = defaultdict(list)
     for statement in statements:
         for name in brings.get(statement[1]) or ():
-            if name not in own:
-                owners[name] = statement
-    return owners
+            providers[name].append(statement)
+    return providers
 
 
-def _demand(
-    result: ParseResult, stars: Mapping[str, list[Star]], owners: Mapping[str, dict[str, Star]]
-) -> tuple[dict[str, set[str]], dict[tuple[str, str], str]]:
-    """Find the names every module must provide, and who needs the ones it never reads.
+def _initial_demand(
+    result: ParseResult,
+    stars: Mapping[str, list[Star]],
+    brings: Mapping[str, frozenset[str] | None],
+) -> tuple[defaultdict[str, set[str]], dict[tuple[str, str], str]]:
+    """Collect what each module needs before following star imports.
 
-    A module needs what it reads, what other modules import from it explicitly, and what
-    the modules that star-import it need through it (a fixpoint over the star graph).
+    A module needs what it reads, the names any module imports from it explicitly or reads
+    as attributes of it, and everything its stars bring when its use cannot be analyzed:
+    it is used by itself, or a star of it brings names nobody can know.
 
     Args:
         result: Parsed project, re-exports resolved.
         stars: Star imports of every module.
-        owners: Owning statement of each name, per module.
+        brings: Names each star-imported module brings.
 
     Returns:
-        The needed names per module, and the first module needing each (module, name)
-        through someone else.
+        The needed names per module, and the first module needing each (module, name).
     """
     demand: defaultdict[str, set[str]] = defaultdict(set)
     needer: dict[tuple[str, str], str] = {}
+    opaque: set[str] = set()
     for module in result.modules:
         demand[module.name].update(module.star_reads)
         for edge in module.imports:
-            if not edge.is_external and edge.symbol_name is not None:
-                demand[edge.target].add(edge.symbol_name)
-                needer.setdefault((edge.target, edge.symbol_name), module.name)
-    changed = True
-    while changed:
-        changed = False
-        for importer in stars:
-            for name in list(demand[importer]):
-                owner = owners[importer].get(name)
-                if owner is None or name in demand[owner[1]]:
-                    continue
-                demand[owner[1]].add(name)
-                needer.setdefault((owner[1], name), needer.get((importer, name), importer))
-                changed = True
+            if edge.is_external:
+                continue
+            names = (edge.symbol_name,) if edge.symbol_name is not None else edge.attribute_reads
+            for name in names:
+                demand[edge.target].add(name)
+                needer.setdefault((edge.target, name), module.name)
+            if edge.attribute_escapes:
+                opaque.add(edge.target)
+        for _, base in stars.get(module.name, []):
+            if brings.get(base) is None:
+                opaque.add(base)
+    for name in opaque:
+        for _, base in stars.get(name, []):
+            demand[name].update(brings.get(base) or ())
     return demand, needer
 
 
+def _demand(
+    result: ParseResult,
+    stars: Mapping[str, list[Star]],
+    brings: Mapping[str, frozenset[str] | None],
+) -> tuple[dict[str, set[str]], dict[tuple[str, str], str], dict[str, dict[str, list[Star]]]]:
+    """Find the names every module must provide, following star imports to a fixpoint.
+
+    Args:
+        result: Parsed project, re-exports resolved.
+        stars: Star imports of every module.
+        brings: Names each star-imported module brings.
+
+    Returns:
+        The needed names per module, the first module needing each (module, name) through
+        someone else, and the star statements that bring each name, per module.
+    """
+    providers = {name: _providers(statements, brings) for name, statements in stars.items()}
+    demand, needer = _initial_demand(result, stars, brings)
+    changed = True
+    while changed:
+        changed = False
+        for importer, by_name in providers.items():
+            for name in list(demand[importer]):
+                for _, base in by_name.get(name, ()):
+                    if name not in demand[base]:
+                        demand[base].add(name)
+                        needer.setdefault((base, name), needer.get((importer, name), importer))
+                        changed = True
+    return demand, needer, providers
+
+
 def _origins(
-    base: ModuleInfo, names: Iterable[str], owners: Mapping[str, Star]
+    base: ModuleInfo, names: Iterable[str], providers: Mapping[str, list[Star]]
 ) -> tuple[tuple[tuple[str, str], ...], tuple[str, ...]]:
     """Tell which needed names the star-imported module only passes on, and from where.
+
+    Only for the notes of a fix; an aliased import gives no note.
 
     Args:
         base: The star-imported module.
         names: Names a statement needs from it.
-        owners: Owning star statement of each name inside ``base``.
+        providers: Star statements that bring each name inside ``base``.
 
     Returns:
         (origin module, name) of internal ones, and the names that come from a
@@ -249,28 +254,9 @@ def _origins(
             external.add(name)
         elif edge is not None:
             internal.add((edge.target, name))
-        elif name in owners:
-            internal.add((owners[name][1], name))
+        elif name in providers:
+            internal.update((statement[1], name) for statement in providers[name])
     return tuple(sorted(internal)), tuple(sorted(external))
-
-
-@dataclass(frozen=True, slots=True)
-class _Context:
-    """Project-wide data the fixes need.
-
-    Attributes:
-        by_name: Parsed modules by name.
-        owners: Owning star statement of each name, per module.
-        demand: Names each module must provide.
-        needer: First module needing each (module, name) through someone else.
-        root: Project root, for relative paths.
-    """
-
-    by_name: Mapping[str, ModuleInfo]
-    owners: Mapping[str, dict[str, Star]]
-    demand: Mapping[str, set[str]]
-    needer: Mapping[tuple[str, str], str]
-    root: Path | None
 
 
 def _location(module: ModuleInfo, line: int, root: Path | None) -> str:
@@ -300,14 +286,18 @@ def _fix(module: ModuleInfo, statement: Star, context: _Context) -> WildcardFix:
     """
     line, base = statement
     location = _location(module, line, context.root)
-    owners = context.owners[module.name]
-    names = tuple(sorted(n for n in context.demand[module.name] if owners.get(n) == statement))
+    providers = context.providers[module.name]
+    names = tuple(
+        sorted(n for n in context.demand[module.name] if statement in providers.get(n, ()))
+    )
     if not names:
         return WildcardFix(location, module.name, WildcardAction.REMOVE)
     reads = set(module.star_reads)
     kept = tuple(name for name in names if name not in reads)
-    kept_for = context.needer.get((module.name, kept[0])) if kept else None
-    elsewhere, external = _origins(context.by_name[base], names, context.owners[base])
+    kept_for = tuple(
+        sorted((context.needer.get((module.name, name), module.name), name) for name in kept)
+    )
+    elsewhere, external = _origins(context.by_name[base], names, context.providers.get(base, {}))
     return WildcardFix(
         location, module.name, WildcardAction.EXPLICIT, names, kept, kept_for, elsewhere, external
     )
@@ -316,9 +306,10 @@ def _fix(module: ModuleInfo, statement: Star, context: _Context) -> WildcardFix:
 def summarize_wildcards(result: ParseResult, scripts: Collection[str]) -> list[WildcardModule]:
     """Compute the fix of every star import of packaged code, grouped by imported module.
 
-    Demand comes from every module, tests and scripts included, so a fix never drops a
-    name a test imports through the module; only packaged code that is no script gets
-    fixes.
+    Demand comes from every analyzed module, scripts and analyzed tests included, so a fix
+    never drops a name another analyzed module needs; only packaged code that is no script
+    gets fixes. When in doubt a name is kept: an extra name only lengthens a fix. Stars
+    whose names cannot be known, or in a cycle of star imports, get no fix (they warn).
 
     Args:
         result: Parsed project, re-exports resolved.
@@ -329,14 +320,12 @@ def summarize_wildcards(result: ParseResult, scripts: Collection[str]) -> list[W
         importers first, then by name.
     """
     by_name = {module.name: module for module in result.modules}
-    stars = _stars_of(result)
+    stars = star_imports(result.modules, result.re_exports)
     bases = {base for statements in stars.values() for _, base in statements}
-    brings = {base: _star_names(base, by_name, stars) for base in bases}
-    owners: defaultdict[str, dict[str, Star]] = defaultdict(dict)
-    for name, statements in stars.items():
-        owners[name] = _owners(by_name.get(name), statements, brings)
-    demand, needer = _demand(result, stars, owners)
-    context = _Context(by_name, owners, demand, needer, result.project_root)
+    brings = {base: wildcard_names(base, by_name, stars) for base in bases}
+    demand, needer, providers = _demand(result, stars, brings)
+    context = _Context(by_name, providers, demand, needer, result.project_root)
+    cycles = star_cycles(stars)
     grouped: defaultdict[tuple[str, bool], list[WildcardFix]] = defaultdict(list)
     for module in result.modules:
         if not module.is_packaged or module.name in scripts:
@@ -348,7 +337,7 @@ def summarize_wildcards(result: ParseResult, scripts: Collection[str]) -> list[W
                     grouped[base, True].append(
                         WildcardFix(location, module.name, WildcardAction.REMOVE_SELF)
                     )
-            elif brings.get(base) is not None:
+            elif brings.get(base) is not None and (module.name, base) not in cycles:
                 grouped[base, False].append(_fix(module, (line, base), context))
     summaries = [
         WildcardModule(
@@ -359,7 +348,7 @@ def summarize_wildcards(result: ParseResult, scripts: Collection[str]) -> list[W
         )
         for (name, is_self), fixes in grouped.items()
     ]
-    return sorted(summaries, key=lambda w: (-w.importers, w.name))
+    return sorted(summaries, key=lambda w: (-w.importers, w.name, w.is_self))
 
 
 def _fix_summary(fix: WildcardFix, module: str) -> str:

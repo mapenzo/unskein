@@ -3,6 +3,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pathspec
+import pytest
 
 from unskein.config import AnalysisConfig
 from unskein.parsers.exports import module_exports
@@ -70,3 +71,16 @@ def test_star_of_a_module_that_was_not_parsed_warns(make_project: MakeProject) -
     assert [w.detail for w in resolved.warnings if w.code is WarningCode.STAR_IMPORT] == [
         "app.gone"
     ]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "__all__ = ['a']\n__all__.insert(0, 'b')\n",
+        "__all__ = ['a']\n__all__.remove('a')\n",
+        "__all__ = ['a']\n__all__[:] = ['b']\n",
+        "__all__ = ['a']\nif x:\n    __all__ = ['b']\n",
+    ],
+)
+def test_every_change_to_all_that_cannot_be_read_is_dynamic(source: str) -> None:
+    assert module_exports(ast.parse(source)).has_dynamic_all

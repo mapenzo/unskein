@@ -895,26 +895,42 @@ módulo empaquetado distinto de los importadores **define** alguno
 `summarize_wildcards(result, scripts)`: para cada `from B import *` fuera de fachada de
 código empaquetado que no es script, los nombres que necesita y el arreglo.
 
-- **Lo que trae** (`_star_names`): el `__all__` literal de B o sus nombres públicos más los
-  de sus estrellas anidadas (de fachada o no), con conjunto de visitados; `None` si algún
-  módulo del camino no se parseó o tiene `__all__` dinámico (sin hallazgo).
-- **Dueño** (`_owners`): en M, cada nombre lo aporta la **última** estrella que lo trae; los
-  que M liga explícitamente nunca vienen de una estrella (límite: un `X = 1` anterior a la
-  estrella se toma igual como propio).
-- **Demanda** (`_demand`, punto fijo): lo que M lee (`star_reads`), lo que **cualquier**
-  módulo importa explícitamente de M (tests incluidos: el arreglo no debe romperlos) y lo
-  que necesitan quienes importan M con asterisco, a través de su dueño. `needer` guarda el
-  primer módulo que necesita un nombre que M no lee.
+Principio: **ante la duda, se conserva**. Un nombre de más solo alarga el arreglo; uno de
+menos rompería el código. Un test de propiedad aplica los arreglos tal cual y ejecuta Python
+antes y después (`tests/unit/test_wildcard_safety.py`).
+
+- **Lo que trae** (`wildcard_names` en `parsers/indirection.py`, compartido con el aviso): el
+  `__all__` literal de B o, sin él, sus nombres públicos, los submódulos que su `__init__`
+  importa (importar `pkg.sub` liga `sub` en el paquete) y los de sus estrellas anidadas (de
+  fachada o no), con conjunto de visitados; `None` si algún módulo del camino no se parseó o
+  tiene `__all__` dinámico: esa sentencia no tiene arreglo y da `STAR_IMPORT`.
+- **Proveedores** (`_providers`): **todas** las estrellas de M que traen un nombre lo
+  conservan, no solo la última: en ramas alternativas (`try`/`except`, `if`/`else`)
+  cualquiera puede ser la que corre, y un import explícito de un nombre que M también liga
+  mantiene el significado sea cual sea el orden.
+- **Demanda** (`_demand`, punto fijo): lo que M lee (`star_reads`, con `del x` y `x += 1`),
+  lo que cualquier módulo analizado importa de M (`from M import X`) o lee como atributo de
+  M (`import app.m; app.m.X`, `ImportEdge.attribute_reads`), y lo que necesitan quienes
+  importan M con asterisco, a través de sus proveedores. M necesita **todo** lo que traen sus
+  estrellas cuando su uso no se puede analizar: se usa suelto o con un nombre ligado a dos
+  objetos (`attribute_escapes`), o una estrella de M trae nombres desconocidos. `needer`
+  guarda quién necesita cada nombre que M no lee.
+- **Ciclos de estrellas** (`star_cycles`): en un ciclo, `from x import *` corre con `x` a
+  medio importar y trae menos de lo que dice el código; esas sentencias no tienen arreglo y
+  dan `STAR_IMPORT`.
 - **Arreglo** (`WildcardFix`): `remove` si no necesita nada (la línea carga B al importar:
   borrarla quita sus efectos al cargar); `explicit` con `from B import …` (siempre desde B,
   no cambia lo que se carga); `remove_self` para `from . import *` de un paquete sin
-  `__all__`. Notas: `kept`/`kept_for`, `defined_elsewhere` (origen interno de lo que B solo
-  pasa, por sus aristas o su propia estrella) y `external`.
+  `__all__`. Notas: `kept`/`kept_for` (por módulo que lo necesita), `defined_elsewhere`
+  (origen interno de lo que B solo pasa; un import con alias no da nota) y `external`.
 - `find_wildcard_imports`: un hallazgo `WILDCARD_IMPORT` por módulo B (o paquete que se
   importa a sí mismo), los de más importadores primero, con evidencia `kind`, `importers`,
   `statements`, `names`, `used_min`, `used_max`, `unused_statements`, `reexported`, `fixes`
-  (hasta 5, nombres hasta 20) y `fixes_total`. `AnalysisResult.wildcards` lleva el detalle
-  para el informe. No se ven lecturas por `globals()` o `getattr(módulo, "x")`.
+  (para la IA: hasta 5 sentencias y 20 nombres) y `fixes_total`. El informe lista **todos**
+  los hallazgos de esta regla, todas sus sentencias y todos los nombres, porque el arreglo
+  está para copiarlo. `AnalysisResult.wildcards` lleva el detalle.
+- Límites: los tests solo cuentan si se analizan (`--include-tests`; la recomendación lo
+  dice); no se ven lecturas por `globals()`, `getattr(módulo, "x")` o `eval`.
 
 ### Frontera nativa y regla 11 (`graph/native.py`)
 

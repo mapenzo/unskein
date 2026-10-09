@@ -43,25 +43,25 @@ def test_fixes_of_the_types_module() -> None:
         4,
         0,
         2,
-        2,
+        1,
     )
     assert types.fixes == (
         WildcardFix("app/annot.py:1", "app.annot", WildcardAction.EXPLICIT, ("D",)),
         WildcardFix("app/api.py:1", "app.api", WildcardAction.EXPLICIT, ("A", "B")),
-        WildcardFix("app/both.py:1", "app.both", WildcardAction.REMOVE),
+        WildcardFix("app/both.py:1", "app.both", WildcardAction.EXPLICIT, ("A",)),
         WildcardFix(
             "app/chain_mid.py:1",
             "app.chain_mid",
             WildcardAction.EXPLICIT,
             ("C",),
             kept=("C",),
-            kept_for="app.chain_top",
+            kept_for=(("app.chain_top", "C"),),
         ),
         WildcardFix("app/dead.py:1", "app.dead", WildcardAction.REMOVE),
     )
 
 
-def test_the_last_star_owns_a_name_and_notes_say_where_it_comes_from() -> None:
+def test_every_star_that_brings_a_needed_name_keeps_it_with_notes() -> None:
     models = _by_name(_analyzed())["app.models"]
     both, relay = models.fixes
     assert both == WildcardFix(
@@ -78,7 +78,7 @@ def test_the_last_star_owns_a_name_and_notes_say_where_it_comes_from() -> None:
         WildcardAction.EXPLICIT,
         ("Model",),
         kept=("Model",),
-        kept_for="app.consumer",
+        kept_for=(("app.consumer", "Model"),),
     )
     assert models.reexported == 1
 
@@ -120,11 +120,11 @@ def test_findings_carry_the_summary_and_follow_the_same_order() -> None:
         "names": 4,
         "used_min": 0,
         "used_max": 2,
-        "unused_statements": 2,
+        "unused_statements": 1,
         "reexported": 1,
         "fixes": (
             "app/annot.py:1 from app.types import D; app/api.py:1 from app.types import A, B; "
-            "app/both.py:1 remove; app/chain_mid.py:1 from app.types import C; "
+            "app/both.py:1 from app.types import A; app/chain_mid.py:1 from app.types import C; "
             "app/dead.py:1 remove"
         ),
         "fixes_total": 5,
@@ -138,7 +138,7 @@ def test_disabled_findings_hide_rule_12() -> None:
     assert all(f.kind is not FindingKind.WILDCARD_IMPORT for f in result.findings)
 
 
-def test_a_cycle_of_star_imports_terminates(make_project: MakeProject) -> None:
+def test_stars_in_a_cycle_get_no_fix_and_warn(make_project: MakeProject) -> None:
     root = make_project(
         {
             "app/__init__.py": "",
@@ -146,9 +146,10 @@ def test_a_cycle_of_star_imports_terminates(make_project: MakeProject) -> None:
             "app/b.py": "from app.a import *\nY = 2\n\n\ndef f():\n    return X\n",
         }
     )
-    by_name = _by_name(_analyzed(root))
-    assert by_name["app.a"].fixes[0].names == ("X",)
-    assert by_name["app.b"].fixes[0].action is WildcardAction.REMOVE
+    result = _analyzed(root)
+    assert result.wildcards == []
+    stars = sorted(w.path.name for w in result.parse_warnings if w.code == "star_import")
+    assert stars == ["a.py", "b.py"]
 
 
 def test_a_name_a_test_imports_through_the_module_is_kept(make_project: MakeProject) -> None:
@@ -162,4 +163,4 @@ def test_a_name_a_test_imports_through_the_module_is_kept(make_project: MakeProj
         }
     )
     (fix,) = _by_name(_analyzed(root))["app.types"].fixes
-    assert (fix.names, fix.kept_for) == (("A",), "tests.test_m")
+    assert (fix.names, fix.kept_for) == (("A",), (("tests.test_m", "A"),))

@@ -11,7 +11,6 @@ MODULE_LEVEL_BLOCKS = ("body", "orelse", "handlers", "finalbody")
 DEFINITION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 IMPORT_NODES = (ast.Import, ast.ImportFrom)
-ALL_MUTATORS = ("append", "extend")
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,8 +25,8 @@ class ModuleExports:
         defined_names: Those of them the module defines itself (``def``, ``class``,
             assignments), not through an import, sorted.
         has_dynamic_all: Whether ``__all__`` is computed or changed in a way that cannot be
-            read (a non-literal value, ``.append``, ``.extend``): what a star import brings
-            is then unknown.
+            read (a non-literal value, a method call, a subscript, two assignments): what a
+            star import brings is then unknown.
     """
 
     names: tuple[str, ...]
@@ -148,6 +147,33 @@ def _literal_all(statements: list[ast.stmt]) -> list[str] | None:
     return declared
 
 
+def _writes_all(node: ast.stmt) -> bool:
+    """Tell whether a statement changes ``__all__`` other than by a literal ``=`` or ``+=``.
+
+    Args:
+        node: A module-level statement.
+
+    Returns:
+        True for a method call on it (``.append``, ``.insert``…) or a subscript assignment.
+    """
+    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+        func = node.value.func
+        return (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == ALL_NAME
+        )
+    if isinstance(node, (ast.Assign, ast.AugAssign)):
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        return any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == ALL_NAME
+            for target in targets
+        )
+    return False
+
+
 def _has_dynamic_all(statements: list[ast.stmt], declared: list[str] | None) -> bool:
     """Tell whether the module's ``__all__`` cannot be read from its source.
 
@@ -156,24 +182,22 @@ def _has_dynamic_all(statements: list[ast.stmt], declared: list[str] | None) -> 
         declared: The literal ``__all__``, or None when there is none or it is computed.
 
     Returns:
-        True when ``__all__`` is assigned or changed by something that is not a literal.
+        True when ``__all__`` is assigned more than once (which one runs may depend on a
+        branch), assigned or changed by something that is not a literal, or changed
+        through a method or a subscript.
     """
-    assigned = False
+    assignments = 0
     for node in statements:
-        if isinstance(node, ast.Assign):
-            assigned |= any(ALL_NAME in _target_names(target) for target in node.targets)
-        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-            assigned |= isinstance(node.target, ast.Name) and node.target.id == ALL_NAME
-        elif (
-            isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Attribute)
-            and isinstance(node.value.func.value, ast.Name)
-            and node.value.func.value.id == ALL_NAME
-            and node.value.func.attr in ALL_MUTATORS
-        ):
+        if _writes_all(node):
             return True
-    return assigned and declared is None
+        if isinstance(node, ast.Assign):
+            assignments += any(ALL_NAME in _target_names(target) for target in node.targets)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            is_all = isinstance(node.target, ast.Name) and node.target.id == ALL_NAME
+            assignments += is_all and isinstance(node, ast.AnnAssign)
+            if is_all and declared is None:
+                return True
+    return assignments > 1 or (assignments == 1 and declared is None)
 
 
 def module_exports(tree: ast.Module) -> ModuleExports:

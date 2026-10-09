@@ -368,6 +368,7 @@ class _ImportCollector:
         self.wildcards: list[tuple[int, str]] = []
         self.warnings: list[ParseWarning] = []
         self.package_bindings: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
+        self.module_bindings: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
         self.bound_objects: defaultdict[str, set[str]] = defaultdict(set)
 
     def warn(self, code: WarningCode, line: int, detail: str) -> None:
@@ -439,6 +440,8 @@ class _ImportCollector:
                 binding, symbol, target, is_exact=target == name
             ):
                 self.package_bindings[binding.name].append((len(self.edges) - 1, binding.prefix))
+            elif binding is not None and symbol is None and target == name:
+                self.module_bindings[binding.name].append((len(self.edges) - 1, binding.prefix))
         return target
 
     def binds_package(
@@ -560,6 +563,9 @@ class _ImportCollector:
         to a prefix means that package is used by itself. The tree is walked only when the
         module imports at least one package.
 
+        Whole-module imports of modules get the attributes read through them instead
+        (``attribute_reads``), only to tell which names a star import in the target must keep.
+
         Args:
             tree: Parsed module the collector visited.
         """
@@ -568,15 +574,51 @@ class _ImportCollector:
             for name, entries in self.package_bindings.items()
             if len(self.bound_objects[name]) == 1
         }
-        if not tracked:
+        modules = {}
+        for name, entries in self.module_bindings.items():
+            if len(self.bound_objects[name]) == 1:
+                modules[name] = entries
+            else:
+                for index, _ in entries:
+                    self.edges[index].attribute_escapes = True
+        if not tracked and not modules:
             return
-        usages = collect_name_usage(tree, tracked)
+        usages = collect_name_usage(tree, tracked.keys() | modules.keys())
         for name, entries in tracked.items():
             chains, used_alone = _split_chains(usages[name].chains, entries)
             for index, _ in entries:
                 edge = self.edges[index]
                 edge.accessed = tuple(sorted(chains[index]))
                 edge.escapes = usages[name].escapes or index in used_alone
+        for name, entries in modules.items():
+            for index, prefix in entries:
+                reads, used_alone = _attribute_reads(usages[name].chains, prefix)
+                edge = self.edges[index]
+                edge.attribute_reads = reads
+                edge.attribute_escapes = usages[name].escapes or used_alone
+
+
+def _attribute_reads(chains: Collection[str], prefix: str) -> tuple[tuple[str, ...], bool]:
+    """Return the attributes read through a binding that reaches a module after a prefix.
+
+    Args:
+        chains: Attribute chains read through the bound name.
+        prefix: Dotted path from the bound name to the module (``m`` for ``import app.m``
+            read through ``app``); empty when the name is the module.
+
+    Returns:
+        The first attribute after the prefix of each chain, sorted, and whether a chain is
+        the prefix itself (the module used by itself).
+    """
+    reads: set[str] = set()
+    used_alone = False
+    start = f"{prefix}{NAME_SEPARATOR}" if prefix else ""
+    for chain in chains:
+        if prefix and chain == prefix:
+            used_alone = True
+        elif chain.startswith(start):
+            reads.add(chain[len(start) :].split(NAME_SEPARATOR)[0])
+    return tuple(sorted(reads)), used_alone
 
 
 def _split_chains(

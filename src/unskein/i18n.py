@@ -893,9 +893,13 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
     },
     "finding.wildcard_import.recommendation": {
         Lang.ES: "Sustituir cada sentencia por el import explícito que se indica, o eliminarla "
-        "si no usa nada.",
+        "si no usa nada. Los tests solo cuentan si se analizan: sin `--include-tests` (por "
+        "defecto), ejecuta el análisis con esa opción antes de aplicar los arreglos, para que "
+        "se conserven los nombres que un test importa a través del módulo.",
         Lang.EN: "Replace each statement with the explicit import shown, or remove it when it "
-        "uses nothing.",
+        "uses nothing. Tests only count when they are analyzed: without `--include-tests` (the "
+        "default), run the analysis with that option before applying the fixes, so names a "
+        "test imports through the module are kept.",
     },
     "finding.wildcard.importers.one": {Lang.ES: "{count} módulo", Lang.EN: "{count} module"},
     "finding.wildcard.importers.other": {Lang.ES: "{count} módulos", Lang.EN: "{count} modules"},
@@ -907,11 +911,19 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "{count} sentencias",
         Lang.EN: "{count} statements",
     },
-    "finding.wildcard.used.one": {
+    "finding.wildcard.used.one.one": {
+        Lang.ES: "usa {used_max} de {names} nombre",
+        Lang.EN: "it uses {used_max} of {names} name",
+    },
+    "finding.wildcard.used.one.other": {
         Lang.ES: "usa {used_max} de {names} nombres",
         Lang.EN: "it uses {used_max} of {names} names",
     },
-    "finding.wildcard.used.other": {
+    "finding.wildcard.used.other.one": {
+        Lang.ES: "usan de {used_min} a {used_max} de {names} nombre",
+        Lang.EN: "they use {used_min} to {used_max} of {names} name",
+    },
+    "finding.wildcard.used.other.other": {
         Lang.ES: "usan de {used_min} a {used_max} de {names} nombres",
         Lang.EN: "they use {used_min} to {used_max} of {names} names",
     },
@@ -924,12 +936,16 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.EN: "{count} use nothing",
     },
     "finding.wildcard.reexported.one": {
-        Lang.ES: "{count} nombre se conserva porque otros lo importan desde aquí",
-        Lang.EN: "{count} name kept because other modules import it from here",
+        Lang.ES: "{count} nombre se conserva porque otros módulos lo importan a través de "
+        "quienes lo importan con asterisco",
+        Lang.EN: "{count} name kept because other modules import it through the modules that "
+        "star-import it",
     },
     "finding.wildcard.reexported.other": {
-        Lang.ES: "{count} nombres se conservan porque otros los importan desde aquí",
-        Lang.EN: "{count} names kept because other modules import them from here",
+        Lang.ES: "{count} nombres se conservan porque otros módulos los importan a través de "
+        "quienes lo importan con asterisco",
+        Lang.EN: "{count} names kept because other modules import them through the modules "
+        "that star-import it",
     },
     "finding.wildcard.self": {
         Lang.ES: "{count} `from . import *` sin efecto",

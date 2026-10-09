@@ -141,10 +141,13 @@ detección.
   - **Import con asterisco**: un hallazgo por módulo importado con `from x import *` fuera de
     una fachada. Para cada sentencia da el import explícito que escribir, con los nombres
     que necesita calculados con el proyecto entero: los que el módulo lee, los que otros
-    módulos (tests incluidos) importan desde él y los que pasan a quienes lo importan con
-    asterisco. Una sentencia que no necesita nada se elimina (aun así carga el módulo al
-    importar). Un import con asterisco cuyos nombres no se pueden saber (`__all__`
-    calculado) se queda como aviso.
+    módulos analizados importan desde él o leen como atributos suyos, y los que pasan a
+    quienes lo importan con asterisco. Ante la duda, el nombre se conserva. Una sentencia que
+    no necesita nada se puede eliminar (la línea carga el módulo al importar, así que
+    borrarla también quita sus efectos al cargar). Un import con asterisco cuyos nombres no
+    se pueden saber (`__all__` calculado, un ciclo de imports con asterisco) se queda como
+    aviso. Los tests solo cuentan si se analizan: ejecuta con `--include-tests` antes de
+    aplicar los arreglos.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 

@@ -11,12 +11,7 @@ from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.graph.native import NativeModule
-from unskein.graph.stars import (
-    MAX_FIXES_SHOWN,
-    MAX_NAMES_SHOWN,
-    WildcardAction,
-    WildcardFix,
-)
+from unskein.graph.stars import KIND_SELF, WildcardAction, WildcardFix
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, VirtualKind, WarningCode
 
@@ -27,6 +22,8 @@ MAX_WARNING_EXAMPLES = 5
 MAX_TANGLE_MEMBERS_SHOWN = 10
 MAX_HIDDEN_TANGLES_SHOWN = 10
 MAX_FINDINGS_PER_KIND = 10
+# Findings whose fix is meant to be copied are all listed.
+UNCAPPED_FINDINGS = frozenset({FindingKind.WILDCARD_IMPORT})
 MAX_PACKAGES_IN_TABLE = 15
 MAX_NATIVE_IN_TABLE = 15
 MAX_PACKAGE_EDGES_SHOWN = 10
@@ -676,8 +673,9 @@ def _findings(result: AnalysisResult, lang: Lang) -> list[str]:
             f"*{t('report.recommendation', lang)}:* {t(f'finding.{kind}.recommendation', lang)}",
             "",
         ]
-        lines += [_finding_line(finding, result, lang) for finding in group[:MAX_FINDINGS_PER_KIND]]
-        hidden = len(group) - MAX_FINDINGS_PER_KIND
+        shown = len(group) if kind in UNCAPPED_FINDINGS else MAX_FINDINGS_PER_KIND
+        lines += [_finding_line(finding, result, lang) for finding in group[:shown]]
+        hidden = len(group) - shown
         if hidden > 0:
             lines.append(f"- {t('report.more', lang, count=hidden)}")
         lines.append("")
@@ -926,21 +924,6 @@ def _native_finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -
     )
 
 
-def _capped_names(names: tuple[str, ...]) -> str:
-    """Join names for an explicit import, capped at ``MAX_NAMES_SHOWN``.
-
-    Args:
-        names: Names, sorted.
-
-    Returns:
-        ``A, B, +3`` style text.
-    """
-    shown = list(names[:MAX_NAMES_SHOWN])
-    if len(names) > MAX_NAMES_SHOWN:
-        shown.append(f"+{len(names) - MAX_NAMES_SHOWN}")
-    return LIST_SEPARATOR.join(shown)
-
-
 def _wildcard_fix_line(fix: WildcardFix, module: str, lang: Lang) -> str:
     """Render the fix of one star import statement, with its notes.
 
@@ -957,17 +940,14 @@ def _wildcard_fix_line(fix: WildcardFix, module: str, lang: Lang) -> str:
     elif fix.action is WildcardAction.REMOVE_SELF:
         text = t("finding.wildcard.fix.remove_self", lang)
     else:
-        text = f"`from {module} import {_capped_names(fix.names)}`"
-        notes = []
-        if fix.kept:
-            notes.append(
-                t(
-                    "finding.wildcard.note.kept",
-                    lang,
-                    importer=fix.kept_for,
-                    names=_backticked(fix.kept),
-                )
-            )
+        text = f"`from {module} import {LIST_SEPARATOR.join(fix.names)}`"
+        needers: dict[str, list[str]] = {}
+        for needer, name in fix.kept_for:
+            needers.setdefault(needer, []).append(name)
+        notes = [
+            t("finding.wildcard.note.kept", lang, importer=needer, names=_backticked(names))
+            for needer, names in needers.items()
+        ]
         origins: dict[str, list[str]] = {}
         for origin, name in fix.defined_elsewhere:
             origins.setdefault(origin, []).append(name)
@@ -994,7 +974,8 @@ def _wildcard_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
         A multi-line Markdown list item.
     """
     (module,) = finding.modules
-    wildcard = next(w for w in result.wildcards if w.name == module)
+    is_self = finding.evidence["kind"] == KIND_SELF
+    wildcard = next(w for w in result.wildcards if (w.name, w.is_self) == (module, is_self))
     statements = len(wildcard.fixes)
     if wildcard.is_self:
         summary = t("finding.wildcard.self", lang, count=statements)
@@ -1011,7 +992,7 @@ def _wildcard_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
             PART_SEPARATOR.join(parts)
             + DETAIL_SEPARATOR
             + t(
-                f"finding.wildcard.used.{_plural_key(statements)}",
+                f"finding.wildcard.used.{_plural_key(statements)}.{_plural_key(wildcard.names)}",
                 lang,
                 used_min=wildcard.used_min,
                 used_max=wildcard.used_max,
@@ -1031,10 +1012,8 @@ def _wildcard_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
                 count=wildcard.reexported,
             )
     lines = [f"- `{module}` ({summary})"]
-    lines += [_wildcard_fix_line(fix, module, lang) for fix in wildcard.fixes[:MAX_FIXES_SHOWN]]
-    hidden = statements - MAX_FIXES_SHOWN
-    if hidden > 0:
-        lines.append(f"  - {t('report.more', lang, count=hidden)}")
+    # Every statement and every name: the fix is meant to be copied.
+    lines += [_wildcard_fix_line(fix, module, lang) for fix in wildcard.fixes]
     return "\n".join(lines)
 
 

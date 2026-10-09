@@ -130,8 +130,9 @@ def collect_name_usage(tree: ast.Module, names: Collection[str]) -> dict[str, Na
 def collect_read_names(tree: ast.Module) -> tuple[str, ...]:
     """Collect every name a module may read, for the names a star import must keep.
 
-    Conservative on purpose: a name read in any scope counts, and so does every identifier
-    in a short string that is not a docstring (a quoted annotation such as ``"Tokenizer"``).
+    Conservative on purpose: a name read in any scope counts (``del x`` and ``x += 1``
+    included), and so does every identifier in a short string that is not a docstring (a
+    quoted annotation such as ``"Tokenizer"``).
     An extra name only lengthens a fix; a missing one would break it.
 
     Args:
@@ -146,9 +147,12 @@ def collect_read_names(tree: ast.Module) -> tuple[str, ...]:
     while stack:
         node = stack.pop()
         if isinstance(node, ast.Name):
-            if isinstance(node.ctx, ast.Load):
+            # ``del x`` needs ``x`` to exist, like a read.
+            if isinstance(node.ctx, (ast.Load, ast.Del)):
                 names.add(node.id)
             continue
+        if isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)  # ``x += 1`` reads ``x`` first
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
             continue  # a docstring or a bare constant: prose, not code
         if isinstance(node, ast.Constant):
