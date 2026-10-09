@@ -2,7 +2,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from unskein.parsers.models import WarningCode
-from unskein.parsers.requirements import normalize_name, read_dependencies, requirement_name
+from unskein.parsers.requirements import (
+    ManifestStyle,
+    normalize_name,
+    read_dependencies,
+    requirement_name,
+)
 
 MakeProject = Callable[[dict[str, str]], Path]
 
@@ -36,7 +41,7 @@ def test_project_dependencies_extras_and_version(make_project: MakeProject) -> N
     )
     declared, warnings = _read(root)
     assert declared.requires == frozenset({"requests", "core-utils"})
-    assert declared.optional == {"proxy": frozenset({"core-enterprise"})}
+    assert dict(declared.optional) == {"proxy": frozenset({"core-enterprise"})}
     assert declared.version == "1.2.0"
     assert declared.manifest == root / "pyproject.toml"
     assert warnings == []
@@ -68,11 +73,11 @@ def test_dependency_groups_with_includes(make_project: MakeProject) -> None:
         }
     )
     declared, warnings = _read(root)
-    assert declared.optional["test"] == frozenset({"pytest", "ruff"})
-    assert declared.optional["lint"] == frozenset({"ruff"})
-    assert declared.optional["loop"] == frozenset()
-    assert declared.optional["bad"] == frozenset()
-    assert sorted(w.detail for w in warnings) == ["loop", "missing"]
+    assert dict(declared.optional)["test"] == frozenset({"pytest", "ruff"})
+    assert dict(declared.optional)["lint"] == frozenset({"ruff"})
+    assert dict(declared.optional)["loop"] == frozenset()
+    assert dict(declared.optional)["bad"] == frozenset()
+    assert sorted(w.detail for w in warnings) == ["include-group = loop", "include-group = missing"]
     assert {w.code for w in warnings} == {WarningCode.INVALID_REQUIREMENT}
 
 
@@ -93,7 +98,7 @@ def test_setup_cfg_install_requires_and_extras(make_project: MakeProject) -> Non
     )
     declared, _ = _read(root)
     assert declared.requires == frozenset({"core"})
-    assert declared.optional == {"fast": frozenset({"core-native"})}
+    assert dict(declared.optional) == {"fast": frozenset({"core-native"})}
     assert declared.version == "2.0"
     assert declared.manifest == root / "setup.cfg"
 
@@ -129,3 +134,32 @@ def test_malformed_dynamic_entries_are_ignored(make_project: MakeProject) -> Non
     )
     declared, _ = _read(root)
     assert declared.requires is None
+
+
+def test_declared_dependencies_are_immutable(make_project: MakeProject) -> None:
+    root = make_project(
+        {"pyproject.toml": '[project]\nname = "x"\n[project.optional-dependencies]\na = ["b"]\n'}
+    )
+    declared, _ = _read(root)
+    assert isinstance(declared.optional, tuple)
+    hash(declared)
+
+
+def test_poetry_dependencies_extras_groups_and_version(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[tool.poetry]\nname = "p"\nversion = "2.0"\n'
+            '[tool.poetry.dependencies]\npython = "^3.12"\nCore = "^1"\n'
+            'fast = {version = "*", optional = true}\n'
+            '[tool.poetry.extras]\nspeed = ["fast"]\n'
+            '[tool.poetry.group.dev.dependencies]\npytest = "*"\n'
+        }
+    )
+    declared, _ = _read(root)
+    assert declared.requires == frozenset({"core"})
+    assert dict(declared.optional) == {
+        "dev": frozenset({"pytest"}),
+        "speed": frozenset({"fast"}),
+    }
+    assert declared.version == "2.0"
+    assert declared.style is ManifestStyle.POETRY

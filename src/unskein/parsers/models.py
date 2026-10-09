@@ -25,6 +25,8 @@ class WarningCode(StrEnum):
         DECLARED_PACKAGE_MISSING: A manifest declares a package that does not exist on disk.
         MODULE_NAME_COLLISION: Two files would take the same module name; the one in the
             shallower distribution is named by its path.
+        DUPLICATE_DISTRIBUTION_NAME: Two manifests declare the same distribution name; only
+            the shallower one keeps it.
         INVALID_REQUIREMENT: A declared dependency (or an included dependency group) has
             no usable name; it is ignored.
     """
@@ -41,6 +43,7 @@ class WarningCode(StrEnum):
     DECLARED_PACKAGE_MISSING = "declared_package_missing"
     MODULE_NAME_COLLISION = "module_name_collision"
     INVALID_REQUIREMENT = "invalid_requirement"
+    DUPLICATE_DISTRIBUTION_NAME = "duplicate_distribution_name"
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +141,24 @@ class ImportEdge:
     is_guarded: bool = False
 
 
+class ManifestStyle(StrEnum):
+    """Where a manifest declares its required dependencies, which decides how to fix it.
+
+    Attributes:
+        PROJECT: ``[project] dependencies`` of ``pyproject.toml`` (PEP 621).
+        SETUP_CFG: ``[options] install_requires`` of ``setup.cfg``.
+        POETRY: ``[tool.poetry.dependencies]`` of a Poetry ``pyproject.toml``.
+    """
+
+    PROJECT = "project"
+    SETUP_CFG = "setup_cfg"
+    POETRY = "poetry"
+
+
+# Names per extra or dependency group, sorted by extra: immutable, hashable and picklable.
+OptionalDependencies = tuple[tuple[str, frozenset[str]], ...]
+
+
 @dataclass(frozen=True, slots=True)
 class DistributionInfo:
     """A named distribution of the project and what its manifest declares.
@@ -146,17 +167,19 @@ class DistributionInfo:
         name: Distribution name, PEP 503-normalized (``litellm-enterprise``).
         root: Directory holding its manifest.
         requires: Names of its required dependencies; None when unknown.
-        optional: Names per extra and per dependency group.
+        optional: Names per extra and per dependency group, sorted by extra.
         version: Its literal version; None when dynamic or missing.
         manifest: File that declares its dependencies; None when there is none.
+        style: Where that manifest declares required dependencies.
     """
 
     name: str
     root: Path
     requires: frozenset[str] | None
-    optional: dict[str, frozenset[str]]
+    optional: OptionalDependencies
     version: str | None
     manifest: Path | None
+    style: ManifestStyle = ManifestStyle.PROJECT
 
 
 @dataclass(slots=True)
@@ -264,6 +287,8 @@ class ParseResult:
         entry_points: Modules the project's distributions declare as scripts.
         distributions: Named distributions of the project.
         project_root: Absolute project directory; None when parsed without a plan.
+        module_distributions: Distribution of every module a named one ships, parsed or
+            not (a file skipped as too large still belongs to its distribution).
     """
 
     modules: list[ModuleInfo]
@@ -273,6 +298,7 @@ class ParseResult:
     entry_points: tuple[str, ...] = ()
     distributions: tuple[DistributionInfo, ...] = ()
     project_root: Path | None = None
+    module_distributions: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_file_results(
@@ -288,7 +314,7 @@ class ParseResult:
             language: Name of the language the modules are written in.
             file_results: One result per parsed file.
             plan: The plan the files were parsed from; its warnings come first, and its
-                entry points, distributions and project root are kept.
+                entry points, distributions, module distributions and project root are kept.
 
         Returns:
             The combined result; skipped files contribute only their warnings.
@@ -299,6 +325,7 @@ class ParseResult:
             result.entry_points = plan.entry_points
             result.distributions = plan.distributions
             result.project_root = plan.project_root
+            result.module_distributions = plan.module_distributions
         for file_result in file_results:
             if file_result.module is not None:
                 module = file_result.module

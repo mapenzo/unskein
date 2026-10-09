@@ -26,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `contextlib.suppress`, count as optional by contract.
 - A Distributions section: what each distribution really imports from the others and
   whether it can be installed alone.
-- A warning for declared dependencies without a valid name.
+- Warnings for declared dependencies without a valid name and for two manifests that
+  declare the same distribution name.
 
 ### Changed
 

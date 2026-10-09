@@ -751,7 +751,8 @@ def test_unknown_dependencies_do_not_claim_to_be_dynamic_en(tmp_path: Path) -> N
     files = {
         "pyproject.toml": '[project]\nname = "a"\ndependencies = []\n',
         "a/__init__.py": "",
-        "poet/pyproject.toml": '[tool.poetry]\nname = "p"\npackages = [{include = "p_pkg"}]\n',
+        "poet/pyproject.toml": '[project]\nname = "p"\ndynamic = ["dependencies"]\n'
+        '[tool.uv.build-backend]\nmodule-root = ""\nmodule-name = "p_pkg"\n',
         "poet/p_pkg/__init__.py": "import a\n",
     }
     for relative, content in files.items():

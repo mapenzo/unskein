@@ -113,7 +113,8 @@ class FindingSummary:
         kind: Rule that produced it, e.g. ``"bottleneck"``.
         modules: The module, or ``[importer, imported]`` for unstable dependencies and layer
             violations.
-        evidence: Numbers (or, for layer violations, layer names) that triggered the rule.
+        evidence: Numbers or short strings (layer names, locations, fixes) that triggered
+            the rule.
     """
 
     kind: str

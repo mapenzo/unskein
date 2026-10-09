@@ -70,6 +70,13 @@ prioritize them and explain their impact, but do not recompute or contradict the
 just list them again.
 A layer_violation finding names, in layer_from and layer_to, two layers the user declared;
 the importing module sits in the lower layer.
+The findings undeclared_dependency, optional_required, unpackaged_import and
+distribution_cycle are about the installable distributions of a monorepo: their modules are
+distribution names (or, for unpackaged_import, a top-level directory), not modules. required,
+lazy and guarded count import statements; guarded ones are optional by contract. Their fix,
+requirement, table, manifest, directory and cuts fields are the exact fix already computed:
+repeat it, do not invent another. A distribution_cycle is about packaging and release, not
+import time: rate it medium unless its cuts have breaking uses (cut_breaking > 0).
 
 Severity rubric:
 - high: a tangle or a dependency cycle.

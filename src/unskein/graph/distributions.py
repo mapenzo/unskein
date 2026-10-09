@@ -10,14 +10,26 @@ from pathlib import Path, PurePosixPath
 import networkx as nx
 
 from unskein.graph.findings import Evidence, Finding, FindingKind
-from unskein.parsers.models import DistributionInfo, ImportEdge, ImportKind, ParseResult
+from unskein.parsers.models import (
+    DistributionInfo,
+    ImportEdge,
+    ImportKind,
+    ManifestStyle,
+    ParseResult,
+)
 
 PATH_SEPARATOR = "/"
 CURRENT_DIRECTORY = "."
 NAME_SEPARATOR = "."
 PROJECT_TABLE = "[project] dependencies"
 SETUP_CFG_TABLE = "[options] install_requires"
-SETUP_CFG_SUFFIX = ".cfg"
+POETRY_TABLE = "[tool.poetry.dependencies]"
+TABLES = {
+    ManifestStyle.PROJECT: PROJECT_TABLE,
+    ManifestStyle.SETUP_CFG: SETUP_CFG_TABLE,
+    ManifestStyle.POETRY: POETRY_TABLE,
+}
+POETRY_ANY_VERSION = "*"
 MAX_UNPACKAGED_TARGETS = 5
 LIST_SEPARATOR = ", "
 FIX_ADD = "add_dependency"
@@ -74,13 +86,25 @@ class UseCounts:
         required: Required uses.
         lazy: Lazy uses.
         guarded: Guarded uses.
-        first: First location (``path:line``, relative to the project) per use.
+        first: First location (``path:line``, relative to the project) per use, in
+            ``ImportUse`` order; a use without statements has none.
     """
 
     required: int = 0
     lazy: int = 0
     guarded: int = 0
-    first: dict[ImportUse, str] = field(default_factory=dict)
+    first: tuple[tuple[ImportUse, str], ...] = ()
+
+    def first_of(self, use: ImportUse) -> str | None:
+        """Return where the first statement of one use is.
+
+        Args:
+            use: The use asked about.
+
+        Returns:
+            Its ``path:line``, or None when the use has no statement.
+        """
+        return dict(self.first).get(use)
 
     @property
     def breaking(self) -> int:
@@ -90,7 +114,7 @@ class UseCounts:
     @property
     def first_breaking(self) -> str | None:
         """Return where the first breaking use is: a required one, else a lazy one."""
-        return self.first.get(ImportUse.REQUIRED) or self.first.get(ImportUse.LAZY)
+        return self.first_of(ImportUse.REQUIRED) or self.first_of(ImportUse.LAZY)
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,7 +223,7 @@ class _Counter:
             self.counts[ImportUse.REQUIRED],
             self.counts[ImportUse.LAZY],
             self.counts[ImportUse.GUARDED],
-            dict(self.first),
+            tuple((use, self.first[use]) for use in ImportUse if use in self.first),
         )
 
 
@@ -270,9 +294,9 @@ def _location(relative: str, line: int | None) -> str:
 def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     """Tally every import from a named distribution into another or into unpackaged code.
 
-    Imports inside one distribution, ``TYPE_CHECKING`` imports, imports of modules that
-    were not parsed, of scripts and of path-named files are left out; scripts are never
-    sources.
+    Imports inside one distribution, ``TYPE_CHECKING`` imports, imports of unparsed files
+    no named distribution ships, of scripts and of path-named files are left out; scripts
+    are never sources.
 
     Args:
         result: Parsed project.
@@ -281,8 +305,11 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     Returns:
         The tallies.
     """
-    distribution_of = {module.name: module.distribution for module in result.modules}
+    # Unparsed files (too large, syntax errors) still belong to their distribution.
+    distribution_of: dict[str, str | None] = dict(result.module_distributions)
+    distribution_of.update((module.name, module.distribution) for module in result.modules)
     packaged = {module.name for module in result.modules if module.is_packaged}
+    packaged.update(result.module_distributions)
     # Sorted by relative POSIX path, so "first" is the same on every platform; computed
     # once per module (Path.relative_to is slow on tens of thousands of imports).
     sources = sorted(
@@ -344,39 +371,30 @@ def _status(info: DistributionInfo, target: str) -> tuple[DependencyStatus, tupl
         return DependencyStatus.UNKNOWN, ()
     if target in info.requires:
         return DependencyStatus.REQUIRED, ()
-    extras = tuple(sorted(name for name, names in info.optional.items() if target in names))
+    extras = tuple(name for name, names in info.optional if target in names)
     if extras:
         return DependencyStatus.OPTIONAL, extras
     return DependencyStatus.UNDECLARED, ()
 
 
-def _requirement(target: DistributionInfo | None, name: str) -> str:
-    """Return the requirement to copy into a manifest, quoted.
+def _requirement(target: DistributionInfo | None, name: str, style: ManifestStyle) -> str:
+    """Return the requirement to copy into a manifest, in that manifest's syntax.
 
     Args:
         target: The imported distribution, when it is named.
         name: Its name.
+        style: Syntax of the manifest being fixed.
 
     Returns:
-        ``"name>=version"`` when its version is known, else ``"name"``.
+        ``"name>=version"`` (or ``"name"``); for Poetry ``name = ">=version"`` (or ``"*"``).
     """
-    if target is not None and target.version is not None:
-        return f'"{name}>={target.version}"'
+    version = target.version if target is not None else None
+    if style is ManifestStyle.POETRY:
+        constraint = f">={version}" if version is not None else POETRY_ANY_VERSION
+        return f'{name} = "{constraint}"'
+    if version is not None:
+        return f'"{name}>={version}"'
     return f'"{name}"'
-
-
-def _table_of(info: DistributionInfo) -> str:
-    """Return the manifest table where required dependencies are declared.
-
-    Args:
-        info: The distribution to fix.
-
-    Returns:
-        ``[options] install_requires`` for ``setup.cfg``, else ``[project] dependencies``.
-    """
-    if info.manifest is not None and info.manifest.suffix == SETUP_CFG_SUFFIX:
-        return SETUP_CFG_TABLE
-    return PROJECT_TABLE
 
 
 def _manifest(info: DistributionInfo, root: Path | None) -> str:
@@ -401,7 +419,7 @@ def _first_any(counts: UseCounts) -> str:
     Returns:
         The location; empty when there is no use.
     """
-    return counts.first_breaking or counts.first.get(ImportUse.GUARDED, "")
+    return counts.first_breaking or counts.first_of(ImportUse.GUARDED) or ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,8 +457,8 @@ def _undeclared(edges: list[DistributionEdge], context: _Context) -> list[Findin
             "first": edge.counts.first_breaking or "",
             "fix": FIX_ADD,
             "manifest": _manifest(source, context.root),
-            "table": _table_of(source),
-            "requirement": _requirement(context.infos.get(edge.target), edge.target),
+            "table": TABLES[source.style],
+            "requirement": _requirement(context.infos.get(edge.target), edge.target, source.style),
         }
         findings.append(
             Finding(FindingKind.UNDECLARED_DEPENDENCY, (edge.source, edge.target), evidence)
@@ -467,7 +485,7 @@ def _optional_required(edges: list[DistributionEdge], context: _Context) -> list
             "lazy": edge.counts.lazy,
             "guarded": edge.counts.guarded,
             "extras": LIST_SEPARATOR.join(edge.extras),
-            "first": edge.counts.first[ImportUse.REQUIRED],
+            "first": edge.counts.first_of(ImportUse.REQUIRED) or "",
             "fix": FIX_PROMOTE,
             "manifest": _manifest(context.infos[edge.source], context.root),
         }

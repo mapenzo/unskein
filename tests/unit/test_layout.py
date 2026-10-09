@@ -415,7 +415,7 @@ def test_named_distributions_carry_their_declared_dependencies() -> None:
     infos = {info.name: info for info in layout.distribution_infos}
     assert list(infos) == ["core", "core-plugins"]
     assert infos["core"].requires == frozenset({"requests"})
-    assert infos["core"].optional == {"plugins": frozenset({"core-plugins"})}
+    assert dict(infos["core"].optional) == {"plugins": frozenset({"core-plugins"})}
     assert infos["core"].version == "2.3.0"
     assert infos["core-plugins"].requires == frozenset()
     assert infos["core-plugins"].manifest == root / "plugins" / "pyproject.toml"
@@ -439,3 +439,40 @@ def test_roots_without_manifest_or_name_have_no_distribution(make_project: MakeP
     named, _ = name_files(layout, files)
     assert layout.distribution_infos == ()
     assert {name.distribution for _, name in named} == {None}
+
+
+def test_two_manifests_with_one_name_warn_and_only_the_shallower_is_named(
+    make_project: MakeProject,
+) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\n',
+            "a/__init__.py": "",
+            "one/pyproject.toml": '[project]\nname = "Twin"\n',
+            "one/twin/__init__.py": "",
+            "deep/two/pyproject.toml": '[project]\nname = "twin"\n',
+            "deep/two/twin_b/__init__.py": "",
+        }
+    )
+    files = sorted(root.rglob("*.py"))
+    layout, warnings = build_layout(root, files, None)
+    named, _ = name_files(layout, files)
+    by_name = {name.name: name.distribution for _, name in named}
+    assert by_name["twin"] == "twin"
+    assert by_name["twin_b"] is None
+    assert [(w.code, w.detail) for w in warnings] == [
+        (WarningCode.DUPLICATE_DISTRIBUTION_NAME, "twin")
+    ]
+    assert warnings[0].path == root / "deep" / "two"
+
+
+def test_setup_cfg_name_is_read_when_pyproject_declares_packages(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[tool.setuptools]\npackages = ["pkg"]\n',
+            "setup.cfg": "[metadata]\nname = Named\n",
+            "pkg/__init__.py": "",
+        }
+    )
+    layout, _ = build_layout(root, sorted(root.rglob("*.py")), None)
+    assert [info.name for info in layout.distribution_infos] == ["named"]

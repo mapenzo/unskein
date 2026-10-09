@@ -293,3 +293,44 @@ def test_rules_7_and_8_carry_every_use_count(make_project: MakeProject) -> None:
     assert (finding.evidence["lazy"], finding.evidence["guarded"]) == (1, 1)
     (fixture_finding,) = _by_kind(_analyzed(FIXTURE))[FindingKind.UNPACKAGED_IMPORT]
     assert fixture_finding.evidence["guarded"] == 0
+
+
+def test_imports_into_an_unparsed_file_of_another_distribution_count(
+    make_project: MakeProject,
+) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\ndependencies = []\n',
+            "a/__init__.py": "import b_pkg.broken\n",
+            "bdist/pyproject.toml": '[project]\nname = "b"\n[tool.uv.build-backend]\n'
+            'module-root = ""\nmodule-name = "b_pkg"\n',
+            "bdist/b_pkg/__init__.py": "",
+            "bdist/b_pkg/broken.py": "def (:\n",
+        }
+    )
+    (finding,) = _by_kind(_analyzed(root))[FindingKind.UNDECLARED_DEPENDENCY]
+    assert finding.modules == ("a", "b")
+
+
+def test_poetry_manifest_gets_a_poetry_fix(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\nversion = "1.5"\ndependencies = []\n',
+            "a/__init__.py": "",
+            "poet/pyproject.toml": '[tool.poetry]\nname = "p"\nversion = "2"\n'
+            'packages = [{include = "p_pkg"}]\n[tool.poetry.dependencies]\npython = "^3.12"\n',
+            "poet/p_pkg/__init__.py": "import a\n",
+        }
+    )
+    (finding,) = _by_kind(_analyzed(root))[FindingKind.UNDECLARED_DEPENDENCY]
+    assert finding.evidence["table"] == "[tool.poetry.dependencies]"
+    assert finding.evidence["requirement"] == 'a = ">=1.5"'
+    assert finding.evidence["manifest"] == "poet/pyproject.toml"
+
+
+def test_distribution_values_are_hashable() -> None:
+    result = _analyzed(FIXTURE)
+    for edge in result.distribution_edges:
+        hash(edge)
+    for summary in result.distributions:
+        hash(summary)

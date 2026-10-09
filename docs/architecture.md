@@ -353,19 +353,29 @@ de los scripts de todas las distribuciones, no solo de la raíz.
 **Dependencias declaradas** (`parsers/requirements.py`, `read_dependencies`). Una
 distribución cuyo manifiesto declara nombre (`[project] name`, `[tool.poetry] name` o
 `[metadata] name` de `setup.cfg`) lleva un `DistributionInfo`: nombre normalizado PEP 503,
-raíz, `requires`, `optional` (por extra y por grupo), versión literal y manifiesto. Gana
-`pyproject.toml` con tabla `[project]` (`dependencies`, `[project.optional-dependencies]`,
-`[dependency-groups]` de PEP 735 con `include-group`); si no, `setup.cfg`
-(`[options] install_requires`, `[options.extras_require]`, `[metadata] version`). De cada
+raíz, `requires`, `optional` (tupla ordenada de pares extra → nombres, inmutable y
+serializable), versión literal, manifiesto y `ManifestStyle` (dónde se declaran las
+requeridas, que decide la sintaxis del arreglo). Gana `pyproject.toml` con tabla `[project]`
+(`dependencies`, `[project.optional-dependencies]`, `[dependency-groups]` de PEP 735 con
+`include-group`); después `[tool.poetry]` (`dependencies` sin `python` ni las marcadas
+`optional = true`, `extras`, `group.<g>.dependencies` y `dev-dependencies` como grupo
+`dev`, `version`); si no, `setup.cfg` (`[options] install_requires`,
+`[options.extras_require]`, `[metadata] version`, donde `attr:` y `file:` son dinámicas). El
+nombre de `setup.cfg` se lee también cuando `pyproject.toml` declara paquetes pero no
+nombre. De cada
 especificador PEP 508 solo se toma el nombre, con un regex (sin depender de `packaging`).
-`requires = None` (desconocido) con `dynamic = ["dependencies"]`, solo `setup.py` u otro
-formato (`[tool.poetry.dependencies]` no se lee); `[project]` sin `dependencies` declara un conjunto vacío. Un
-especificador sin nombre, o un `include-group` a un grupo inexistente o en ciclo, da
-`INVALID_REQUIREMENT` y se ignora; los manifiestos ilegibles ya los avisó el layout.
+`requires = None` (desconocido) con `dynamic = ["dependencies"]` (sus entradas que no son
+texto se ignoran), solo `setup.py` o sin declaración legible; `[project]` sin `dependencies` declara un conjunto vacío. Un
+especificador sin nombre, o un `include-group` a un grupo inexistente o en ciclo (detalle
+`include-group = <grupo>`), da `INVALID_REQUIREMENT` y se ignora; los manifiestos ilegibles ya los avisó el layout.
 `ModuleName.distribution` y `ModuleInfo.distribution` dicen qué distribución con nombre
 empaqueta cada módulo; el `ParsePlan` lleva las distribuciones, ese mapa y la raíz del
 proyecto, y `ParseResult.from_file_results` los pasa al resultado (también en paralelo).
-Dos manifiestos con el mismo nombre dan una sola `DistributionInfo`: la del menos profundo.
+`ParseResult.module_distributions` conserva la distribución de cada archivo nombrado,
+también de los que no se pudieron parsear, para que un import a uno de ellos siga contando
+entre distribuciones. Dos manifiestos con el mismo nombre (`build_layout`,
+`_unique_names`): lo conserva el menos profundo, los demás pierden el nombre (sus módulos no
+tienen distribución) y se emite `DUPLICATE_DISTRIBUTION_NAME`.
 
 ## 3. Parser de Python (`parsers/python_parser.py`)
 
@@ -814,7 +824,7 @@ distribuciones con nombre no hace nada.
 
 | # | `FindingKind` | Se dispara | `modules` | Arreglo (`fix`) |
 |---|---|---|---|---|
-| 6 | `UNDECLARED_DEPENDENCY` | arista `UNDECLARED` con usos que rompen | `(A, B)` | `add_dependency`: `"B>=versión"` (o `"B"`) en `[project] dependencies` / `[options] install_requires` del manifiesto de A |
+| 6 | `UNDECLARED_DEPENDENCY` | arista `UNDECLARED` con usos que rompen | `(A, B)` | `add_dependency`: `"B>=versión"` (o `"B"`) en `[project] dependencies` / `[options] install_requires`, o `B = ">=versión"` (o `"*"`) en `[tool.poetry.dependencies]`, del manifiesto de A |
 | 7 | `OPTIONAL_REQUIRED` | arista `OPTIONAL` con usos `REQUIRED` | `(A, B)` | `promote_or_guard`: pasarla a requeridas o proteger el import |
 | 8 | `UNPACKAGED_IMPORT` | import de código no empaquetado con usos que rompen | `(A, segmento)` | `package_or_move`: ese directorio dentro de un paquete de A o entre sus paquetes |
 | 9 | `DISTRIBUTION_CYCLE` | componente fuertemente conexa de ≥ 2 distribuciones (todas las aristas) | miembros ordenados | `cut_edge`: aristas a cortar, la de menos usos que rompen primero, repitiendo hasta que no quede ciclo |
@@ -1009,7 +1019,10 @@ en el top de `Ca + Ce` volátil del que otros dependen — inestabilidad ≥
 oculta, que no falla al importar pero sigue acoplando; `low`: el
 resto; nunca se señala un módulo solo por ser estable, porque inestabilidad baja con
 muchos dependientes es sano), la regla de
-copiar los nombres de módulo literalmente y la instrucción de idioma. El user lleva
+copiar los nombres de módulo literalmente y la instrucción de idioma. Para los hallazgos
+entre distribuciones explica que `modules` son nombres de distribución, que el arreglo de su
+evidencia ya está calculado (repetirlo, no inventar otro) y que un `distribution_cycle` es
+`medium` salvo que sus cortes tengan usos que rompen. El user lleva
 los datos y el JSON schema de `AIReport` (dentro del prompt además de en la API:
 los modelos económicos ignoran `response_format`). La serialización es
 determinista.

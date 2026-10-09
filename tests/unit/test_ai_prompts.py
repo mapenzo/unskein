@@ -659,3 +659,9 @@ def test_context_serializes_distribution_findings_with_their_fix() -> None:
     assert context.finding_counts["undeclared_dependency"] == 1
     (undeclared,) = [f for f in context.findings if f.kind == "undeclared_dependency"]
     assert undeclared.evidence["requirement"] == '"core>=2.3.0"'
+
+
+def test_system_prompt_explains_distribution_findings() -> None:
+    prompt = SYSTEM_PROMPT
+    assert "undeclared_dependency" in prompt
+    assert "distribution names" in prompt

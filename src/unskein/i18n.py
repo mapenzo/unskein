@@ -141,6 +141,16 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Nombre de módulo repetido, este archivo se nombra por su ruta: {detail}",
         Lang.EN: "Repeated module name, this file is named by its path: {detail}",
     },
+    "warning.duplicate_distribution_name": {
+        Lang.ES: "Otro manifiesto (menos profundo, o el primero por ruta) ya declara la "
+        "distribución {detail}; este pierde el nombre",
+        Lang.EN: "Another manifest (shallower, or first by path) already declares the "
+        "distribution {detail}; this one loses the name",
+    },
+    "warning_title.duplicate_distribution_name": {
+        Lang.ES: "Nombres de distribución repetidos",
+        Lang.EN: "Repeated distribution names",
+    },
     "warning_title.module_name_collision": {
         Lang.ES: "Nombres de módulo repetidos",
         Lang.EN: "Repeated module names",

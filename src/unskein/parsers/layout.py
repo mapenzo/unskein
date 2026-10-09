@@ -5,7 +5,7 @@ import os
 import tomllib
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from unskein.entry_points import script_modules_of
@@ -178,6 +178,7 @@ def _distribution_at(directory: Path, warnings: list[ParseWarning]) -> Distribut
             declared.optional,
             declared.version,
             declared.manifest,
+            declared.style,
         )
     return Distribution(directory, import_root, packages, declaration.script_modules, info)
 
@@ -273,13 +274,13 @@ def _read_declaration(directory: Path, warnings: list[ParseWarning]) -> _Declara
     declaration = (
         _declaration_from_pyproject(pyproject) if pyproject else _Declaration(auto_discovers=True)
     )
-    if declaration.packages is None:
+    if declaration.packages is None or declaration.name is None:
         from_cfg = _declaration_from_setup_cfg(directory / SETUP_CFG_NAME, warnings)
         declaration = _Declaration(
             declaration.import_root
             if declaration.import_root is not None
             else from_cfg.import_root,
-            from_cfg.packages,
+            declaration.packages if declaration.packages is not None else from_cfg.packages,
             declaration.name or from_cfg.name,
             declaration.script_modules,
             declaration.auto_discovers,
@@ -544,12 +545,10 @@ class ProjectLayout:
 
     @property
     def distribution_infos(self) -> tuple[DistributionInfo, ...]:
-        """Return the named distributions, sorted by name; of two with one name, the shallower."""
-        by_name: dict[str, DistributionInfo] = {}
-        infos = (d.info for d in self.distributions if d.info)
-        for info in sorted(infos, key=lambda info: (info.name, len(info.root.parts), info.root)):
-            by_name.setdefault(info.name, info)
-        return tuple(by_name.values())
+        """Return the named distributions, sorted by name."""
+        return tuple(
+            sorted((d.info for d in self.distributions if d.info), key=lambda info: info.name)
+        )
 
 
 def _name_with_depth(layout: ProjectLayout, absolute: Path) -> tuple[ModuleName, int]:
@@ -622,7 +621,46 @@ def build_layout(
         The layout plus the warnings about unusable manifests.
     """
     distributions, warnings = detect_distributions(root, files, configured)
+    distributions = _unique_names(distributions, warnings)
     return ProjectLayout(_absolute(root), distributions), warnings
+
+
+def _unique_names(
+    distributions: tuple[Distribution, ...], warnings: list[ParseWarning]
+) -> tuple[Distribution, ...]:
+    """Keep one distribution per name: the shallowest; the others lose their name.
+
+    Two manifests with one name cannot both be installed, and judging the imports of one
+    against the manifest of the other would hide real problems.
+
+    Args:
+        distributions: Distributions, deepest import root first.
+        warnings: Collects one ``DUPLICATE_DISTRIBUTION_NAME`` per distribution that loses
+            its name.
+
+    Returns:
+        The distributions in the same order, repeated names cleared on the deeper ones.
+    """
+    named = sorted(
+        (d for d in distributions if d.info), key=lambda d: (len(d.root.parts), d.root.as_posix())
+    )
+    owners: dict[str, Path] = {}
+    for distribution in named:
+        owners.setdefault(distribution.info.name, distribution.root)
+    for distribution in named:
+        if owners[distribution.info.name] != distribution.root:
+            warnings.append(
+                ParseWarning(
+                    WarningCode.DUPLICATE_DISTRIBUTION_NAME,
+                    distribution.root,
+                    None,
+                    distribution.info.name,
+                )
+            )
+    return tuple(
+        replace(d, info=None) if d.info and owners[d.info.name] != d.root else d
+        for d in distributions
+    )
 
 
 def name_files(

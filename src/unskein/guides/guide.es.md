@@ -60,9 +60,11 @@ detección.
   de un `try` que captura `ImportError`, `ModuleNotFoundError`, `Exception` o un `except:`
   desnudo y no termina en `raise`, o de `with contextlib.suppress(...)` de esos errores); los protegidos son
   opcionales por contrato y nunca impiden instalarla. Las dependencias declaradas se leen de
-  `[project] dependencies`, sus extras, `[dependency-groups]` y `setup.cfg`; con
-  `dynamic = ["dependencies"]`, solo `setup.py` u otro formato (`[tool.poetry.dependencies]`)
-  son desconocidas, y esa distribución nunca origina una dependencia no declarada. Cada hallazgo entre
+  `[project] dependencies`, sus extras, `[dependency-groups]`, `[tool.poetry]`
+  (dependencias, extras y grupos) y `setup.cfg`; con `dynamic = ["dependencies"]` o solo
+  `setup.py` son desconocidas, y esa distribución nunca origina una dependencia no declarada.
+  Dos manifiestos con el mismo nombre dan un aviso, y solo el menos profundo lo conserva.
+  Cada hallazgo entre
   distribuciones trae un **Arreglo** que se puede copiar (la línea a añadir y el manifiesto
   donde va). Se calcula también con `[findings] enabled = false`.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta

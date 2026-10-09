@@ -4,10 +4,15 @@ import configparser
 import re
 import tomllib
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
-from unskein.parsers.models import ParseWarning, WarningCode
+from unskein.parsers.models import (
+    ManifestStyle,
+    OptionalDependencies,
+    ParseWarning,
+    WarningCode,
+)
 
 PYPROJECT_NAME = "pyproject.toml"
 SETUP_CFG_NAME = "setup.cfg"
@@ -15,6 +20,10 @@ DYNAMIC_DEPENDENCIES = "dependencies"
 DYNAMIC_VERSION = "version"
 INCLUDE_GROUP = "include-group"
 COMMENT_PREFIX = "#"
+POETRY_PYTHON = "python"
+POETRY_OPTIONAL = "optional"
+POETRY_LEGACY_DEV = "dev-dependencies"
+POETRY_DEV_GROUP = "dev"
 CFG_OPTIONS = "options"
 CFG_INSTALL_REQUIRES = "install_requires"
 CFG_EXTRAS = "options.extras_require"
@@ -36,15 +45,18 @@ class DeclaredDependencies:
         requires: Names of its required dependencies; None when unknown (dynamic,
             ``setup.py`` only, or no readable declaration).
         optional: Names per extra (``[project.optional-dependencies]``,
-            ``[options.extras_require]``) and per dependency group.
+            ``[options.extras_require]``, ``[tool.poetry.extras]``) and per dependency
+            group, sorted by extra.
         version: Its literal version; None when dynamic or missing.
         manifest: File that declares them; None when there is none.
+        style: Where the manifest declares required dependencies.
     """
 
     requires: frozenset[str] | None = None
-    optional: dict[str, frozenset[str]] = field(default_factory=dict)
+    optional: OptionalDependencies = ()
     version: str | None = None
     manifest: Path | None = None
+    style: ManifestStyle = ManifestStyle.PROJECT
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +100,8 @@ def requirement_name(spec: str) -> str | None:
 def read_dependencies(directory: Path, warnings: list[ParseWarning]) -> DeclaredDependencies:
     """Read what the manifest of a distribution declares; ``setup.py`` is never executed.
 
-    ``pyproject.toml`` with a ``[project]`` table wins; otherwise ``setup.cfg``. Unreadable
+    ``pyproject.toml`` with a ``[project]`` table wins, then a ``[tool.poetry]`` table, then
+    ``setup.cfg``. Unreadable
     manifests give unknown dependencies quietly: the layout already warned about them.
 
     Args:
@@ -103,6 +116,9 @@ def read_dependencies(directory: Path, warnings: list[ParseWarning]) -> Declared
     project = data.get("project")
     if isinstance(project, dict):
         return _from_project(project, data, _Source(pyproject, warnings))
+    poetry = data.get("tool", {}).get("poetry") if isinstance(data.get("tool"), dict) else None
+    if isinstance(poetry, dict):
+        return _from_poetry(poetry, pyproject)
     return _from_setup_cfg(directory / SETUP_CFG_NAME, warnings)
 
 
@@ -183,7 +199,72 @@ def _from_project(project: dict, data: dict, source: _Source) -> DeclaredDepende
         optional.update(_GroupResolver(groups, source).resolve_all())
     version = project.get("version")
     literal = version if isinstance(version, str) and DYNAMIC_VERSION not in dynamic else None
-    return DeclaredDependencies(requires, optional, literal, source.manifest)
+    return DeclaredDependencies(requires, _frozen(optional), literal, source.manifest)
+
+
+def _frozen(optional: dict[str, frozenset[str]]) -> OptionalDependencies:
+    """Return names per extra as an immutable tuple, sorted by extra.
+
+    Args:
+        optional: Names per extra or group.
+
+    Returns:
+        The pairs, sorted.
+    """
+    return tuple(sorted(optional.items()))
+
+
+def _poetry_names(table: object, *, include_optional: bool) -> frozenset[str]:
+    """Return the normalized names of a Poetry dependency table.
+
+    Args:
+        table: A ``[tool.poetry.dependencies]``-like table (name → constraint).
+        include_optional: Whether entries marked ``optional = true`` count.
+
+    Returns:
+        The names, without ``python``.
+    """
+    if not isinstance(table, dict):
+        return frozenset()
+    names = set()
+    for name, constraint in table.items():
+        is_optional = isinstance(constraint, dict) and constraint.get(POETRY_OPTIONAL) is True
+        if name != POETRY_PYTHON and (include_optional or not is_optional):
+            names.add(normalize_name(name))
+    return frozenset(names)
+
+
+def _from_poetry(poetry: dict, manifest: Path) -> DeclaredDependencies:
+    """Read ``[tool.poetry]`` dependencies, extras, groups and version.
+
+    Args:
+        poetry: The ``[tool.poetry]`` table.
+        manifest: The ``pyproject.toml`` that holds it.
+
+    Returns:
+        The declared dependencies; entries marked ``optional`` only count in extras.
+    """
+    requires = _poetry_names(poetry.get("dependencies"), include_optional=False)
+    optional: dict[str, frozenset[str]] = {}
+    extras = poetry.get("extras")
+    if isinstance(extras, dict):
+        for extra, names in extras.items():
+            optional[extra] = frozenset(
+                normalize_name(name) for name in _as_list(names) if isinstance(name, str)
+            )
+    groups = poetry.get("group")
+    if isinstance(groups, dict):
+        for group, table in groups.items():
+            dependencies = table.get("dependencies") if isinstance(table, dict) else None
+            optional[group] = _poetry_names(dependencies, include_optional=True)
+    if POETRY_LEGACY_DEV in poetry:
+        legacy = _poetry_names(poetry[POETRY_LEGACY_DEV], include_optional=True)
+        optional[POETRY_DEV_GROUP] = optional.get(POETRY_DEV_GROUP, frozenset()) | legacy
+    version = poetry.get("version")
+    literal = version if isinstance(version, str) else None
+    return DeclaredDependencies(
+        requires, _frozen(optional), literal, manifest, ManifestStyle.POETRY
+    )
 
 
 @dataclass(slots=True)
@@ -224,7 +305,9 @@ class _GroupResolver:
             included = entry.get(INCLUDE_GROUP)
             path = (*visiting, group)
             if not isinstance(included, str) or included not in self.groups or included in path:
-                detail = included if isinstance(included, str) else str(entry)
+                detail = (
+                    f"{INCLUDE_GROUP} = {included}" if isinstance(included, str) else str(entry)
+                )
                 self.source.warnings.append(
                     ParseWarning(
                         WarningCode.INVALID_REQUIREMENT, self.source.manifest, None, detail
@@ -280,4 +363,4 @@ def _from_setup_cfg(path: Path, warnings: list[ParseWarning]) -> DeclaredDepende
     version = parser.get(CFG_METADATA, CFG_VERSION, fallback="").strip() or None
     if version is not None and version.startswith(CFG_DYNAMIC_PREFIXES):
         version = None
-    return DeclaredDependencies(requires, optional, version, path)
+    return DeclaredDependencies(requires, _frozen(optional), version, path, ManifestStyle.SETUP_CFG)
