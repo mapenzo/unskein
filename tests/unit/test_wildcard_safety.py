@@ -107,6 +107,14 @@ SCENARIOS = {
         },
         "import app.m",
     ),
+    "public_api_through_a_facade": (
+        {
+            "app/__init__.py": "from app.api import *\n",
+            "app/types.py": "A = 1\nC = 3\n",
+            "app/api.py": "from app.types import *\n\n\ndef total():\n    return A\n",
+        },
+        "import app; print(app.C, app.total())",
+    ),
     "cycle_of_stars": (
         {
             "app/a.py": "from app.b import *\nX = 1\n",

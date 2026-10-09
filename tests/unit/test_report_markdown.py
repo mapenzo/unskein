@@ -974,10 +974,12 @@ def test_wildcard_findings_en() -> None:
     report = render(STAR_ROOT, analyzed(STAR_ROOT))
     assert "### Wildcard import (5)" in report
     assert (
-        "- `app.types` (5 modules, 5 statements; they use 0 to 2 of 4 names; 1 uses nothing; "
-        "1 name kept because other modules import it through the modules that star-import it)\n"
+        "- `app.types` (5 modules, 5 statements; they use 0 to 4 of 4 names; 1 uses nothing; "
+        "3 names kept because other modules import them through the modules that star-import it)\n"
         "  - `app/annot.py:1`: `from app.types import D`\n"
-        "  - `app/api.py:1`: `from app.types import A, B`\n"
+        "  - `app/api.py:1`: `from app.types import A, B, C, D` (all kept: `app.api` is used by "
+        "itself elsewhere, through a star import whose names cannot be known, or re-exported by a "
+        "package facade without `__all__` (public API), so any of its names may be read)\n"
         "  - `app/both.py:1`: `from app.types import A`\n"
         "  - `app/chain_mid.py:1`: `from app.types import C` (kept for `app.chain_top`: `C`)\n"
         "  - `app/dead.py:1`: remove (it uses nothing; the line loads `app.types` when "
@@ -1003,8 +1005,8 @@ def test_wildcard_findings_es() -> None:
     report = render(STAR_ROOT, analyzed(STAR_ROOT), Lang.ES)
     assert "### Import con asterisco (5)" in report
     assert (
-        "- `app.types` (5 módulos, 5 sentencias; usan de 0 a 2 de 4 nombres; 1 no usa nada; "
-        "1 nombre se conserva porque otros módulos lo importan a través de quienes lo "
+        "- `app.types` (5 módulos, 5 sentencias; usan de 0 a 4 de 4 nombres; 1 no usa nada; "
+        "3 nombres se conservan porque otros módulos los importan a través de quienes lo "
         "importan con asterisco)"
     ) in report
     assert "eliminar (no usa nada; la línea carga `app.types` al importar" in report
@@ -1089,8 +1091,9 @@ def test_a_module_used_by_itself_keeps_every_name_and_says_why(make_project) -> 
     )
     report = render(root, analyzed(root))
     assert (
-        "`from app.b import X, Y` (all kept: `app.m` is used by itself elsewhere or through "
-        "a star import whose names cannot be known, so any of its names may be read)"
+        "`from app.b import X, Y` (all kept: `app.m` is used by itself elsewhere, through a "
+        "star import whose names cannot be known, or re-exported by a package facade without "
+        "`__all__` (public API), so any of its names may be read)"
     ) in report
 
 

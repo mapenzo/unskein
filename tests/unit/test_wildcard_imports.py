@@ -42,12 +42,19 @@ def test_fixes_of_the_types_module() -> None:
         5,
         4,
         0,
-        2,
+        4,
         1,
     )
     assert types.fixes == (
         WildcardFix("app/annot.py:1", "app.annot", WildcardAction.EXPLICIT, ("D",)),
-        WildcardFix("app/api.py:1", "app.api", WildcardAction.EXPLICIT, ("A", "B")),
+        WildcardFix(
+            "app/api.py:1",
+            "app.api",
+            WildcardAction.EXPLICIT,
+            ("A", "B", "C", "D"),
+            kept=("C", "D"),
+            kept_for=(("", "C"), ("", "D")),
+        ),
         WildcardFix("app/both.py:1", "app.both", WildcardAction.EXPLICIT, ("A",)),
         WildcardFix(
             "app/chain_mid.py:1",
@@ -119,12 +126,13 @@ def test_findings_carry_the_summary_and_follow_the_same_order() -> None:
         "statements": 5,
         "names": 4,
         "used_min": 0,
-        "used_max": 2,
+        "used_max": 4,
         "unused_statements": 1,
         "no_fix_statements": 0,
-        "reexported": 1,
+        "reexported": 3,
         "fixes": (
-            "app/annot.py:1 from app.types import D; app/api.py:1 from app.types import A, B; "
+            "app/annot.py:1 from app.types import D; "
+            "app/api.py:1 from app.types import A, B, C, D; "
             "app/both.py:1 from app.types import A; app/chain_mid.py:1 from app.types import C; "
             "app/dead.py:1 remove"
         ),

@@ -2,13 +2,12 @@
 
 import ast
 import re
-import warnings
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
-from unskein.parsers.discovery import detect_encoding
+from unskein.parsers.discovery import parse_source
 from unskein.parsers.indirection import walk_submodules
 from unskein.parsers.models import ImportKind, ModuleInfo, ParseResult
 
@@ -409,26 +408,6 @@ def postpones_annotations(tree: ast.Module) -> bool:
     )
 
 
-def _parse_source(file_path: Path, encoding: str | None) -> ast.Module | None:
-    """Read and parse a source file again, or give up quietly.
-
-    Args:
-        file_path: Python source file.
-        encoding: Fallback encoding when the file declares none.
-
-    Returns:
-        The parsed module, or None when the file cannot be read or parsed any more.
-    """
-    try:
-        source = file_path.read_text(encoding=detect_encoding(file_path, encoding))
-        with warnings.catch_warnings():
-            # The scan already reported these; repeating them on this on-demand path is noise.
-            warnings.simplefilter("ignore", SyntaxWarning)
-            return ast.parse(source, filename=str(file_path))
-    except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError, LookupError):
-        return None
-
-
 def collect_import_evidence(
     module: ModuleInfo,
     pairs: Collection[tuple[str, str]],
@@ -464,7 +443,7 @@ def collect_import_evidence(
             symbols[pair].add(edge.symbol_name)
     if not lines:
         return {}
-    tree = _parse_source(module.file_path, encoding)
+    tree = parse_source(module.file_path, encoding)
     bound = bound_names_by_line(tree) if tree is not None else {}
     names = {name for found in lines.values() for line in found for name in bound.get(line, ())}
     contexts = collect_use_contexts(tree, names) if tree is not None else {}
@@ -659,7 +638,7 @@ def collect_names_read_from(
             else:
                 collector.add_all(edge.target)
         if pending:
-            _whole_module_reads(_parse_source(module.file_path, encoding), pending, collector)
+            _whole_module_reads(parse_source(module.file_path, encoding), pending, collector)
     return {module: frozenset(names) for module, names in collector.found.items()}
 
 
@@ -710,8 +689,10 @@ def _relative_base(module: ModuleInfo, node: ast.ImportFrom) -> str | None:
     return MODULE_SEPARATOR.join(parts)
 
 
-def _module_bindings(module: ModuleInfo, tree: ast.Module, targets: Collection[str]) -> dict:
-    """Find the names a module binds to whole modules among the targets.
+def _module_bindings(
+    module: ModuleInfo, tree: ast.Module, targets: Collection[str]
+) -> tuple[dict[str, set[tuple[str, str]]], set[str]]:
+    """Find the names a module binds to whole modules among the targets, in one walk.
 
     Args:
         module: The importing module.
@@ -719,13 +700,17 @@ def _module_bindings(module: ModuleInfo, tree: ast.Module, targets: Collection[s
         targets: Modules of interest.
 
     Returns:
-        Each bound name with the (target, prefix) pairs it reaches: ``import app.m`` binds
-        ``app`` with prefix ``m``; ``import app.m as x`` and ``from app import m`` bind
-        the name itself with an empty prefix.
+        Each bound name with the (target, prefix) pairs it reaches (``import app.m`` binds
+        ``app`` with prefix ``m``; ``import app.m as x`` and ``from app import m`` bind the
+        name itself with an empty prefix), and every name something else assigns.
     """
     bindings: dict[str, set[tuple[str, str]]] = {}
+    rebound: set[str] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
+        if isinstance(node, ast.Name):
+            if not isinstance(node.ctx, ast.Load):
+                rebound.add(node.id)
+        elif isinstance(node, ast.Import):
             for alias in node.names:
                 for target in targets:
                     if alias.asname and alias.name == target:
@@ -742,7 +727,7 @@ def _module_bindings(module: ModuleInfo, tree: ast.Module, targets: Collection[s
                 full = f"{base}{MODULE_SEPARATOR}{alias.name}"
                 if base is not None and full in targets:
                     bindings.setdefault(alias.asname or alias.name, set()).add((full, ""))
-    return bindings
+    return bindings, rebound
 
 
 def collect_attribute_reads(
@@ -763,15 +748,10 @@ def collect_attribute_reads(
         For each target, the attributes read and whether the module object escapes.
     """
     result: dict[str, tuple[frozenset[str], bool]] = {}
-    tree = _parse_source(module.file_path, encoding)
+    tree = parse_source(module.file_path, encoding)
     if tree is None:
         return {target: (frozenset(), True) for target in targets}
-    bindings = _module_bindings(module, tree, targets)
-    rebound = {
-        node.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load)
-    }
+    bindings, rebound = _module_bindings(module, tree, targets)
     usages = collect_name_usage(tree, bindings)
     reads: dict[str, set[str]] = {target: set() for target in targets}
     # A target no name is bound to (a star import edge) has no attribute reads.

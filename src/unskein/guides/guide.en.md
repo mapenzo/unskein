@@ -133,14 +133,19 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     counts as guarded too.
     It does not follow control flow: an earlier check (`if available():`) is not seen.
   - **Wildcard import**: one finding per module imported with `from x import *` outside a
-    package facade. For each statement it gives the explicit import to write, with the
-    names it needs computed with the whole project: those the module reads, those other
-    analyzed modules import from it or read as its attributes, and those that pass on to
-    modules that star-import it. When in doubt a name is kept. A statement that needs
-    nothing can be removed (the line loads the module when imported, so removing it also
-    drops its load-time effects). A star whose names cannot be known (a computed `__all__`,
-    a cycle of star imports) stays a warning. Tests only count when they are analyzed: run
-    with `--include-tests` before applying the fixes.
+    package facade. For each statement it gives the explicit import to write, but only when
+    it can prove it safe; otherwise it says why ("no safe fix": a needed name may be unbound,
+    for example under `TYPE_CHECKING`; the two modules import each other; or a submodule
+    another module may have loaded). The names come from the whole project: those the module
+    reads, those other analyzed modules import from it or read as its attributes, and those
+    that pass on to modules that star-import it; when in doubt a name is kept. A module used
+    by itself, loaded with `importlib.import_module`, or re-exported by a facade without
+    `__all__` (public API) keeps every name. A statement that needs nothing can be removed
+    (the line loads the module when imported, so removing it also drops its load-time
+    effects). A star whose names cannot be known (a computed `__all__`, a star of an external
+    module upstream) stays a warning. Tests only count when they are analyzed: run with
+    `--include-tests` before applying the fixes, and scan the project root, not a package
+    directory, so packaged code is recognised.
   - **Cycle between distributions**: distributions that import each other; it says which
     edge to cut.
 

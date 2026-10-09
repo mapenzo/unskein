@@ -1,6 +1,7 @@
 """Find the names a module exposes to ``from module import *``."""
 
 import ast
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -14,7 +15,16 @@ IMPORT_NODES = (ast.Import, ast.ImportFrom)
 STAR = "*"
 # Calls that can bind module names nobody can read from the source.
 NAMESPACE_WRITERS = frozenset({"globals", "vars", "exec"})
-FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+# Patterns that bind their ``name`` in a ``match``.
+CAPTURE_NODES = (ast.MatchAs, ast.MatchStar)
+# Bodies whose bindings stay out of the module namespace.
+SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+GLOBAL_STATEMENT = re.compile(r"^\s*global\s+([\w\s,]+)", re.MULTILINE)
+GLOBAL_SEPARATOR = ","
+GLOBAL_KEYWORD = "global "
+NAMESPACE_WRITER_CALL = re.compile(r"\b(?:globals|vars|exec)\s*\(")
+WALRUS = ":="
+TRY_NODES = (ast.Try, ast.TryStar)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,12 +41,6 @@ class ModuleExports:
         has_dynamic_all: Whether ``__all__`` is computed or changed in a way that cannot be
             read (a non-literal value, a method call, a subscript, two assignments): what a
             star import brings is then unknown.
-        conditional_names: Names a star import may bring that may be unbound when it runs:
-            bound only inside a block (``if``, ``try``, ``for``…), by a walrus, a ``match``,
-            ``except … as`` or a ``global`` in a function, only annotated, or deleted;
-            sorted.
-        is_uncertain: Whether a star import of it brings names nobody can list: it has a
-            star import inside a block, or calls ``globals()``, ``vars()`` or ``exec``.
     """
 
     names: tuple[str, ...]
@@ -44,8 +48,6 @@ class ModuleExports:
     bound_names: tuple[str, ...] = ()
     defined_names: tuple[str, ...] = ()
     has_dynamic_all: bool = False
-    conditional_names: tuple[str, ...] = ()
-    is_uncertain: bool = False
 
 
 def _module_level_statements(tree: ast.Module) -> Iterator[ast.stmt]:
@@ -222,8 +224,7 @@ def module_exports(tree: ast.Module) -> ModuleExports:
 
     Returns:
         The exposed names, sorted, whether they come from ``__all__``, every bound name, the
-        names it defines itself, whether ``__all__`` is dynamic, the exposed names that may be
-        unbound and whether a star of it brings names nobody can list.
+        names it defines itself and whether ``__all__`` is dynamic.
     """
     statements = list(_module_level_statements(tree))
     names = {name for node in statements for name in _bound_names(node)}
@@ -240,24 +241,35 @@ def module_exports(tree: ast.Module) -> ModuleExports:
     )
     declared = _literal_all(statements)
     dynamic = _has_dynamic_all(statements, declared)
-    loose, uncertain = _loose_bindings(tree)
+    if declared is not None:
+        return ModuleExports(tuple(sorted(set(declared))), True, bound, defined, dynamic)
+    public = {name for name in names if not name.startswith(PRIVATE_PREFIX)}
+    return ModuleExports(tuple(sorted(public)), False, bound, defined, dynamic)
+
+
+def module_surface(tree: ast.Module, source: str | None = None) -> tuple[tuple[str, ...], bool]:
+    """Tell which names a star of the module may leave unbound, and whether it is knowable.
+
+    Args:
+        tree: Parsed module.
+        source: Its text, which lets cheap checks skip walks; None walks anyway.
+
+    Returns:
+        The names a star of it may bring that may be unbound when it runs (bound only
+        inside a block, by a walrus, a ``match``, ``except … as`` or a ``global`` in a
+        function, only annotated, or deleted), sorted; and whether it brings names nobody
+        can list (a star import inside a block, ``globals()``, ``vars()`` or ``exec``).
+    """
+    statements = list(_module_level_statements(tree))
+    names = {name for node in statements for name in _bound_names(node)}
+    declared = _literal_all(statements)
+    loose, uncertain = _loose_bindings(tree, statements, source)
     if declared is not None:
         exposed = set(declared)
-        shown = exposed
     else:
-        shown = {name for name in names if not name.startswith(PRIVATE_PREFIX)}
-        exposed = shown | {name for name in loose if not name.startswith(PRIVATE_PREFIX)}
+        exposed = {name for name in names | loose if not name.startswith(PRIVATE_PREFIX)}
     steady = _steady_names(tree, statements)
-    conditional = tuple(sorted(name for name in exposed if name not in steady))
-    return ModuleExports(
-        tuple(sorted(shown)),
-        declared is not None,
-        bound,
-        defined,
-        dynamic,
-        conditional,
-        uncertain,
-    )
+    return tuple(sorted(name for name in exposed if name not in steady)), uncertain
 
 
 def _steady_names(tree: ast.Module, statements: list[ast.stmt]) -> set[str]:
@@ -287,11 +299,19 @@ def _steady_names(tree: ast.Module, statements: list[ast.stmt]) -> set[str]:
     return steady - deleted
 
 
-def _loose_bindings(tree: ast.Module) -> tuple[set[str], bool]:
+def _loose_bindings(
+    tree: ast.Module, statements: list[ast.stmt], source: str | None
+) -> tuple[set[str], bool]:
     """Find the module names bound in ways a star import cannot count on.
+
+    Only module-level statements are visited (function and class bodies bind nothing in
+    the module). Expressions are walked for walrus only when the source has ``:=``;
+    ``global`` statements and namespace writers are found in the text.
 
     Args:
         tree: Parsed module.
+        statements: Its module-level statements (see ``_module_level_statements``).
+        source: Its text, to skip walks that cannot matter; None walks anyway.
 
     Returns:
         Names bound by ``for``/``with`` targets, walrus, ``match`` captures, ``except … as``
@@ -301,31 +321,44 @@ def _loose_bindings(tree: ast.Module) -> tuple[set[str], bool]:
     loose: set[str] = set()
     uncertain = False
     top = {id(node) for node in tree.body}
-    stack: list[tuple[ast.AST, bool]] = [(node, False) for node in tree.body]
-    while stack:
-        node, in_function = stack.pop()
-        if isinstance(node, ast.Global):
-            loose.update(node.names)
-        elif isinstance(node, ast.ImportFrom) and id(node) not in top:
+    for node in statements:
+        if isinstance(node, ast.ImportFrom) and id(node) not in top:
             uncertain |= any(alias.name == STAR for alias in node.names)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            uncertain |= node.func.id in NAMESPACE_WRITERS
-        if not in_function:
-            if isinstance(node, (ast.For, ast.AsyncFor)):
-                loose.update(_target_names(node.target))
-            elif isinstance(node, (ast.With, ast.AsyncWith)):
-                for item in node.items:
-                    if item.optional_vars is not None:
-                        loose.update(_target_names(item.optional_vars))
-            elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
-                loose.add(node.target.id)
-            elif (
-                isinstance(node, (ast.MatchAs, ast.MatchStar))
-                and node.name
-                or isinstance(node, ast.ExceptHandler)
-                and node.name
-            ):
-                loose.add(node.name)
-        nested = in_function or isinstance(node, FUNCTION_NODES)
-        stack.extend((child, nested) for child in ast.iter_child_nodes(node))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            loose.update(_target_names(node.target))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    loose.update(_target_names(item.optional_vars))
+        elif isinstance(node, TRY_NODES):
+            loose.update(handler.name for handler in node.handlers if handler.name)
+        elif isinstance(node, ast.Match):
+            for case in node.cases:
+                loose.update(
+                    n.name
+                    for n in ast.walk(case.pattern)
+                    if isinstance(n, CAPTURE_NODES) and n.name
+                )
+    if source is None or WALRUS in source:
+        for node in statements:
+            if not isinstance(node, SCOPE_NODES):
+                loose.update(
+                    n.target.id
+                    for n in ast.walk(node)
+                    if isinstance(n, ast.NamedExpr) and isinstance(n.target, ast.Name)
+                )
+    if source is None:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Global):
+                loose.update(node.names)
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                uncertain |= node.func.id in NAMESPACE_WRITERS
+    else:
+        # Text is enough here and far cheaper than walking every function body; a match in a
+        # comment or a string only withholds a fix.
+        if GLOBAL_KEYWORD in source:
+            for match in GLOBAL_STATEMENT.finditer(source):
+                loose.update(name.strip() for name in match.group(1).split(GLOBAL_SEPARATOR))
+        if any(f"{writer}(" in source for writer in NAMESPACE_WRITERS):
+            uncertain |= NAMESPACE_WRITER_CALL.search(source) is not None
     return loose, uncertain

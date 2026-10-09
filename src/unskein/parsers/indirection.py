@@ -5,6 +5,8 @@ from dataclasses import replace
 
 import networkx as nx
 
+from unskein.parsers.discovery import parse_source
+from unskein.parsers.exports import module_surface
 from unskein.parsers.models import (
     STAR_EXPORT,
     ImportEdge,
@@ -304,6 +306,39 @@ def wildcard_conditional(
     return frozenset(names)
 
 
+def _with_surfaces(result: ParseResult, stars: Mapping[str, list[Star]]) -> ParseResult:
+    """Complete the star surface of every module something star-imports.
+
+    Reads those sources again: the surface is only needed for them, and computing it while
+    parsing every file would cost more than the whole rule.
+
+    Args:
+        result: Parse result.
+        stars: Star imports of every module (``star_imports``).
+
+    Returns:
+        The result with ``ModuleInfo.surface`` complete for star-imported modules.
+    """
+    bases = {base for statements in stars.values() for _, base in statements}
+    modules = []
+    for module in result.modules:
+        if module.name in bases:
+            tree = parse_source(module.file_path, None)
+            if tree is None:
+                surface = replace(module.surface, uncertain=True)
+            else:
+                source = module.file_path.read_text(errors="replace")
+                conditional, uncertain = module_surface(tree, source)
+                surface = replace(
+                    module.surface,
+                    uncertain=module.surface.uncertain or uncertain,
+                    conditional=conditional,
+                )
+            module = replace(module, surface=surface)
+        modules.append(module)
+    return replace(result, modules=modules)
+
+
 def resolve_target(
     module: str,
     symbol: str | None,
@@ -462,8 +497,9 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     # Virtual modules have no file, but chains walk through them to their submodules.
     module_names = frozenset(module.name for module in result.modules) | frozenset(result.virtual)
     warnings = dict.fromkeys(result.warnings)
-    by_name = {module.name: module for module in result.modules}
     every_star = star_imports(result.modules, result.re_exports)
+    result = _with_surfaces(result, every_star)
+    by_name = {module.name: module for module in result.modules}
     cycles = star_cycles(every_star)
     for module in result.modules:
         for line, base in module.stars.statements:

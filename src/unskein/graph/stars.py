@@ -192,6 +192,26 @@ def _providers(
     return providers
 
 
+def _is_public_facade(module: ModuleInfo, stars: Mapping[str, list[Star]]) -> bool:
+    """Tell whether a package facade re-exports star imports as its public API.
+
+    Code outside the project may read any name such a facade exposes, so every name its
+    stars bring must stay.
+
+    Args:
+        module: A parsed module.
+        stars: Star imports of every module.
+
+    Returns:
+        True for an ``__init__.py`` without ``__all__`` that has star imports.
+    """
+    return (
+        module.file_path.name == PACKAGE_INIT_FILE
+        and not module.declares_all
+        and bool(stars.get(module.name))
+    )
+
+
 def _initial_demand(
     result: ParseResult,
     stars: Mapping[str, list[Star]],
@@ -227,7 +247,18 @@ def _initial_demand(
                 demand[edge.target].add(edge.symbol_name)
                 needer.setdefault((edge.target, edge.symbol_name), module.name)
             elif edge.target in stars and edge.line_number not in star_lines:
-                whole.add(edge.target)
+                target = by_name.get(edge.target)
+                if target is not None and target.file_path.name == PACKAGE_INIT_FILE:
+                    # Package imports already carry their attribute reads.
+                    for chain in edge.accessed:
+                        demand[edge.target].add(chain.split(NAME_SEPARATOR)[0])
+                        needer.setdefault(
+                            (edge.target, chain.split(NAME_SEPARATOR)[0]), module.name
+                        )
+                    if edge.escapes:
+                        opaque.add(edge.target)
+                else:
+                    whole.add(edge.target)
         if whole:
             for target, (reads, escapes) in collect_attribute_reads(module, whole, None).items():
                 for name in reads:
@@ -238,6 +269,8 @@ def _initial_demand(
         for _, base in stars.get(module.name, []):
             if brings.get(base) is None:
                 opaque.add(base)
+        if _is_public_facade(module, stars):
+            opaque.add(module.name)
     for name in opaque:
         for _, base in stars.get(name, []):
             for brought in brings.get(base) or ():

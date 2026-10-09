@@ -666,11 +666,9 @@ def parse_file(
         else ()
     )
     stars = StarImports(tuple(collector.wildcards), reads, dynamic)
-    surface = StarSurface(
-        exports.has_dynamic_all,
-        exports.is_uncertain or collector.has_external_star,
-        exports.conditional_names,
-    )
+    # Conditional names and the rest of the surface are computed later, only for the
+    # modules something star-imports (``resolve_indirection``).
+    surface = StarSurface(exports.has_dynamic_all, collector.has_external_star)
     module = ModuleInfo(
         name,
         file_path,

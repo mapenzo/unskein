@@ -1,7 +1,9 @@
 """Find the source files to analyze: combined excludes, safe directory walk, encoding."""
 
+import ast
 import os
 import tokenize
+import warnings
 from collections.abc import Hashable, Iterator, Mapping
 from pathlib import Path
 
@@ -175,3 +177,23 @@ def detect_encoding(file_path: Path, config_default: str | None) -> str:
         return encoding
     except SyntaxError:
         return config_default or "utf-8"
+
+
+def parse_source(file_path: Path, encoding: str | None) -> ast.Module | None:
+    """Read and parse a source file again, or give up quietly.
+
+    Args:
+        file_path: Python source file.
+        encoding: Fallback encoding when the file declares none.
+
+    Returns:
+        The parsed module, or None when the file cannot be read or parsed any more.
+    """
+    try:
+        source = file_path.read_text(encoding=detect_encoding(file_path, encoding))
+        with warnings.catch_warnings():
+            # The scan already reported these; repeating them on this on-demand path is noise.
+            warnings.simplefilter("ignore", SyntaxWarning)
+            return ast.parse(source, filename=str(file_path))
+    except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError, LookupError):
+        return None

@@ -139,15 +139,20 @@ detección.
     cuenta como protegido. No sigue el flujo de control: una comprobación previa
     (`if available():`) no se ve.
   - **Import con asterisco**: un hallazgo por módulo importado con `from x import *` fuera de
-    una fachada. Para cada sentencia da el import explícito que escribir, con los nombres
-    que necesita calculados con el proyecto entero: los que el módulo lee, los que otros
-    módulos analizados importan desde él o leen como atributos suyos, y los que pasan a
-    quienes lo importan con asterisco. Ante la duda, el nombre se conserva. Una sentencia que
-    no necesita nada se puede eliminar (la línea carga el módulo al importar, así que
-    borrarla también quita sus efectos al cargar). Un import con asterisco cuyos nombres no
-    se pueden saber (`__all__` calculado, un ciclo de imports con asterisco) se queda como
-    aviso. Los tests solo cuentan si se analizan: ejecuta con `--include-tests` antes de
-    aplicar los arreglos.
+    una fachada. Para cada sentencia da el import explícito que escribir, pero solo cuando
+    puede demostrar que es seguro; si no, dice por qué («sin arreglo seguro»: un nombre
+    necesario puede quedar sin ligar, por ejemplo bajo `TYPE_CHECKING`; los dos módulos se
+    importan entre sí; o un submódulo que otro módulo puede haber cargado). Los nombres salen
+    del proyecto entero: los que el módulo lee, los que otros módulos analizados importan
+    desde él o leen como atributos suyos, y los que pasan a quienes lo importan con asterisco;
+    ante la duda, el nombre se conserva. Un módulo que se usa entero, que se carga con
+    `importlib.import_module` o que re-exporta una fachada sin `__all__` (API pública)
+    conserva todos sus nombres. Una sentencia que no necesita nada se puede eliminar (la línea
+    carga el módulo al importar, así que borrarla también quita sus efectos al cargar). Un
+    import con asterisco cuyos nombres no se pueden saber (`__all__` calculado, una estrella de
+    un módulo externo en la cadena) se queda como aviso. Los tests solo cuentan si se
+    analizan: ejecuta con `--include-tests` antes de aplicar los arreglos, y analiza la raíz
+    del proyecto, no la carpeta de un paquete, para que se reconozca el código empaquetado.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 

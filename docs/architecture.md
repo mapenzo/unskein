@@ -895,42 +895,50 @@ módulo empaquetado distinto de los importadores **define** alguno
 `summarize_wildcards(result, scripts)`: para cada `from B import *` fuera de fachada de
 código empaquetado que no es script, los nombres que necesita y el arreglo.
 
-Principio: **ante la duda, se conserva**. Un nombre de más solo alarga el arreglo; uno de
-menos rompería el código. Un test de propiedad aplica los arreglos tal cual y ejecuta Python
-antes y después (`tests/unit/test_wildcard_safety.py`).
+Principio: **un arreglo solo se da si se puede demostrar que es seguro; si no, se dice por
+qué**. Ante la duda un nombre se conserva. Un test de propiedad aplica los arreglos tal cual y
+ejecuta Python antes y después (`tests/unit/test_wildcard_safety.py`, con los 78 escenarios de
+la segunda revisión en `wildcard_scenarios.py`).
 
 - **Lo que trae** (`wildcard_names` en `parsers/indirection.py`, compartido con el aviso): el
-  `__all__` literal de B o, sin él, sus nombres públicos, los submódulos que su `__init__`
-  importa (importar `pkg.sub` liga `sub` en el paquete) y los de sus estrellas anidadas (de
-  fachada o no), con conjunto de visitados; `None` si algún módulo del camino no se parseó o
-  tiene `__all__` dinámico: esa sentencia no tiene arreglo y da `STAR_IMPORT`.
-- **Proveedores** (`_providers`): **todas** las estrellas de M que traen un nombre lo
-  conservan, no solo la última: en ramas alternativas (`try`/`except`, `if`/`else`)
-  cualquiera puede ser la que corre, y un import explícito de un nombre que M también liga
-  mantiene el significado sea cual sea el orden.
-- **Demanda** (`_demand`, punto fijo): lo que M lee (`star_reads`, con `del x` y `x += 1`),
-  lo que cualquier módulo analizado importa de M (`from M import X`) o lee como atributo de
-  M (`import app.m; app.m.X`, `ImportEdge.attribute_reads`), y lo que necesitan quienes
-  importan M con asterisco, a través de sus proveedores. M necesita **todo** lo que traen sus
-  estrellas cuando su uso no se puede analizar: se usa suelto o con un nombre ligado a dos
-  objetos (`attribute_escapes`), o una estrella de M trae nombres desconocidos. `needer`
-  guarda quién necesita cada nombre que M no lee.
-- **Ciclos de estrellas** (`star_cycles`): en un ciclo, `from x import *` corre con `x` a
-  medio importar y trae menos de lo que dice el código; esas sentencias no tienen arreglo y
-  dan `STAR_IMPORT`.
-- **Arreglo** (`WildcardFix`): `remove` si no necesita nada (la línea carga B al importar:
-  borrarla quita sus efectos al cargar); `explicit` con `from B import …` (siempre desde B,
-  no cambia lo que se carga); `remove_self` para `from . import *` de un paquete sin
-  `__all__`. Notas: `kept`/`kept_for` (por módulo que lo necesita), `defined_elsewhere`
-  (origen interno de lo que B solo pasa; un import con alias no da nota) y `external`.
-- `find_wildcard_imports`: un hallazgo `WILDCARD_IMPORT` por módulo B (o paquete que se
-  importa a sí mismo), los de más importadores primero, con evidencia `kind`, `importers`,
-  `statements`, `names`, `used_min`, `used_max`, `unused_statements`, `reexported`, `fixes`
-  (para la IA: hasta 5 sentencias y 20 nombres) y `fixes_total`. El informe lista **todos**
-  los hallazgos de esta regla, todas sus sentencias y todos los nombres, porque el arreglo
-  está para copiarlo. `AnalysisResult.wildcards` lleva el detalle.
-- Límites: los tests solo cuentan si se analizan (`--include-tests`; la recomendación lo
-  dice); no se ven lecturas por `globals()`, `getattr(módulo, "x")` o `eval`.
+  `__all__` literal de B o, sin él, sus nombres públicos, los ligados de formas que pueden no
+  ocurrir (`for`, `with`, walrus, `match`, `except … as`, `global` en funciones), los
+  submódulos que su `__init__` importa y los de sus estrellas anidadas. `None` (sin entrada,
+  aviso `STAR_IMPORT`) si algún módulo del camino no se parseó, tiene `__all__` dinámico o es
+  **incierto** (`StarSurface.uncertain`: una estrella de un módulo externo, una estrella dentro
+  de un bloque, o `globals()`/`vars()`/`exec`).
+- **Superficie** (`ModuleInfo.surface`, `StarSurface`): el parser solo pone lo barato
+  (`__all__` dinámico, estrella externa); `resolve_indirection` (`_with_surfaces`) vuelve a
+  leer solo los módulos que algo importa con asterisco y calcula `module_surface`: los
+  nombres **condicionales** (que pueden quedar sin ligar: solo dentro de un bloque, bajo
+  `TYPE_CHECKING`, solo anotados, borrados con `del`, o ligados de forma suelta) y si es
+  incierto.
+- **Proveedores** (`_providers`): todas las estrellas de M que traen un nombre lo conservan
+  (ramas alternativas). Los nombres que M liga por su cuenta también se conservan: un import
+  explícito de más mantiene el significado en cualquier orden.
+- **Demanda** (`_demand`, punto fijo): lo que M lee (`stars.reads`, con `del x` y `x += 1`),
+  lo que cualquier módulo analizado importa de M o lee como atributo de M (para paquetes, el
+  `accessed` del parser; para módulos, `collect_attribute_reads` relee solo los importadores
+  de módulos con estrellas) y lo que necesitan quienes importan M con asterisco. M necesita
+  **todo** lo que traen sus estrellas cuando se usa suelto, se carga por nombre
+  (`importlib.import_module`/`__import__` con un literal, `stars.dynamic_imports`), una
+  estrella suya es desconocida, o es una fachada sin `__all__` con estrellas (API pública:
+  código de fuera puede leer cualquier nombre).
+- **Arreglo** (`WildcardFix`), en este orden: `no_fix` con `cycle` si importador y módulo están
+  en un ciclo de imports al importar (lo que trae la estrella depende del orden); `no_fix` con
+  `submodule` si M lee un submódulo del paquete que otro módulo puede haber cargado; `remove`
+  si no necesita nada; `no_fix` con `conditional` si un nombre necesario es condicional; si
+  no, `explicit` con `from B import …` (siempre desde B). `remove_self` para `from . import *`
+  de un paquete sin `__all__`. Notas: `kept_for` (por módulo que lo necesita, o `ANY_READER`),
+  `defined_elsewhere` (un import con alias no da nota) y `external`.
+- `find_wildcard_imports`: un hallazgo `WILDCARD_IMPORT` por módulo B, con evidencia `kind`,
+  `importers`, `statements`, `names`, `used_min`, `used_max`, `unused_statements`,
+  `no_fix_statements`, `reexported`, `fixes` (para la IA: hasta 5 sentencias y 20 nombres) y
+  `fixes_total`. El informe lista todos los hallazgos, sentencias y nombres.
+- Límites: los tests solo cuentan si se analizan (`--include-tests`); el arreglo cambia el
+  espacio de nombres de M para código de fuera del proyecto (salvo en fachadas, que conservan
+  todo); no se ven `eval` de nombres calculados ni `importlib.import_module` con un nombre no
+  literal. Coste en litellm: unos 0,5 s (releer 20 importadores y 40 módulos con estrellas).
 
 ### Frontera nativa y regla 11 (`graph/native.py`)
 

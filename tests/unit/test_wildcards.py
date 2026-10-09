@@ -6,7 +6,7 @@ import pathspec
 import pytest
 
 from unskein.config import AnalysisConfig
-from unskein.parsers.exports import module_exports
+from unskein.parsers.exports import module_exports, module_surface
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import WarningCode
 from unskein.parsers.python_parser import PythonAdapter
@@ -102,7 +102,7 @@ def test_every_change_to_all_that_cannot_be_read_is_dynamic(source: str) -> None
     ],
 )
 def test_names_that_may_be_unbound_are_conditional(source: str, conditional) -> None:
-    assert module_exports(ast.parse(source)).conditional_names == conditional
+    assert module_surface(ast.parse(source))[0] == conditional
 
 
 @pytest.mark.parametrize(
@@ -110,4 +110,4 @@ def test_names_that_may_be_unbound_are_conditional(source: str, conditional) -> 
     ["if x:\n    from a import *\n", "globals()['X'] = 1\n", "exec('X = 1')\n"],
 )
 def test_a_star_of_a_module_that_writes_its_namespace_is_uncertain(source: str) -> None:
-    assert module_exports(ast.parse(source)).is_uncertain
+    assert module_surface(ast.parse(source))[1]
