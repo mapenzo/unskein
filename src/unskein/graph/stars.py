@@ -126,10 +126,57 @@ class _Context:
     root: Path | None
 
 
+def _import_origin(module: ModuleInfo, name: str) -> tuple[str, str | None] | None:
+    """Return what the one import that binds a name refers to.
+
+    Args:
+        module: A parsed module.
+        name: A name it binds.
+
+    Returns:
+        (imported module, symbol) when exactly one import statement binds the name without an
+        alias and the module does not also assign it; None otherwise.
+    """
+    if name not in module.bound_names or name in module.defined_names:
+        return None
+    star_lines = {line for line, _ in module.stars.statements}
+    found = {
+        (edge.target, edge.symbol_name)
+        for edge in module.imports
+        if edge.line_number not in star_lines
+        and (
+            edge.symbol_name == name
+            or (edge.symbol_name is None and edge.target.split(NAME_SEPARATOR)[0] == name)
+        )
+    }
+    return next(iter(found)) if len(found) == 1 else None
+
+
+def _same_object(module: ModuleInfo | None, base: ModuleInfo | None, name: str) -> bool:
+    """Tell whether a module and the module it star-imports bind a name to the same object.
+
+    Args:
+        module: The importing module.
+        base: The star-imported module.
+        name: A name both bind.
+
+    Returns:
+        True when the module imports it from the star-imported module itself, or both take
+        it with the same import (same module and symbol): the star changes nothing for it.
+    """
+    if module is None or base is None:
+        return False
+    origin = _import_origin(module, name)
+    # Importing the name from the star-imported module itself gives its very object.
+    return origin is not None and (
+        origin == (base.name, name) or origin == _import_origin(base, name)
+    )
+
+
 def _providers(
     statements: list[Star],
     brings: Mapping[str, frozenset[str] | None],
-    shadowed: Collection[str] = (),
+    context: tuple[ModuleInfo | None, Mapping[str, ModuleInfo]],
 ) -> dict[str, list[Star]]:
     """Return, for each name, every star statement of a module that brings it.
 
@@ -137,18 +184,24 @@ def _providers(
     ``except``, ``if`` and ``else``) may each be the one that runs, and an explicit import
     of a name the module also binds keeps the same meaning whatever the order.
 
+    A name the module rebinds for good after its stars, or binds with the same import as
+    the star-imported module, is provided by no star.
+
     Args:
         statements: The module's star statements, in code order.
         brings: Names each star-imported module brings.
-        shadowed: Names the module rebinds for good after its stars: none provides them.
+        context: The importing module, if parsed, and every parsed module by name.
 
     Returns:
         The statements that bring each name.
     """
+    module, by_name = context
+    shadowed = set(module.stars.shadowed) if module is not None else set()
     providers: defaultdict[str, list[Star]] = defaultdict(list)
     for statement in statements:
+        base = by_name.get(statement[1])
         for name in brings.get(statement[1]) or ():
-            if name not in shadowed:
+            if name not in shadowed and not _same_object(module, base, name):
                 providers[name].append(statement)
     return providers
 
@@ -216,9 +269,7 @@ def _demand(
     by_name = {module.name: module for module in result.modules}
     providers = {}
     for name, statements in stars.items():
-        module = by_name.get(name)
-        shadowed = module.stars.shadowed if module is not None else ()
-        providers[name] = _providers(statements, brings, shadowed)
+        providers[name] = _providers(statements, brings, (by_name.get(name), by_name))
     demand, needer = _initial_demand(result, stars, brings)
     changed = True
     while changed:

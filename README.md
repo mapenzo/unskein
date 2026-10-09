@@ -100,8 +100,10 @@ Architecture health: fair.
   `ImportError` without the extension.
 - **Star imports**: one finding per module imported with `from x import *` outside a
   package facade, with the explicit import to write for each statement. The names are
-  computed with the whole project, so a name another module imports through the
-  star-importing module is kept.
+  computed with the whole project, and when in doubt a name is kept. On litellm, applying
+  all 74 fixes leaves every one of its 2663 modules importing exactly as before; removestar's
+  rewrite of the same files makes `import litellm` fail (a name another module imports
+  through a star was dropped), along with 1515 other modules.
 - **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,

@@ -85,6 +85,27 @@ SCENARIOS = {
         },
         "import app.handler",
     ),
+    "same_import_before_the_star": (
+        {
+            "app/b.py": "from typing import Final\nB = 1\n",
+            "app/m.py": "from typing import Final\nfrom app.b import *\nX: Final = 1\nprint(X)\n",
+        },
+        "import app.m",
+    ),
+    "aliased_import_before_the_star": (
+        {
+            "app/b.py": "from typing import Final\n",
+            "app/m.py": "from typing import Final as F\nfrom app.b import *\nprint(Final, F)\n",
+        },
+        "import app.m",
+    ),
+    "explicit_import_from_the_star_module_first": (
+        {
+            "app/b.py": "Params = 'params'\n",
+            "app/m.py": "from app.b import Params\nfrom app.b import *\nprint(Params)\n",
+        },
+        "import app.m",
+    ),
     "cycle_of_stars": (
         {
             "app/a.py": "from app.b import *\nX = 1\n",
@@ -152,3 +173,21 @@ def test_a_star_whose_names_are_unknown_further_up_warns(make_project: MakeProje
         if w.code is WarningCode.STAR_IMPORT
     }
     assert stars == {("mid.py", 2), ("top.py", 1)}
+
+
+def test_a_name_both_modules_import_the_same_way_does_not_keep_the_star(
+    make_project: MakeProject,
+) -> None:
+    files, _ = SCENARIOS["same_import_before_the_star"]
+    root = make_project({"app/__init__.py": "", **files})
+    (wildcard,) = _analyzed(root).wildcards
+    assert [fix.action for fix in wildcard.fixes] == [WildcardAction.REMOVE]
+
+
+def test_a_name_imported_from_the_star_module_itself_does_not_keep_the_star(
+    make_project: MakeProject,
+) -> None:
+    files, _ = SCENARIOS["explicit_import_from_the_star_module_first"]
+    root = make_project({"app/__init__.py": "", **files})
+    (wildcard,) = _analyzed(root).wildcards
+    assert [fix.action for fix in wildcard.fixes] == [WildcardAction.REMOVE]
