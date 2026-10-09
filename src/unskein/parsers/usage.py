@@ -567,7 +567,9 @@ def collect_names_read_from(
     Returns:
         The wanted names read from each module that has any.
     """
-    collector = _ReadThroughCollector(wanted, frozenset(module.name for module in parsed.modules))
+    # Namespace packages have no file, but chains walk through them to their submodules.
+    names = frozenset(module.name for module in parsed.modules) | frozenset(parsed.namespaces)
+    collector = _ReadThroughCollector(wanted, names)
     for module in parsed.modules:
         pending: list[tuple[int, str]] = []
         for edge in module.imports:

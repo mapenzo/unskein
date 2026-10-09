@@ -150,3 +150,30 @@ def test_name_bound_to_two_objects_is_not_analyzed(make_project: MakeProject) ->
         }
     )
     assert "app.types" in _resolved_targets(root, "app.core")
+
+
+def test_chain_crosses_nested_namespaces(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/ship/rates/table.py": "RATE = 1\n",
+            "app/core.py": "import app.ship\ndef f():\n    return app.ship.rates.table.RATE\n",
+        }
+    )
+    assert _resolved_targets(root, "app.core") == ["app.ship.rates.table"]
+
+
+def test_names_read_through_nested_namespaces_are_found(make_project: MakeProject) -> None:
+    from unskein.parsers.usage import collect_names_read_from
+
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/ship/rates/table.py": "RATE = 1\nOTHER = 2\n",
+            "app/core.py": "import app.ship\ndef f():\n    return app.ship.rates.table.RATE\n",
+        }
+    )
+    found = collect_names_read_from(
+        _parse(root), {"app.ship.rates.table": ["RATE", "OTHER"]}, encoding=None
+    )
+    assert found == {"app.ship.rates.table": frozenset({"RATE"})}
