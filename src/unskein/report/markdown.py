@@ -218,6 +218,33 @@ def _instability(name: str, result: AnalysisResult) -> str:
     return f"{result.coupling_metrics[name].instability:.2f}"
 
 
+def _plural_key(count: int, is_truncated: bool = False) -> str:
+    """Return the catalog suffix for a count: ``one`` only for exactly one.
+
+    Args:
+        count: The number shown.
+        is_truncated: Whether it is a lower bound (``100+``), always plural.
+
+    Returns:
+        ``"one"`` or ``"other"``.
+    """
+    return "one" if count == 1 and not is_truncated else "other"
+
+
+def _counted(key_prefix: str, count: int, lang: Lang) -> str:
+    """Render a count with its noun in the singular or the plural.
+
+    Args:
+        key_prefix: Catalog key without its ``.one``/``.other`` suffix.
+        count: The number.
+        lang: Report language.
+
+    Returns:
+        The count and its noun.
+    """
+    return t(f"{key_prefix}.{_plural_key(count)}", lang, count=count)
+
+
 def _cycle_count(result: AnalysisResult) -> str:
     """Return the number of cycles, marked with ``+`` when the search was truncated.
 
@@ -254,10 +281,14 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     counts = t(
         "report.summary_counts",
         lang,
-        modules=_module_count(result),
+        modules=_counted("report.summary_modules", _module_count(result), lang),
         scripts=f"{virtual}{scripts}",
-        dependencies=result.graph.number_of_edges(),
-        cycles=_cycle_count(result),
+        dependencies=_counted("report.summary_dependencies", result.graph.number_of_edges(), lang),
+        cycles=t(
+            f"report.summary_cycles.{_plural_key(len(result.cycles), result.cycles_truncated)}",
+            lang,
+            count=_cycle_count(result),
+        ),
     )
     lines = [f"## {t('report.summary', lang)}", "", counts]
     if result.high_coupling_modules:

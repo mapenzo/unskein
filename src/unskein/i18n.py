@@ -170,10 +170,26 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "report.title": {Lang.ES: "Análisis de {project}", Lang.EN: "Analysis of {project}"},
     "report.summary": {Lang.ES: "Resumen", Lang.EN: "Summary"},
     "report.summary_counts": {
-        Lang.ES: "{modules} módulos{scripts}, {dependencies} dependencias internas, "
-        "{cycles} ciclos de dependencia.",
-        Lang.EN: "{modules} modules{scripts}, {dependencies} internal dependencies, "
-        "{cycles} dependency cycles.",
+        Lang.ES: "{modules}{scripts}, {dependencies}, {cycles}.",
+        Lang.EN: "{modules}{scripts}, {dependencies}, {cycles}.",
+    },
+    "report.summary_modules.one": {Lang.ES: "{count} módulo", Lang.EN: "{count} module"},
+    "report.summary_modules.other": {Lang.ES: "{count} módulos", Lang.EN: "{count} modules"},
+    "report.summary_dependencies.one": {
+        Lang.ES: "{count} dependencia interna",
+        Lang.EN: "{count} internal dependency",
+    },
+    "report.summary_dependencies.other": {
+        Lang.ES: "{count} dependencias internas",
+        Lang.EN: "{count} internal dependencies",
+    },
+    "report.summary_cycles.one": {
+        Lang.ES: "{count} ciclo de dependencia",
+        Lang.EN: "{count} dependency cycle",
+    },
+    "report.summary_cycles.other": {
+        Lang.ES: "{count} ciclos de dependencia",
+        Lang.EN: "{count} dependency cycles",
     },
     "report.summary_scripts.one": {Lang.ES: " + {count} script", Lang.EN: " + {count} script"},
     "report.summary_scripts.other": {Lang.ES: " + {count} scripts", Lang.EN: " + {count} scripts"},
@@ -617,7 +633,7 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Lo que importa el código compilado no se ve: su Ce es desconocido, y los "
         "ciclos que pasen por él tampoco se ven.",
         Lang.EN: "What compiled code imports cannot be seen: its Ce is unknown, and cycles "
-        "that go through them cannot be seen either.",
+        "that go through it cannot be seen either.",
     },
     "report.native_kind": {Lang.ES: "Tipo", Lang.EN: "Kind"},
     "report.native_kind.compiled": {Lang.ES: "extensión compilada", Lang.EN: "compiled extension"},

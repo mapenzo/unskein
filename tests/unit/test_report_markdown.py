@@ -900,7 +900,7 @@ def test_native_boundary_section_en() -> None:
         "| `pkg.stubonly` | stub only | `pkg/stubonly.pyi` | 1 | 1 / 0 / 0 / 0 "
         "| no: 1 unguarded use (`pkg/api.py:2`) | unknown (stub only) |"
     ) in report
-    assert "cycles that go through them cannot be seen either" in report
+    assert "cycles that go through it cannot be seen either" in report
 
 
 def test_native_boundary_section_es() -> None:
@@ -938,3 +938,17 @@ def test_rule_11_line_lists_the_unguarded_uses_and_the_fix() -> None:
 
 def test_projects_without_native_modules_have_no_boundary(simple_project: Path) -> None:
     assert "## Native boundary" not in render(simple_project, analyzed(simple_project))
+
+
+def test_summary_uses_the_singular_for_one_en(make_project, circular_imports: Path) -> None:
+    single = make_project({"app/__init__.py": "", "app/a.py": "import app\n"})
+    assert "2 modules, 1 internal dependency, 0 dependency cycles." in render(
+        single, analyzed(single)
+    )
+    assert ", 1 dependency cycle." in render(circular_imports, analyzed(circular_imports))
+
+
+def test_summary_uses_the_singular_for_one_es(make_project) -> None:
+    single = make_project({"app.py": ""})
+    report = render(single, analyzed(single), Lang.ES)
+    assert "1 módulo, 0 dependencias internas, 0 ciclos de dependencia." in report
