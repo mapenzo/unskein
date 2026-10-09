@@ -54,16 +54,17 @@ def test_star_in_a_facade_is_a_reexport_without_warning(make_project: MakeProjec
     assert WarningCode.STAR_IMPORT not in [w.code for w in result.warnings]
 
 
-def test_star_outside_a_facade_still_warns(make_project: MakeProject) -> None:
+def test_star_outside_a_facade_is_recorded_without_warning(make_project: MakeProject) -> None:
     files = {"app/__init__.py": "", "app/a.py": "from app.b import *\n", "app/b.py": "X = 1\n"}
     result = parse(make_project(files))
-    assert [w.code for w in result.warnings] == [WarningCode.STAR_IMPORT]
+    assert result.warnings == []
+    assert [m.stars.statements for m in result.modules if m.name == "app.a"] == [((1, "app.b"),)]
     assert result.re_exports == []
 
 
-def test_star_of_an_external_module_in_a_facade_still_warns(make_project: MakeProject) -> None:
+def test_star_of_an_external_module_is_ignored(make_project: MakeProject) -> None:
     result = parse(make_project({"app/__init__.py": "from os.path import *\n", "app/a.py": ""}))
-    assert [w.code for w in result.warnings] == [WarningCode.STAR_IMPORT]
+    assert result.warnings == []
 
 
 def test_alias_access_follows_star_reexports_to_the_defining_module(

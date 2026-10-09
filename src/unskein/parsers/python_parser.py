@@ -23,12 +23,18 @@ from unskein.parsers.models import (
     ParseTask,
     ParseWarning,
     ReExport,
+    StarImports,
+    StarSurface,
     VirtualKind,
     VirtualModule,
     WarningCode,
 )
 from unskein.parsers.native import EVIDENCE_SUFFIXES, find_native_modules, is_evidence
-from unskein.parsers.usage import collect_name_usage
+from unskein.parsers.usage import (
+    collect_dynamic_imports,
+    collect_name_usage,
+    collect_read_names,
+)
 
 # Import statements only occur in statement lists; ``handlers`` holds ExceptHandler
 # nodes and ``cases`` holds match_case nodes, each with its own ``body``. The order
@@ -47,6 +53,8 @@ SUPPRESS_NAME = "suppress"
 # Names of non-importable files are POSIX paths; "/" never appears in a dotted name.
 PATH_SEPARATOR = "/"
 NAME_SEPARATOR = "."
+# Text a module must contain to load modules by name; skips the walk for every other module.
+DYNAMIC_IMPORT_HINTS = ("import_module", "__import__")
 # Identify the object an import binds: a module, or a name taken from a module.
 MODULE_OBJECT = "module:"
 FROM_OBJECT = "from:"
@@ -365,6 +373,8 @@ class _ImportCollector:
         self.is_package = file_path.name == "__init__.py"
         self.edges: list[ImportEdge] = []
         self.re_exports: list[ReExport] = []
+        self.wildcards: list[tuple[int, str]] = []
+        self.has_external_star = False
         self.warnings: list[ParseWarning] = []
         self.package_bindings: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
         self.bound_objects: defaultdict[str, set[str]] = defaultdict(set)
@@ -514,7 +524,8 @@ class _ImportCollector:
         name is a symbol of base. Symbol imports in a package `__init__.py` are
         recorded as re-exports under their exported (alias) name. A star import in a
         package `__init__.py` of an existing project module is recorded as a star
-        re-export (``STAR_EXPORT``) instead of a warning.
+        re-export (``STAR_EXPORT``). A star import elsewhere of a project module is
+        recorded in ``wildcards``; a star import of an external module is only an edge.
 
         Args:
             base: Absolute dotted module the names are imported from.
@@ -527,8 +538,10 @@ class _ImportCollector:
                 is_star_reexport = (
                     self.is_package and base in self.index.modules and base != self.source
                 )
-                if not is_star_reexport:
-                    self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
+                if self.index.is_external(base):
+                    self.has_external_star = True
+                elif not is_star_reexport:
+                    self.wildcards.append((node.lineno, base))
                 self.add(base, None, node.lineno, kind=kind, is_guarded=is_guarded)
                 if is_star_reexport:
                     self.re_exports.append(ReExport(self.source, base, STAR_EXPORT, is_guarded))
@@ -631,7 +644,8 @@ def parse_file(
             warning = ParseWarning(WarningCode.FILE_TOO_LARGE, file_path, None, detail)
             return FileParseResult(None, warnings=[warning])
         encoding = detect_encoding(file_path, config.default_encoding)
-        tree = ast.parse(file_path.read_text(encoding=encoding), filename=str(file_path))
+        source = file_path.read_text(encoding=encoding)
+        tree = ast.parse(source, filename=str(file_path))
     except (OSError, SyntaxError, UnicodeDecodeError, RecursionError) as e:
         line = e.lineno if isinstance(e, SyntaxError) else None
         detail = f"{type(e).__name__}: {e}"
@@ -641,6 +655,20 @@ def parse_file(
     collector.visit(tree)
     collector.attach_usage(tree)
     exports = module_exports(tree)
+    reads: tuple[str, ...] = ()
+    if collector.wildcards and config.star_fixes:
+        reads = collect_read_names(tree)
+        if exports.declares_all:
+            reads = tuple(sorted({*reads, *exports.names}))
+    dynamic = (
+        collect_dynamic_imports(tree)
+        if config.star_fixes and any(hint in source for hint in DYNAMIC_IMPORT_HINTS)
+        else ()
+    )
+    stars = StarImports(tuple(collector.wildcards), reads, dynamic)
+    # Conditional names and the rest of the surface are computed later, only for the
+    # modules something star-imports (``resolve_indirection``).
+    surface = StarSurface(exports.has_dynamic_all, collector.has_external_star)
     module = ModuleInfo(
         name,
         file_path,
@@ -650,6 +678,8 @@ def parse_file(
         exports.bound_names,
         is_packaged=name not in index.unpackaged,
         defined_names=exports.defined_names,
+        stars=stars,
+        surface=surface,
     )
     return FileParseResult(module, collector.re_exports, collector.warnings)
 
@@ -797,6 +827,7 @@ class PythonAdapter(LanguageAdapter):
             module_distributions,
             layout.root,
             virtual=dict(sorted(virtual.items())),
+            star_fixes=self.config.star_fixes,
         )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:

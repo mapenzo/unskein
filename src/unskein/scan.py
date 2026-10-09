@@ -61,6 +61,7 @@ class ScanOptions:
     lang: str | None = None
     follow_symlinks: bool | None = None
     include_tests: bool | None = None
+    star_fixes: bool | None = None
     findings: bool | None = None
     encoding: str | None = None
 
@@ -136,6 +137,7 @@ def prepare_scan(
         exclude=options.exclude,
         include_tests=options.include_tests,
         follow_symlinks=options.follow_symlinks,
+        star_fixes=options.star_fixes,
         encoding=options.encoding,
     )
     ai_config = None if options.no_ai else resolve_ai_config(toml, env, options.api_key)

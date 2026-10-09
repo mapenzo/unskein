@@ -3,6 +3,10 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
+import networkx as nx
+
+from unskein.parsers.discovery import parse_source
+from unskein.parsers.exports import module_surface
 from unskein.parsers.models import (
     STAR_EXPORT,
     ImportEdge,
@@ -14,6 +18,14 @@ from unskein.parsers.models import (
 )
 
 MAX_RESOLUTION_DEPTH = 10
+PACKAGE_INIT_FILE = "__init__.py"
+PRIVATE_PREFIX = "_"
+NAME_SEPARATOR = "."
+# A facade's star re-export has no line of its own in ``star_imports``.
+FACADE_LINE = 0
+
+# A star statement: (line, star-imported module).
+Star = tuple[int, str]
 
 ReExportIndex = dict[tuple[str, str], str]
 StarNames = dict[tuple[str, str], tuple[str, ...]]
@@ -161,6 +173,172 @@ def _names_through_stars(
     return tuple(sorted(names))
 
 
+def star_imports(
+    modules: Sequence[ModuleInfo], re_exports: Sequence[ReExport]
+) -> dict[str, list[Star]]:
+    """Return the star imports of every module, facades included, in code order.
+
+    Args:
+        modules: Parsed project modules.
+        re_exports: Re-exports detected by the parser.
+
+    Returns:
+        Each module's star statements; facade re-exports carry ``FACADE_LINE``.
+    """
+    stars: dict[str, list[Star]] = {}
+    for re_export in re_exports:
+        if re_export.symbol_name == STAR_EXPORT:
+            stars.setdefault(re_export.exporting_module, []).append(
+                (FACADE_LINE, re_export.original_module)
+            )
+    for module in modules:
+        for line, base in module.stars.statements:
+            if base != module.name:
+                stars.setdefault(module.name, []).append((line, base))
+    return stars
+
+
+def _submodules_bound(module: ModuleInfo) -> set[str]:
+    """Return the submodules a package ``__init__`` binds by importing them.
+
+    Importing ``pkg.sub`` (``from .sub import f`` included) sets ``sub`` on the package, so
+    ``from pkg import *`` brings it when the package has no ``__all__``.
+
+    Args:
+        module: A parsed module.
+
+    Returns:
+        The public submodule names, empty for a module that is not a package.
+    """
+    if module.file_path.name != PACKAGE_INIT_FILE:
+        return set()
+    start = f"{module.name}{NAME_SEPARATOR}"
+    found = set()
+    for edge in module.imports:
+        if not edge.is_external and edge.target.startswith(start):
+            name = edge.target[len(start) :].split(NAME_SEPARATOR)[0]
+            if not name.startswith(PRIVATE_PREFIX):
+                found.add(name)
+    return found
+
+
+def wildcard_names(
+    base: str, by_name: Mapping[str, ModuleInfo], stars: Mapping[str, list[Star]]
+) -> frozenset[str] | None:
+    """Return the names ``from base import *`` brings, following nested star imports.
+
+    Args:
+        base: Star-imported module.
+        by_name: Parsed modules by name.
+        stars: Star imports of every module (``star_imports``).
+
+    Returns:
+        The names (those that may be unbound included, see ``wildcard_conditional``); None
+        when some module on the way was not parsed, computes ``__all__`` or brings names
+        nobody can list.
+    """
+    names: set[str] = set()
+    seen = {base}
+    pending = [base]
+    while pending:
+        module = by_name.get(pending.pop())
+        if module is None or module.surface.dynamic_all or module.surface.uncertain:
+            return None
+        names.update(module.public_names)
+        names.update(module.surface.conditional)
+        if module.declares_all:
+            continue
+        names.update(_submodules_bound(module))
+        for _, nested in stars.get(module.name, []):
+            if nested not in seen:
+                seen.add(nested)
+                pending.append(nested)
+    return frozenset(names)
+
+
+def star_cycles(stars: Mapping[str, list[Star]]) -> frozenset[tuple[str, str]]:
+    """Return the star imports that sit in a cycle of star imports, as (importer, module).
+
+    In a cycle one module runs ``from x import *`` while ``x`` is still being imported, so
+    what the star brings depends on import order and cannot be read from the source.
+
+    Args:
+        stars: Star imports of every module (``star_imports``).
+
+    Returns:
+        The (importer, star-imported module) pairs inside a cycle.
+    """
+    graph = nx.DiGraph((importer, base) for importer, items in stars.items() for _, base in items)
+    pairs: set[tuple[str, str]] = set()
+    for component in nx.strongly_connected_components(graph):
+        if len(component) > 1:
+            pairs.update(edge for edge in graph.subgraph(component).edges)
+    return frozenset(pairs)
+
+
+def wildcard_conditional(
+    base: str, by_name: Mapping[str, ModuleInfo], stars: Mapping[str, list[Star]]
+) -> frozenset[str]:
+    """Return the names ``from base import *`` may bring that may be unbound when it runs.
+
+    Args:
+        base: Star-imported module.
+        by_name: Parsed modules by name.
+        stars: Star imports of every module (``star_imports``).
+
+    Returns:
+        The conditional names of every module the star reaches.
+    """
+    names: set[str] = set()
+    seen = {base}
+    pending = [base]
+    while pending:
+        module = by_name.get(pending.pop())
+        if module is None:
+            continue
+        names.update(module.surface.conditional)
+        if module.declares_all:
+            continue
+        for _, nested in stars.get(module.name, []):
+            if nested not in seen:
+                seen.add(nested)
+                pending.append(nested)
+    return frozenset(names)
+
+
+def _with_surfaces(result: ParseResult, stars: Mapping[str, list[Star]]) -> ParseResult:
+    """Complete the star surface of every module something star-imports.
+
+    Reads those sources again: the surface is only needed for them, and computing it while
+    parsing every file would cost more than the whole rule.
+
+    Args:
+        result: Parse result.
+        stars: Star imports of every module (``star_imports``).
+
+    Returns:
+        The result with ``ModuleInfo.surface`` complete for star-imported modules.
+    """
+    bases = {base for statements in stars.values() for _, base in statements}
+    modules = []
+    for module in result.modules:
+        if module.name in bases:
+            tree = parse_source(module.file_path, None)
+            if tree is None:
+                surface = replace(module.surface, uncertain=True)
+            else:
+                source = module.file_path.read_text(errors="replace")
+                conditional, uncertain = module_surface(tree, source)
+                surface = replace(
+                    module.surface,
+                    uncertain=module.surface.uncertain or uncertain,
+                    conditional=conditional,
+                )
+            module = replace(module, surface=surface)
+        modules.append(module)
+    return replace(result, modules=modules)
+
+
 def resolve_target(
     module: str,
     symbol: str | None,
@@ -303,7 +481,10 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     Whole-module imports of a package are replaced by one edge per module their
     attributes come from (see `expand_package_access`); external imports are kept
     as they are; edges that resolve back to their own source are dropped; warnings
-    are deduplicated. The input is not mutated.
+    are deduplicated. With ``star_fixes`` on, star imports whose names cannot be known
+    (module not parsed, computed ``__all__``, a cycle of star imports) get a ``STAR_IMPORT``
+    warning; with it off, every star import of a project module outside a facade gets a
+    ``STAR_NOT_ANALYZED`` warning. The input is not mutated.
 
     Args:
         result: Parse result whose imports should be resolved.
@@ -317,6 +498,27 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     # Virtual modules have no file, but chains walk through them to their submodules.
     module_names = frozenset(module.name for module in result.modules) | frozenset(result.virtual)
     warnings = dict.fromkeys(result.warnings)
+    if result.star_fixes:
+        every_star = star_imports(result.modules, result.re_exports)
+        result = _with_surfaces(result, every_star)
+        by_name = {module.name: module for module in result.modules}
+        cycles = star_cycles(every_star)
+        for module in result.modules:
+            for line, base in module.stars.statements:
+                unknown = (module.name, base) in cycles or (
+                    wildcard_names(base, by_name, every_star) is None
+                )
+                if base != module.name and unknown:
+                    warning = ParseWarning(WarningCode.STAR_IMPORT, module.file_path, line, base)
+                    warnings[warning] = None
+    else:
+        for module in result.modules:
+            for line, base in module.stars.statements:
+                if base != module.name:
+                    warning = ParseWarning(
+                        WarningCode.STAR_NOT_ANALYZED, module.file_path, line, base
+                    )
+                    warnings[warning] = None
     modules = []
     for module in result.modules:
         imports = []

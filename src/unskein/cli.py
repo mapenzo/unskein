@@ -177,6 +177,17 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             show_default=False,
         ),
     ] = None,
+    star_fixes: Annotated[
+        bool | None,
+        typer.Option(
+            "--star-fixes/--no-star-fixes",
+            help=(
+                "Compute the explicit import to write for each 'from x import *' "
+                "(default: no, or .unskein.toml; adds 15-20% to a large scan)."
+            ),
+            show_default=False,
+        ),
+    ] = None,
     findings: Annotated[
         bool | None,
         typer.Option(
@@ -200,6 +211,7 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         lang=lang,
         follow_symlinks=follow_symlinks,
         include_tests=include_tests,
+        star_fixes=star_fixes,
         findings=findings,
         encoding=encoding,
     )

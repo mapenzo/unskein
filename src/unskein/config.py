@@ -79,6 +79,9 @@ class AnalysisConfig:
         source_roots: Directories module names are relative to; None auto-detects
             a ``src/`` layout. The project root is always the last fallback.
         include_tests: Whether test code is analyzed (excluded by default).
+        star_fixes: Whether star imports are analyzed to give the explicit import to write
+            (rule 12). Off by default: it rereads the modules involved, which costs about
+            15 to 20 % of a scan on a large project; star imports are then only reported.
         pipeline: Per-stage concurrency settings.
     """
 
@@ -92,6 +95,7 @@ class AnalysisConfig:
     exclude: list[str] = field(default_factory=list)
     source_roots: list[str] | None = None
     include_tests: bool = False
+    star_fixes: bool = False
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
 
@@ -186,6 +190,7 @@ class TomlAnalysis(_TomlTable):
         exclude: Extra exclude patterns, added to the CLI ones.
         source_roots: See ``AnalysisConfig``.
         include_tests: See ``AnalysisConfig``.
+        star_fixes: See ``AnalysisConfig``.
     """
 
     parallel_threshold: int | None = None
@@ -198,6 +203,7 @@ class TomlAnalysis(_TomlTable):
     exclude: list[str] | None = None
     source_roots: list[str] | None = None
     include_tests: bool | None = None
+    star_fixes: bool | None = None
 
 
 class TomlFindings(_TomlTable):
@@ -353,12 +359,14 @@ class AnalysisFlags:
         exclude: ``--exclude`` patterns (always added to the TOML ones).
         include_tests: ``--include-tests`` / ``--no-include-tests``.
         follow_symlinks: ``--follow-symlinks`` / ``--no-follow-symlinks``.
+        star_fixes: ``--star-fixes`` / ``--no-star-fixes``.
         encoding: ``--encoding`` fallback encoding.
     """
 
     exclude: tuple[str, ...] = ()
     include_tests: bool | None = None
     follow_symlinks: bool | None = None
+    star_fixes: bool | None = None
     encoding: str | None = None
 
 
@@ -379,6 +387,7 @@ def resolve_analysis_config(toml: TomlConfig, flags: AnalysisFlags) -> AnalysisC
     from_flags = {
         "include_tests": flags.include_tests,
         "follow_symlinks": flags.follow_symlinks,
+        "star_fixes": flags.star_fixes,
         "default_encoding": flags.encoding,
     }
     overrides = from_toml | {name: value for name, value in from_flags.items() if value is not None}

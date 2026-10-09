@@ -143,6 +143,19 @@ def test_boolean_flag_wins_in_both_directions(
     assert (config.include_tests, config.follow_symlinks) == (expected, expected)
 
 
+@pytest.mark.parametrize(
+    ("toml_value", "flag", "expected"),
+    [(None, None, False), (True, None, True), (True, False, False), (None, True, True)],
+)
+def test_star_fixes_is_off_by_default_and_the_flag_wins(
+    toml_value: bool | None, flag: bool | None, expected: bool
+) -> None:
+    config = resolve_analysis_config(
+        toml_analysis(star_fixes=toml_value), AnalysisFlags(star_fixes=flag)
+    )
+    assert config.star_fixes is expected
+
+
 def test_encoding_flag_wins_over_toml() -> None:
     config = resolve_analysis_config(
         toml_analysis(default_encoding="latin-1"), AnalysisFlags(encoding="cp1252")

@@ -20,6 +20,7 @@ from unskein.graph.native import NativeModule, find_optional_native_required, su
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
 from unskein.graph.scripts import ScriptGroup, count_consumers, find_scripts, group_scripts
+from unskein.graph.stars import WildcardModule, find_wildcard_imports, summarize_wildcards
 from unskein.parsers.models import ImportKind, ParseResult, ParseWarning, VirtualKind
 
 MAX_CYCLES = 100
@@ -58,6 +59,8 @@ class AnalysisResult:
         virtual: Graph nodes with no parsed file (namespace packages, compiled extensions,
             stubs), with their kind, sorted.
         native: How packaged code uses each compiled extension and stub-only module, by name.
+        wildcards: Star imports of packaged code with their fixes, by star-imported module;
+            empty with findings off.
     """
 
     graph: nx.DiGraph
@@ -79,6 +82,7 @@ class AnalysisResult:
     distribution_edges: list[DistributionEdge] = field(default_factory=list)
     virtual: dict[str, VirtualKind] = field(default_factory=dict)
     native: list[NativeModule] = field(default_factory=list)
+    wildcards: list[WildcardModule] = field(default_factory=list)
 
     @property
     def namespaces(self) -> frozenset[str]:
@@ -293,13 +297,16 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     distribution_analysis = analyze_distributions(result, scripts)
     native = summarize_native(result, graph, scripts)
     impact_targets = _impact_targets(high_coupling, findings)
+    wildcards: list[WildcardModule] = []
     if findings_config.enabled:
         missing = find_missing_modules(result, scripts)
+        wildcards = summarize_wildcards(result, scripts) if result.star_fixes else []
         findings = [
             *findings,
             *distribution_analysis.findings,
             *missing,
             *find_optional_native_required(native),
+            *find_wildcard_imports(wildcards),
         ]
     package_metrics, package_edges = summarize_project_packages(
         graph, findings_config.package_depth, facades=facades, virtual=namespaces
@@ -324,4 +331,5 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         distribution_edges=distribution_analysis.edges,
         virtual=virtual,
         native=native,
+        wildcards=wildcards,
     )

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Finding: wildcard import, opt in with `--star-fixes` (or `star_fixes = true` under
+  `[analysis]`). One finding per module imported with `from x import *` outside a package
+  facade, with the explicit import to write for each statement, given only when it can be
+  proven safe; otherwise the statement says why there is no safe fix (a needed name may be
+  unbound, an import cycle, a submodule another module may have loaded). Names come from
+  the whole project and are kept when in doubt; public facades, modules used by themselves
+  and modules loaded with `importlib.import_module` keep every name. Stars whose names
+  cannot be known stay warnings. Tests only count when analyzed (`--include-tests`). The
+  option rereads the modules involved, so it is off by default.
 - Namespace packages (PEP 420, directories without `__init__.py`): importing one is no
   longer an "internal import not found" warning. They appear in the graph as marked
   nodes with no file, counted apart from modules and left out of the module findings.
@@ -52,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declare the same distribution name.
 
 ### Changed
+
+- Star imports of external modules no longer warn. Those of project modules outside a
+  package facade are reported as "Star imports not analyzed" (new warning
+  `star_not_analyzed`, which points to `--star-fixes`); with the option on, only the ones
+  whose names cannot be known warn (`star_import`).
 
 - The module count of the report and of the AI context counts parsed `.py` modules only;
   namespace packages, compiled extensions and stubs are counted apart.

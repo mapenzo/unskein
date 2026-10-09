@@ -65,6 +65,16 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Imports con asterisco",
         Lang.EN: "Star imports",
     },
+    "warning.star_not_analyzed": {
+        Lang.ES: "Import con asterisco desde {detail}: sin analizar; `--star-fixes` calcula el "
+        "import explícito que escribir",
+        Lang.EN: "Star import from {detail}: not analyzed; `--star-fixes` computes the explicit "
+        "import to write",
+    },
+    "warning_title.star_not_analyzed": {
+        Lang.ES: "Imports con asterisco sin analizar",
+        Lang.EN: "Star imports not analyzed",
+    },
     "warning.relative_beyond_top": {
         Lang.ES: "El import relativo '{detail}' sube más allá del paquete raíz",
         Lang.EN: "Relative import '{detail}' goes beyond the top-level package",
@@ -876,6 +886,141 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "es obligatoria.",
         Lang.EN: "Guard those uses with the same fallback, or drop the fallback if the "
         "extension is required.",
+    },
+    "finding.wildcard_import.title": {
+        Lang.ES: "Import con asterisco",
+        Lang.EN: "Wildcard import",
+    },
+    "finding.wildcard_import.explanation": {
+        Lang.ES: "`from módulo import *` trae los nombres del módulo (su `__all__` o, sin él, "
+        "todos los públicos), pero el código solo usa algunos. unskein calcula, con el proyecto "
+        "entero, los nombres que necesita cada sentencia: los que el módulo lee, los que otros "
+        "módulos importan desde él o leen como atributos suyos, y los que pasan a quienes lo "
+        "importan con asterisco; ante la duda, el nombre se conserva. Solo da un arreglo cuando "
+        "puede demostrar que es seguro; si no, dice por qué.",
+        Lang.EN: "`from module import *` brings the module's names (its `__all__` or, without "
+        "it, every public one), but the code uses only some of them. unskein computes, with "
+        "the whole project, the names each statement needs: those the module reads, those "
+        "other modules import from it or read as its attributes, and those that pass on to "
+        "modules that star-import it; when in doubt a name is kept. It gives a fix only when it "
+        "can prove it safe, and says why otherwise.",
+    },
+    "finding.wildcard_import.recommendation": {
+        Lang.ES: "Sustituir cada sentencia por el import explícito que se indica, o eliminarla "
+        "si no usa nada. Los tests solo cuentan si se analizan: sin `--include-tests` (por "
+        "defecto), ejecuta el análisis con esa opción antes de aplicar los arreglos, para que "
+        "se conserven los nombres que un test importa a través del módulo.",
+        Lang.EN: "Replace each statement with the explicit import shown, or remove it when it "
+        "uses nothing. Tests only count when they are analyzed: without `--include-tests` (the "
+        "default), run the analysis with that option before applying the fixes, so names a "
+        "test imports through the module are kept.",
+    },
+    "finding.wildcard.importers.one": {Lang.ES: "{count} módulo", Lang.EN: "{count} module"},
+    "finding.wildcard.importers.other": {Lang.ES: "{count} módulos", Lang.EN: "{count} modules"},
+    "finding.wildcard.statements.one": {
+        Lang.ES: "{count} sentencia",
+        Lang.EN: "{count} statement",
+    },
+    "finding.wildcard.statements.other": {
+        Lang.ES: "{count} sentencias",
+        Lang.EN: "{count} statements",
+    },
+    "finding.wildcard.used.one.one": {
+        Lang.ES: "usa {used_max} de {names} nombre",
+        Lang.EN: "it uses {used_max} of {names} name",
+    },
+    "finding.wildcard.used.one.other": {
+        Lang.ES: "usa {used_max} de {names} nombres",
+        Lang.EN: "it uses {used_max} of {names} names",
+    },
+    "finding.wildcard.used.other.one": {
+        Lang.ES: "usan de {used_min} a {used_max} de {names} nombre",
+        Lang.EN: "they use {used_min} to {used_max} of {names} name",
+    },
+    "finding.wildcard.used.other.other": {
+        Lang.ES: "usan de {used_min} a {used_max} de {names} nombres",
+        Lang.EN: "they use {used_min} to {used_max} of {names} names",
+    },
+    "finding.wildcard.unused.one": {
+        Lang.ES: "{count} no usa nada",
+        Lang.EN: "{count} uses nothing",
+    },
+    "finding.wildcard.unused.other": {
+        Lang.ES: "{count} no usan nada",
+        Lang.EN: "{count} use nothing",
+    },
+    "finding.wildcard.reexported.one": {
+        Lang.ES: "{count} nombre se conserva porque otros módulos lo importan a través de "
+        "quienes lo importan con asterisco",
+        Lang.EN: "{count} name kept because other modules import it through the modules that "
+        "star-import it",
+    },
+    "finding.wildcard.reexported.other": {
+        Lang.ES: "{count} nombres se conservan porque otros módulos los importan a través de "
+        "quienes lo importan con asterisco",
+        Lang.EN: "{count} names kept because other modules import them through the modules "
+        "that star-import it",
+    },
+    "finding.wildcard.no_fix.one": {
+        Lang.ES: "{count} sin arreglo seguro",
+        Lang.EN: "{count} without a safe fix",
+    },
+    "finding.wildcard.no_fix.other": {
+        Lang.ES: "{count} sin arreglo seguro",
+        Lang.EN: "{count} without a safe fix",
+    },
+    "finding.wildcard.reason.conditional": {
+        Lang.ES: "sin arreglo seguro: `{module}` puede dejar {names} sin ligar cuando corre la "
+        "estrella (ligado solo dentro de un bloque, bajo `TYPE_CHECKING`, solo anotado o "
+        "borrado)",
+        Lang.EN: "no safe fix: `{module}` may leave {names} unbound when the star runs (bound "
+        "only inside a block, under `TYPE_CHECKING`, only annotated or deleted)",
+    },
+    "finding.wildcard.reason.cycle": {
+        Lang.ES: "sin arreglo seguro: `{importer}` y `{module}` se importan entre sí, así que "
+        "lo que trae la estrella depende del orden de importación",
+        Lang.EN: "no safe fix: `{importer}` and `{module}` import each other, so what the star "
+        "brings depends on import order",
+    },
+    "finding.wildcard.reason.submodule": {
+        Lang.ES: "sin arreglo seguro: {names} es un submódulo de `{module}` que otro módulo "
+        "puede haber importado, así que la estrella puede traerlo o no",
+        Lang.EN: "no safe fix: {names} is a submodule of `{module}` that another module may "
+        "have imported, so the star may or may not bring it",
+    },
+    "finding.wildcard.self": {
+        Lang.ES: "{count} `from . import *` sin efecto",
+        Lang.EN: "{count} `from . import *` with no effect",
+    },
+    "finding.wildcard.fix.remove": {
+        Lang.ES: "eliminar (no usa nada; la línea carga `{module}` al importar, así que "
+        "borrarla también quita sus efectos al cargar)",
+        Lang.EN: "remove (it uses nothing; the line loads `{module}` when imported, so "
+        "removing it also drops its load-time effects)",
+    },
+    "finding.wildcard.fix.remove_self": {
+        Lang.ES: "eliminar (se importa a sí mismo y, sin `__all__`, no hace nada)",
+        Lang.EN: "remove (it imports itself and, without `__all__`, does nothing)",
+    },
+    "finding.wildcard.note.kept": {
+        Lang.ES: "se conservan para `{importer}`: {names}",
+        Lang.EN: "kept for `{importer}`: {names}",
+    },
+    "finding.wildcard.note.any_reader": {
+        Lang.ES: "se conservan todos: `{module}` se usa entero en otro sitio, a través de un "
+        "import con asterisco cuyos nombres no se pueden saber, o lo re-exporta una fachada sin "
+        "`__all__` (API pública), así que cualquiera de sus nombres puede leerse",
+        Lang.EN: "all kept: `{module}` is used by itself elsewhere, through a star import whose "
+        "names cannot be known, or re-exported by a package facade without `__all__` (public "
+        "API), so any of its names may be read",
+    },
+    "finding.wildcard.note.elsewhere": {
+        Lang.ES: "los define `{origin}`: {names}",
+        Lang.EN: "defined in `{origin}`: {names}",
+    },
+    "finding.wildcard.note.external": {
+        Lang.ES: "vienen de un import externo: {names}",
+        Lang.EN: "from a third-party import: {names}",
     },
     "finding.fix.import_from": {Lang.ES: "importa {items}", Lang.EN: "import {items}"},
     "finding.fix.import_from.item": {

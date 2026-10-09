@@ -81,6 +81,9 @@ them cannot be seen; works_without says whether every packaged use is guarded or
 An optional_native_required finding: the code guards the import of a compiled module in
 one place (it expects it can be missing) and imports it unguarded elsewhere, where it raises
 ImportError; its fix (guard_or_drop_fallback) is already computed: repeat it.
+A wildcard_import finding is a module imported with from x import * outside a facade; its
+fixes are computed from the whole project (names other modules import through it are kept);
+repeat them, do not invent names. Treat it as low unless unused_statements > 0.
 A missing_module finding is an import of a project module that does not exist and raises
 ImportError when it runs; its fix (import_from with defined_in, or restore_or_remove) is
 already computed from the code: repeat it, do not guess another module.

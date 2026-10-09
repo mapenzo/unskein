@@ -415,7 +415,7 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   | `from a.b import c`, `a.b.c` es módulo | `a.b.c` | `None` |
   | `from a.b import X`, `X` es símbolo | `a.b` | `X` |
   | relativo (`from ..m import X`) | resuelto con `node.level` desde el paquete del archivo | igual |
-  | `from x import *` | `x` + warning | `None` |
+  | `from x import *` | `x` (fuera de fachada se anota en `ModuleInfo.wildcards`) | `None` |
 
   Import interno inexistente → ancestro existente más cercano + warning, y la arista
   guarda el nombre pedido (`ImportEdge.requested`); se omite con warning si no hay
@@ -512,10 +512,16 @@ discutirlo primero):
 - **Star-imports (`from x import *`)**: dentro de una fachada (`__init__.py`)
   y de un módulo `x` del proyecto se siguen: re-exportan el `__all__` literal de
   `x` o, si no lo tiene, sus nombres públicos de nivel de módulo (más los de los
-  star-imports anidados de fachadas sin `__all__`). Fuera de una fachada, o de un
-  módulo externo, siguen sin resolverse y generan el aviso `STAR_IMPORT`. Un
-  `__all__` dinámico (no literal) no se sigue: se usan los nombres públicos.
-  Nunca falla silenciosamente.
+  star-imports anidados de fachadas sin `__all__`). Un `__all__` dinámico (no literal)
+  no se sigue en una fachada: se usan los nombres públicos. Fuera de una fachada, la
+  sentencia de un módulo del proyecto se anota en `ModuleInfo.wildcards` (línea, módulo;
+  también la de un paquete a sí mismo) y el módulo guarda en `star_reads` todo nombre que
+  puede leer (`collect_read_names`: `Name` con `Load` en cualquier ámbito, identificadores
+  de textos cortos que no son docstrings, el `__all__` literal); la arista se queda como
+  está, porque la sentencia carga el módulo. `resolve_indirection` da el aviso
+  `STAR_IMPORT` solo si no se pueden saber los nombres (módulo sin parsear o
+  `ModuleExports.has_dynamic_all`). Un `from x import *` de un módulo externo es solo una
+  arista, sin aviso. La regla 12 calcula el arreglo.
 - **Imports dinámicos vía `importlib.import_module()` con strings son
   invisibles** — limitación conocida y común en análisis estático puro.
 
@@ -883,6 +889,64 @@ inexistente: el código compilado puede registrar submódulos (`_inside_native`)
 módulo empaquetado distinto de los importadores **define** alguno
 (`ModuleInfo.defined_names`: `def`, `class` o asignación, nunca un import); si ninguno,
 `restore_or_remove`. Sin sugerencias por nombre parecido.
+
+### Regla 12: imports con asterisco (`graph/stars.py`)
+
+**Opcional** (`AnalysisConfig.star_fixes`, `--star-fixes`, `[analysis] star_fixes`; apagada por
+defecto): releer los módulos implicados cuesta entre un 15 y un 20 % en litellm (mediana 2,77 s apagada, igual que `develop`; 3,10 s encendida). Apagada, el
+parser no guarda lecturas ni imports dinámicos (`ParsePlan.star_fixes` → `ParseResult.star_fixes`),
+`resolve_indirection` da un `STAR_NOT_ANALYZED` por cada sentencia de un módulo del proyecto fuera
+de fachada (las externas y la estrella de un paquete a sí mismo no avisan), `analyze` no calcula
+`summarize_wildcards` y no hay hallazgo. Encendida, `STAR_NOT_ANALYZED` desaparece y
+`STAR_IMPORT` queda solo para lo que no se puede saber.
+
+`summarize_wildcards(result, scripts)`: para cada `from B import *` fuera de fachada de
+código empaquetado que no es script, los nombres que necesita y el arreglo.
+
+Principio: **un arreglo solo se da si se puede demostrar que es seguro; si no, se dice por
+qué**. Ante la duda un nombre se conserva. Un test de propiedad aplica los arreglos tal cual y
+ejecuta Python antes y después (`tests/unit/test_wildcard_safety.py`, con los 78 escenarios de
+la segunda revisión en `wildcard_scenarios.py`).
+
+- **Lo que trae** (`wildcard_names` en `parsers/indirection.py`, compartido con el aviso): el
+  `__all__` literal de B o, sin él, sus nombres públicos, los ligados de formas que pueden no
+  ocurrir (`for`, `with`, walrus, `match`, `except … as`, `global` en funciones), los
+  submódulos que su `__init__` importa y los de sus estrellas anidadas. `None` (sin entrada,
+  aviso `STAR_IMPORT`) si algún módulo del camino no se parseó, tiene `__all__` dinámico o es
+  **incierto** (`StarSurface.uncertain`: una estrella de un módulo externo, una estrella dentro
+  de un bloque, o `globals()`/`vars()`/`exec`).
+- **Superficie** (`ModuleInfo.surface`, `StarSurface`): el parser solo pone lo barato
+  (`__all__` dinámico, estrella externa); `resolve_indirection` (`_with_surfaces`) vuelve a
+  leer solo los módulos que algo importa con asterisco y calcula `module_surface`: los
+  nombres **condicionales** (que pueden quedar sin ligar: solo dentro de un bloque, bajo
+  `TYPE_CHECKING`, solo anotados, borrados con `del`, o ligados de forma suelta) y si es
+  incierto.
+- **Proveedores** (`_providers`): todas las estrellas de M que traen un nombre lo conservan
+  (ramas alternativas). Los nombres que M liga por su cuenta también se conservan: un import
+  explícito de más mantiene el significado en cualquier orden.
+- **Demanda** (`_demand`, punto fijo): lo que M lee (`stars.reads`, con `del x` y `x += 1`),
+  lo que cualquier módulo analizado importa de M o lee como atributo de M (para paquetes, el
+  `accessed` del parser; para módulos, `collect_attribute_reads` relee solo los importadores
+  de módulos con estrellas) y lo que necesitan quienes importan M con asterisco. M necesita
+  **todo** lo que traen sus estrellas cuando se usa suelto, se carga por nombre
+  (`importlib.import_module`/`__import__` con un literal, `stars.dynamic_imports`), una
+  estrella suya es desconocida, o es una fachada sin `__all__` con estrellas (API pública:
+  código de fuera puede leer cualquier nombre).
+- **Arreglo** (`WildcardFix`), en este orden: `no_fix` con `cycle` si importador y módulo están
+  en un ciclo de imports al importar (lo que trae la estrella depende del orden); `no_fix` con
+  `submodule` si M lee un submódulo del paquete que otro módulo puede haber cargado; `remove`
+  si no necesita nada; `no_fix` con `conditional` si un nombre necesario es condicional; si
+  no, `explicit` con `from B import …` (siempre desde B). `remove_self` para `from . import *`
+  de un paquete sin `__all__`. Notas: `kept_for` (por módulo que lo necesita, o `ANY_READER`),
+  `defined_elsewhere` (un import con alias no da nota) y `external`.
+- `find_wildcard_imports`: un hallazgo `WILDCARD_IMPORT` por módulo B, con evidencia `kind`,
+  `importers`, `statements`, `names`, `used_min`, `used_max`, `unused_statements`,
+  `no_fix_statements`, `reexported`, `fixes` (para la IA: hasta 5 sentencias y 20 nombres) y
+  `fixes_total`. El informe lista todos los hallazgos, sentencias y nombres.
+- Límites: los tests solo cuentan si se analizan (`--include-tests`); el arreglo cambia el
+  espacio de nombres de M para código de fuera del proyecto (salvo en fachadas, que conservan
+  todo); no se ven `eval` de nombres calculados ni `importlib.import_module` con un nombre no
+  literal. Coste en litellm: unos 0,5 s (releer 20 importadores y 40 módulos con estrellas).
 
 ### Frontera nativa y regla 11 (`graph/native.py`)
 

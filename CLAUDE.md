@@ -147,6 +147,7 @@ src/unskein/
 │   ├── distributions.py     # uso entre distribuciones, reglas 6-9 e instalabilidad
 │   ├── missing.py           # regla 10: imports a módulos inexistentes
 │   ├── native.py            # frontera nativa y regla 11
+│   ├── stars.py             # regla 12: imports con asterisco y su arreglo
 │   ├── impact.py            # radio de impacto transitivo (impact_radius)
 │   ├── steps.py             # pasos de refactor y sus costes (choose_step)
 │   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
@@ -172,10 +173,12 @@ para paquetes Python distribuibles).
   import.
 - **Los hallazgos (`graph/findings.py`, `graph/distributions.py`) son reglas deterministas
   sobre el grafo**; la IA solo los interpreta y nunca cambian el código de salida.
-  Son once reglas; la quinta (violación de capas) solo existe con `[layers]`, de la
+  Son doce reglas; la quinta (violación de capas) solo existe con `[layers]`, de la
   sexta a la novena (entre distribuciones) solo con distribuciones con nombre, la décima
-  (import de un módulo inexistente) solo cuando el import rompe al ejecutarse, y la
-  undécima (extensión opcional usada como obligatoria) solo con módulos compilados o stubs.
+  (import de un módulo inexistente) solo cuando el import rompe al ejecutarse, la
+  undécima (extensión opcional usada como obligatoria) solo con módulos compilados o stubs,
+  y la duodécima (import con asterisco) solo con `from x import *` fuera de fachada y con
+  `--star-fixes` (apagada por defecto: releer los módulos implicados cuesta entre un 15 y un 20 %).
 - **Módulos virtuales** = módulos sin `.py` parseado: espacios de nombres (PEP 420),
   extensiones compiladas (`.so`/`.pyd`/`.pyx` o maturin `module-name`) y módulos solo stub
   (`.pyi`). Nodos marcados (`virtual=<VirtualKind>`), sin aristas de salida (en compilados y

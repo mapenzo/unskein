@@ -4,7 +4,7 @@ from pathlib import Path
 import pathspec
 import pytest
 
-from unskein.parsers.models import ParseResult, WarningCode
+from unskein.parsers.models import ParseResult
 from unskein.parsers.python_parser import PythonAdapter
 
 IMPORT_LINE = "from pkg import dep"
@@ -62,18 +62,18 @@ def test_duplicate_reexport_resolves_to_first_in_code_not_shallowest(
     assert [r.original_module for r in reexports] == ["app._deep", "app._top"]
 
 
-def test_warnings_of_a_file_follow_the_order_of_the_code(
+def test_wildcards_of_a_file_follow_the_order_of_the_code(
     make_project: Callable[[dict[str, str]], Path],
 ) -> None:
     source = "if True:\n    from pkg.a import *\nfrom pkg.b import *\n"
     root = make_project(
         {"pkg/__init__.py": "", "pkg/a.py": "", "pkg/b.py": "", "pkg/mod.py": source}
     )
-    stars = [w for w in parse_project(root).warnings if w.code == WarningCode.STAR_IMPORT]
-    assert [w.line for w in stars] == [2, 3]
+    (module,) = [m for m in parse_project(root).modules if m.name == "pkg.mod"]
+    assert [line for line, _ in module.stars.statements] == [2, 3]
 
 
-def test_warnings_follow_the_order_of_every_block_of_a_try(
+def test_wildcards_follow_the_order_of_every_block_of_a_try(
     make_project: Callable[[dict[str, str]], Path],
 ) -> None:
     source = (
@@ -84,7 +84,6 @@ def test_warnings_follow_the_order_of_every_block_of_a_try(
     )
     files = {"pkg/__init__.py": "", "pkg/mod.py": source}
     files |= {f"pkg/{name}.py": "" for name in "abcd"}
-    stars = [
-        w for w in parse_project(make_project(files)).warnings if w.code == WarningCode.STAR_IMPORT
-    ]
-    assert [w.line for w in stars] == [2, 4, 6, 8]
+    root = make_project(files)
+    (module,) = [m for m in parse_project(root).modules if m.name == "pkg.mod"]
+    assert [line for line, _ in module.stars.statements] == [2, 4, 6, 8]

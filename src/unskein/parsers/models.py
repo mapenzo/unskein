@@ -11,8 +11,8 @@ class WarningCode(StrEnum):
     """Kinds of non-fatal problems found while parsing and resolving a project.
 
     Attributes:
-        STAR_IMPORT: ``from x import *`` outside a package facade (or of a module outside
-            the project); the names it brings in are not followed.
+        STAR_IMPORT: ``from x import *`` outside a package facade whose names cannot be
+            known (the module was not parsed or computes its ``__all__``).
         RELATIVE_BEYOND_TOP: A relative import climbs above the top-level package.
         UNRESOLVED_IMPORT: An internal import names a module that does not exist.
         FILE_TOO_LARGE: A file exceeds ``max_file_size_bytes`` and was not read.
@@ -31,6 +31,8 @@ class WarningCode(StrEnum):
             no usable name; it is ignored.
         INVALID_MODULE_NAME: A manifest declares a compiled module whose name is not dotted
             identifiers; it is ignored.
+        STAR_NOT_ANALYZED: ``from x import *`` of a project module outside a package facade,
+            not analyzed because ``star_fixes`` is off; the option computes the explicit import.
     """
 
     STAR_IMPORT = "star_import"
@@ -47,6 +49,7 @@ class WarningCode(StrEnum):
     INVALID_REQUIREMENT = "invalid_requirement"
     DUPLICATE_DISTRIBUTION_NAME = "duplicate_distribution_name"
     INVALID_MODULE_NAME = "invalid_module_name"
+    STAR_NOT_ANALYZED = "star_not_analyzed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +233,43 @@ class DistributionInfo:
     groups: OptionalDependencies = ()
 
 
+@dataclass(frozen=True, slots=True)
+class StarImports:
+    """A module's star imports outside a package facade, and what decides their fix.
+
+    Attributes:
+        statements: Star imports of project modules (the module itself included), as
+            (line, imported module), in code order.
+        reads: Names the module may read (see ``collect_read_names``), sorted; empty
+            without statements.
+        dynamic_imports: Modules the module loads by a literal name with
+            ``importlib.import_module`` or ``__import__``, sorted: any of their names may be
+            read.
+    """
+
+    statements: tuple[tuple[int, str], ...] = ()
+    reads: tuple[str, ...] = ()
+    dynamic_imports: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StarSurface:
+    """What a star import of a module brings, as far as its source tells.
+
+    Attributes:
+        dynamic_all: Whether its ``__all__`` cannot be read.
+        uncertain: Whether a star of it brings names nobody can list: it star-imports an
+            external module or one inside a block, or calls ``globals()``, ``vars()`` or
+            ``exec``.
+        conditional: Names a star of it may bring that may be unbound when the star runs,
+            sorted.
+    """
+
+    dynamic_all: bool = False
+    uncertain: bool = False
+    conditional: tuple[str, ...] = ()
+
+
 @dataclass(slots=True)
 class ModuleInfo:
     """A parsed project module and the imports it makes.
@@ -247,6 +287,8 @@ class ModuleInfo:
             ``class``, assignments), not through an import, sorted.
         distribution: Name of the distribution that ships the module; None when none
             with a name does.
+        stars: Its star imports outside a package facade and what decides their fix.
+        surface: What a star import of it brings, as far as its source tells.
     """
 
     name: str
@@ -258,6 +300,8 @@ class ModuleInfo:
     is_packaged: bool = True
     distribution: str | None = None
     defined_names: tuple[str, ...] = ()
+    stars: StarImports = field(default_factory=StarImports)
+    surface: StarSurface = field(default_factory=StarSurface)
 
 
 # Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.
@@ -319,6 +363,7 @@ class ParsePlan:
         project_root: Absolute project directory, for relative paths in findings.
         virtual: Modules with no parsed file (namespace packages, compiled extensions,
             stubs), by name, sorted.
+        star_fixes: Whether star imports are analyzed to compute their fix (rule 12).
     """
 
     tasks: list[ParseTask]
@@ -329,6 +374,7 @@ class ParsePlan:
     module_distributions: dict[str, str] = field(default_factory=dict)
     project_root: Path | None = None
     virtual: dict[str, VirtualModule] = field(default_factory=dict)
+    star_fixes: bool = False
 
 
 @dataclass
@@ -348,6 +394,7 @@ class ParseResult:
             not (a file skipped as too large still belongs to its distribution).
         virtual: Modules with no parsed file (namespace packages, compiled extensions,
             stubs), by name, sorted.
+        star_fixes: Whether star imports are analyzed to compute their fix (rule 12).
     """
 
     modules: list[ModuleInfo]
@@ -359,6 +406,7 @@ class ParseResult:
     project_root: Path | None = None
     module_distributions: dict[str, str] = field(default_factory=dict)
     virtual: dict[str, VirtualModule] = field(default_factory=dict)
+    star_fixes: bool = False
 
     @classmethod
     def from_file_results(
@@ -387,6 +435,7 @@ class ParseResult:
             result.project_root = plan.project_root
             result.module_distributions = plan.module_distributions
             result.virtual = plan.virtual
+            result.star_fixes = plan.star_fixes
         for file_result in file_results:
             if file_result.module is not None:
                 module = file_result.module
