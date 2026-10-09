@@ -249,18 +249,16 @@ def _relative(path: Path, root: Path | None) -> str:
     return path.as_posix()
 
 
-def _location(path: Path, line: int | None, root: Path | None) -> str:
-    """Return ``path:line`` for an import statement, relative to the project root.
+def _location(relative: str, line: int | None) -> str:
+    """Return ``path:line`` for an import statement.
 
     Args:
-        path: Source file.
+        relative: Source file, relative to the project root.
         line: Line of the statement, if known.
-        root: Absolute project directory, if known.
 
     Returns:
         The location; without ``:line`` when the line is unknown.
     """
-    relative = _relative(path, root)
     return relative if line is None else f"{relative}:{line}"
 
 
@@ -284,14 +282,18 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
         source = module.distribution
         if source is None or module.name in scripts:
             continue
+        # Relative paths are slow to compute: once per module, and only when needed.
+        relative = None
         for edge in sorted(module.imports, key=lambda e: e.line_number or 0):
             use = None if edge.is_external else import_use(edge)
             if use is None or edge.target not in distribution_of:
                 continue
             target = distribution_of[edge.target]
-            location = _location(module.file_path, edge.line_number, result.project_root)
             if target == source:
                 continue
+            if relative is None:
+                relative = _relative(module.file_path, result.project_root)
+            location = _location(relative, edge.line_number)
             if target is not None:
                 collector.edges[source, target].add(use, location)
             elif edge.target not in scripts and PATH_SEPARATOR not in edge.target:
