@@ -155,8 +155,8 @@ detección.
   recomendación. Los problemas que nombran módulos inexistentes se descartan,
   y el informe dice cuántos.
 - **Advertencias del análisis**: archivos omitidos o imports que no se
-  pudieron resolver (imports con asterisco fuera de las fachadas o de módulos ajenos al
-  proyecto, imports relativos fuera del paquete raíz, archivos demasiado grandes, no
+  pudieron resolver (imports con asterisco fuera de las fachadas cuyos nombres no se
+  pueden saber, porque el módulo no se pudo analizar o calcula su `__all__`; imports relativos fuera del paquete raíz, archivos demasiado grandes, no
   analizables o demasiado lentos, ciclos o cadenas de re-exports demasiado largas). Una
   advertencia nunca detiene el análisis.
 

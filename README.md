@@ -98,6 +98,10 @@ Architecture health: fair.
   Rust extension at all; tach sees it only once it is named in its configuration, and
   neither tach nor mypy tells the guarded import apart from the five that would raise
   `ImportError` without the extension.
+- **Star imports**: one finding per module imported with `from x import *` outside a
+  package facade, with the explicit import to write for each statement. The names are
+  computed with the whole project, so a name another module imports through the
+  star-importing module is kept.
 - **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,

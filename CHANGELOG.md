@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Finding: wildcard import. One finding per module imported with `from x import *` outside
+  a package facade, with the explicit import to write for each statement. The names come
+  from the whole project: those the module reads, those other modules (tests included)
+  import from it, and those that pass on to modules that star-import it. A statement that
+  needs nothing is to be removed, and `from . import *` of a package into itself without
+  `__all__` too.
+
 - Namespace packages (PEP 420, directories without `__init__.py`): importing one is no
   longer an "internal import not found" warning. They appear in the graph as marked
   nodes with no file, counted apart from modules and left out of the module findings.
@@ -52,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declare the same distribution name.
 
 ### Changed
+
+- `STAR_IMPORT` warnings only appear for star imports whose names cannot be known (the
+  module was not parsed or computes its `__all__`); star imports of external modules no
+  longer warn.
 
 - The module count of the report and of the AI context counts parsed `.py` modules only;
   namespace packages, compiled extensions and stubs are counted apart.

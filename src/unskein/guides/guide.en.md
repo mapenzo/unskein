@@ -149,7 +149,8 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   recommendation. Problems naming modules that do not exist are discarded, and
   the report says how many.
 - **Analysis warnings**: files skipped or imports that could not be resolved
-  (star imports outside package facades or of modules outside the project, relative
+  (star imports outside package facades whose names cannot be known, because the module
+  was not parsed or computes its `__all__`; relative
   imports beyond the top package, files too large, unparseable or too slow to parse,
   re-export cycles or chains too long). A warning never stops the analysis.
 

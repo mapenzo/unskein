@@ -415,7 +415,7 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   | `from a.b import c`, `a.b.c` es módulo | `a.b.c` | `None` |
   | `from a.b import X`, `X` es símbolo | `a.b` | `X` |
   | relativo (`from ..m import X`) | resuelto con `node.level` desde el paquete del archivo | igual |
-  | `from x import *` | `x` + warning | `None` |
+  | `from x import *` | `x` (fuera de fachada se anota en `ModuleInfo.wildcards`) | `None` |
 
   Import interno inexistente → ancestro existente más cercano + warning, y la arista
   guarda el nombre pedido (`ImportEdge.requested`); se omite con warning si no hay
@@ -512,10 +512,16 @@ discutirlo primero):
 - **Star-imports (`from x import *`)**: dentro de una fachada (`__init__.py`)
   y de un módulo `x` del proyecto se siguen: re-exportan el `__all__` literal de
   `x` o, si no lo tiene, sus nombres públicos de nivel de módulo (más los de los
-  star-imports anidados de fachadas sin `__all__`). Fuera de una fachada, o de un
-  módulo externo, siguen sin resolverse y generan el aviso `STAR_IMPORT`. Un
-  `__all__` dinámico (no literal) no se sigue: se usan los nombres públicos.
-  Nunca falla silenciosamente.
+  star-imports anidados de fachadas sin `__all__`). Un `__all__` dinámico (no literal)
+  no se sigue en una fachada: se usan los nombres públicos. Fuera de una fachada, la
+  sentencia de un módulo del proyecto se anota en `ModuleInfo.wildcards` (línea, módulo;
+  también la de un paquete a sí mismo) y el módulo guarda en `star_reads` todo nombre que
+  puede leer (`collect_read_names`: `Name` con `Load` en cualquier ámbito, identificadores
+  de textos cortos que no son docstrings, el `__all__` literal); la arista se queda como
+  está, porque la sentencia carga el módulo. `resolve_indirection` da el aviso
+  `STAR_IMPORT` solo si no se pueden saber los nombres (módulo sin parsear o
+  `ModuleExports.has_dynamic_all`). Un `from x import *` de un módulo externo es solo una
+  arista, sin aviso. La regla 12 calcula el arreglo.
 - **Imports dinámicos vía `importlib.import_module()` con strings son
   invisibles** — limitación conocida y común en análisis estático puro.
 
@@ -883,6 +889,32 @@ inexistente: el código compilado puede registrar submódulos (`_inside_native`)
 módulo empaquetado distinto de los importadores **define** alguno
 (`ModuleInfo.defined_names`: `def`, `class` o asignación, nunca un import); si ninguno,
 `restore_or_remove`. Sin sugerencias por nombre parecido.
+
+### Regla 12: imports con asterisco (`graph/stars.py`)
+
+`summarize_wildcards(result, scripts)`: para cada `from B import *` fuera de fachada de
+código empaquetado que no es script, los nombres que necesita y el arreglo.
+
+- **Lo que trae** (`_star_names`): el `__all__` literal de B o sus nombres públicos más los
+  de sus estrellas anidadas (de fachada o no), con conjunto de visitados; `None` si algún
+  módulo del camino no se parseó o tiene `__all__` dinámico (sin hallazgo).
+- **Dueño** (`_owners`): en M, cada nombre lo aporta la **última** estrella que lo trae; los
+  que M liga explícitamente nunca vienen de una estrella (límite: un `X = 1` anterior a la
+  estrella se toma igual como propio).
+- **Demanda** (`_demand`, punto fijo): lo que M lee (`star_reads`), lo que **cualquier**
+  módulo importa explícitamente de M (tests incluidos: el arreglo no debe romperlos) y lo
+  que necesitan quienes importan M con asterisco, a través de su dueño. `needer` guarda el
+  primer módulo que necesita un nombre que M no lee.
+- **Arreglo** (`WildcardFix`): `remove` si no necesita nada (la línea carga B al importar:
+  borrarla quita sus efectos al cargar); `explicit` con `from B import …` (siempre desde B,
+  no cambia lo que se carga); `remove_self` para `from . import *` de un paquete sin
+  `__all__`. Notas: `kept`/`kept_for`, `defined_elsewhere` (origen interno de lo que B solo
+  pasa, por sus aristas o su propia estrella) y `external`.
+- `find_wildcard_imports`: un hallazgo `WILDCARD_IMPORT` por módulo B (o paquete que se
+  importa a sí mismo), los de más importadores primero, con evidencia `kind`, `importers`,
+  `statements`, `names`, `used_min`, `used_max`, `unused_statements`, `reexported`, `fixes`
+  (hasta 5, nombres hasta 20) y `fixes_total`. `AnalysisResult.wildcards` lleva el detalle
+  para el informe. No se ven lecturas por `globals()` o `getattr(módulo, "x")`.
 
 ### Frontera nativa y regla 11 (`graph/native.py`)
 
