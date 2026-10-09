@@ -123,6 +123,25 @@ class FindingSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class NativeSummary:
+    """How packaged code uses one compiled extension or stub-only module.
+
+    Attributes:
+        module: Dotted module name.
+        kind: "compiled" or "stub".
+        works_without: Whether every packaged use is guarded or type-only.
+        unguarded: Required and lazy imports without a guard.
+        guarded: Guarded imports.
+    """
+
+    module: str
+    kind: str
+    works_without: bool
+    unguarded: int
+    guarded: int
+
+
+@dataclass(frozen=True, slots=True)
 class PackageEdgeSummary:
     """Dependencies from one package to another, as shown to the LLM.
 
@@ -142,7 +161,8 @@ class AIContext:
     """Bounded, aggregated view of an analysis sent to the LLM instead of the full graph.
 
     Attributes:
-        total_modules: Number of internal modules analyzed.
+        total_modules: Number of internal modules analyzed (parsed .py files; namespace
+            packages, compiled extensions and stubs are not counted).
         total_dependencies: Number of internal dependency edges.
         tangles: Largest tangles, truncated.
         total_tangles: Tangles before truncation.
@@ -160,6 +180,8 @@ class AIContext:
         total_hidden_tangles: Hidden tangles before truncation.
         namespaces: Namespace packages among the top coupled modules: packages without an
             ``__init__.py``, with no code of their own.
+        native: Compiled extensions and stub-only modules: their code cannot be read, so
+            their ce is unknown.
     """
 
     total_modules: int
@@ -178,6 +200,7 @@ class AIContext:
     hidden_tangles: list[TangleSummary] = field(default_factory=list)
     total_hidden_tangles: int = 0
     namespaces: list[str] = field(default_factory=list)
+    native: list[NativeSummary] = field(default_factory=list)
 
 
 class AIFailure(StrEnum):

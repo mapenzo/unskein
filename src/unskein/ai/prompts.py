@@ -14,6 +14,7 @@ from unskein.ai.models import (
     CycleSummary,
     FindingSummary,
     ModuleCoupling,
+    NativeSummary,
     PackageEdgeSummary,
     TangleSummary,
 )
@@ -72,6 +73,12 @@ A layer_violation finding names, in layer_from and layer_to, two layers the user
 the importing module sits in the lower layer.
 namespaces lists namespace packages (directories without __init__.py): they have no code,
 so their ca says how many modules import them, not that the node needs refactoring.
+native lists compiled extensions and stub-only modules: their code cannot be read, so
+their ce is unknown (not low) and cycles through them cannot be seen; works_without says
+whether every packaged use is guarded or type-only.
+An optional_native_required finding: the code guards the import of a compiled module in
+one place (it expects it can be missing) and imports it unguarded elsewhere, where it raises
+ImportError; its fix (guard_or_drop_fallback) is already computed: repeat it.
 A missing_module finding is an import of a project module that does not exist and raises
 ImportError when it runs; its fix (import_from with defined_in, or restore_or_remove) is
 already computed from the code: repeat it, do not guess another module.
@@ -130,7 +137,7 @@ def build_context(result: AnalysisResult) -> AIContext:
                 evidence["impact"] = result.impact[finding.modules[0]]
             summaries.append(FindingSummary(finding.kind.value, list(finding.modules), evidence))
     return AIContext(
-        total_modules=result.graph.number_of_nodes() - len(result.namespaces),
+        total_modules=result.graph.number_of_nodes() - len(result.virtual),
         namespaces=sorted(
             metrics.module
             for metrics in ranked[:MAX_MODULES_IN_PROMPT]
@@ -166,6 +173,16 @@ def build_context(result: AnalysisResult) -> AIContext:
         total_package_edges=len(result.package_edges),
         hidden_tangles=_tangle_summaries(result.hidden_tangles),
         total_hidden_tangles=len(result.hidden_tangles),
+        native=[
+            NativeSummary(
+                native.name,
+                native.kind.value,
+                native.works_without,
+                len(native.unguarded),
+                native.guarded,
+            )
+            for native in result.native
+        ],
     )
 
 

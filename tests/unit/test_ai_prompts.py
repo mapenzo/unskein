@@ -12,6 +12,7 @@ from unskein.ai.models import (
     AIReport,
     CycleSummary,
     ModuleCoupling,
+    NativeSummary,
     PackageEdgeSummary,
     Problem,
     TangleSummary,
@@ -680,3 +681,26 @@ def test_system_prompt_explains_namespaces() -> None:
 
 def test_system_prompt_explains_missing_module_findings() -> None:
     assert "missing_module" in SYSTEM_PROMPT
+
+
+NATIVE_ROOT = Path(__file__).parent.parent / "fixtures" / "native_project"
+
+
+def test_context_lists_native_modules_and_counts_only_py_modules() -> None:
+    context = build_context(analyze_fixture(NATIVE_ROOT))
+    assert context.total_modules == 5
+    assert context.native[1] == NativeSummary(
+        module="pkg._native", kind="compiled", works_without=False, unguarded=1, guarded=1
+    )
+    assert [summary.module for summary in context.native] == [
+        "pkg._cy",
+        "pkg._native",
+        "pkg._speed",
+        "pkg.fast._impl",
+        "pkg.stubonly",
+    ]
+
+
+def test_system_prompt_explains_native_modules_and_rule_11() -> None:
+    assert "native lists compiled extensions" in SYSTEM_PROMPT
+    assert "optional_native_required" in SYSTEM_PROMPT
