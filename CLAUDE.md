@@ -133,6 +133,7 @@ src/unskein/
 │   ├── discovery.py        # os.walk, excludes, encoding
 │   ├── layout.py           # distribuciones desde manifiestos y nombre de cada archivo
 │   ├── requirements.py     # dependencias declaradas por distribución
+│   ├── native.py           # stubs, binarios y declaraciones maturin: módulos sin .py
 │   ├── indirection.py      # resolución de re-exports
 │   ├── usage.py            # uso de nombres importados: acceso por atributo y evidencia para `untangle`
 │   ├── exports.py          # nombres que un módulo expone a `import *`
@@ -145,6 +146,7 @@ src/unskein/
 │   ├── scripts.py           # scripts (no empaquetados y sin importadores) y consumidores
 │   ├── distributions.py     # uso entre distribuciones, reglas 6-9 e instalabilidad
 │   ├── missing.py           # regla 10: imports a módulos inexistentes
+│   ├── native.py            # frontera nativa y regla 11
 │   ├── impact.py            # radio de impacto transitivo (impact_radius)
 │   ├── steps.py             # pasos de refactor y sus costes (choose_step)
 │   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
@@ -170,12 +172,15 @@ para paquetes Python distribuibles).
   import.
 - **Los hallazgos (`graph/findings.py`, `graph/distributions.py`) son reglas deterministas
   sobre el grafo**; la IA solo los interpreta y nunca cambian el código de salida.
-  Son diez reglas; la quinta (violación de capas) solo existe con `[layers]`, de la
-  sexta a la novena (entre distribuciones) solo con distribuciones con nombre, y la décima
-  (import de un módulo inexistente) solo cuando el import rompe al ejecutarse.
-- **Paquetes de espacio de nombres (PEP 420)** = prefijos de nombres de módulo que no son
-  módulos. Son nodos virtuales marcados (`namespace=True`): sin archivo, fuera de los
-  hallazgos 1-5, contados aparte en el informe y marcados *(espacio de nombres)*.
+  Son once reglas; la quinta (violación de capas) solo existe con `[layers]`, de la
+  sexta a la novena (entre distribuciones) solo con distribuciones con nombre, la décima
+  (import de un módulo inexistente) solo cuando el import rompe al ejecutarse, y la
+  undécima (extensión opcional usada como obligatoria) solo con módulos compilados o stubs.
+- **Módulos virtuales** = módulos sin `.py` parseado: espacios de nombres (PEP 420),
+  extensiones compiladas (`.so`/`.pyd`/`.pyx` o maturin `module-name`) y módulos solo stub
+  (`.pyi`). Nodos marcados (`virtual=<VirtualKind>`), sin aristas de salida (en compilados y
+  stubs el Ce se muestra como desconocido: lo que importan no se ve), fuera de los hallazgos
+  1-5 y contados aparte en el informe. Los imports de un `.pyi` nunca son aristas.
 - **`is_external` se calcula comparando el primer segmento del import contra los
   módulos del proyecto**, no contra una lista de stdlib/paquetes conocidos.
 - **Ciclos y marañas = grafo al importar.** Cada `ImportEdge` lleva su `ImportKind`

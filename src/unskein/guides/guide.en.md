@@ -74,6 +74,15 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   namespace has no regular package above it (`google/cloud/` with no `__init__.py`), other
   distributions can complete it: what the project lacks there stays a warning, never a
   finding.
+- **Compiled extensions and stubs**: a module with no `.py` that exists as a binary
+  (`.so`, `.pyd`), a Cython source (`.pyx`), a `[tool.maturin]` `module-name` or only a
+  `.pyi` stub appears in the graph marked *(compiled extension)* or *(stub only)*, with
+  its exact Ca and its Ce as `?`: what compiled code imports cannot be seen (the imports of
+  a `.pyi` are types, not dependencies). `from pkg import _native` and
+  `from pkg._native import X` reach the same node, with no warning. The **Native boundary**
+  section says, per module, what proves it, how packaged code uses it (required / lazy /
+  guarded / type-only) and whether it works without it. Excluded files (`.gitignore`,
+  `.unskeinignore`, `--exclude`) do not count as evidence.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.

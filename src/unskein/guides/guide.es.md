@@ -77,6 +77,15 @@ detección.
   espacio de nombres no tiene ningún paquete normal por encima (`google/cloud/` sin
   `__init__.py`), otras distribuciones pueden completarlo: lo que el proyecto no tiene ahí
   se queda en aviso, nunca en hallazgo.
+- **Extensiones compiladas y stubs**: un módulo sin `.py` que existe como binario (`.so`,
+  `.pyd`), fuente Cython (`.pyx`), `module-name` de `[tool.maturin]` o solo stub `.pyi`
+  aparece en el grafo marcado *(extensión compilada)* o *(solo stub)*, con su Ca exacto y
+  su Ce como `?`: lo que importa el código compilado no se ve (los imports del `.pyi` son
+  tipos, no dependencias). `from pkg import _native` y `from pkg._native import X` llevan
+  al mismo nodo, sin aviso. La sección **Frontera nativa** dice, por módulo, qué lo
+  prueba, cómo lo usa el código empaquetado (requeridos / perezosos / protegidos / solo
+  tipos) y si funciona sin él. Los archivos excluidos (`.gitignore`, `.unskeinignore`,
+  `--exclude`) no cuentan como prueba.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto
