@@ -11,8 +11,8 @@ class WarningCode(StrEnum):
     """Kinds of non-fatal problems found while parsing and resolving a project.
 
     Attributes:
-        STAR_IMPORT: ``from x import *`` outside a package facade (or of a module outside
-            the project); the names it brings in are not followed.
+        STAR_IMPORT: ``from x import *`` outside a package facade whose names cannot be
+            known (the module was not parsed or computes its ``__all__``).
         RELATIVE_BEYOND_TOP: A relative import climbs above the top-level package.
         UNRESOLVED_IMPORT: An internal import names a module that does not exist.
         FILE_TOO_LARGE: A file exceeds ``max_file_size_bytes`` and was not read.
@@ -247,6 +247,12 @@ class ModuleInfo:
             ``class``, assignments), not through an import, sorted.
         distribution: Name of the distribution that ships the module; None when none
             with a name does.
+        wildcards: Star imports outside a package facade of project modules (the module
+            itself included), as (line, imported module), in code order.
+        star_reads: Names the module may read, only for modules with wildcards (see
+            ``collect_read_names``), sorted.
+        has_dynamic_all: Whether its ``__all__`` cannot be read, so a star import of it
+            brings unknown names.
     """
 
     name: str
@@ -258,6 +264,9 @@ class ModuleInfo:
     is_packaged: bool = True
     distribution: str | None = None
     defined_names: tuple[str, ...] = ()
+    wildcards: tuple[tuple[int, str], ...] = ()
+    star_reads: tuple[str, ...] = ()
+    has_dynamic_all: bool = False
 
 
 # Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.

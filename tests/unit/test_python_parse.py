@@ -108,14 +108,14 @@ def test_relative_import_beyond_top_level_is_warned_and_skipped(make_project: Ma
     assert (warning.path, warning.line) == (root / "app/a.py", 1)
 
 
-def test_star_import_keeps_module_edge_and_warns(make_project: MakeProject) -> None:
+def test_star_import_keeps_module_edge_and_is_recorded(make_project: MakeProject) -> None:
     root = make_project(
         {"app/__init__.py": "", "app/a.py": "from app.b import *\n", "app/b.py": ""}
     )
     result = parse(root)
     assert internal(result) == {("app.a", "app.b", None, False)}
-    assert codes(result) == [WarningCode.STAR_IMPORT]
-    assert result.warnings[0].detail == "app.b"
+    assert codes(result) == []
+    assert [m.wildcards for m in result.modules if m.name == "app.a"] == [((1, "app.b"),)]
 
 
 def test_missing_internal_module_falls_back_to_ancestor_with_warning(

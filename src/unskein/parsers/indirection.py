@@ -303,7 +303,8 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     Whole-module imports of a package are replaced by one edge per module their
     attributes come from (see `expand_package_access`); external imports are kept
     as they are; edges that resolve back to their own source are dropped; warnings
-    are deduplicated. The input is not mutated.
+    are deduplicated. Star imports whose names cannot be known (module not parsed,
+    computed ``__all__``) get a ``STAR_IMPORT`` warning. The input is not mutated.
 
     Args:
         result: Parse result whose imports should be resolved.
@@ -317,6 +318,13 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     # Virtual modules have no file, but chains walk through them to their submodules.
     module_names = frozenset(module.name for module in result.modules) | frozenset(result.virtual)
     warnings = dict.fromkeys(result.warnings)
+    by_name = {module.name: module for module in result.modules}
+    for module in result.modules:
+        for line, base in module.wildcards:
+            target = by_name.get(base)
+            if base != module.name and (target is None or target.has_dynamic_all):
+                warning = ParseWarning(WarningCode.STAR_IMPORT, module.file_path, line, base)
+                warnings[warning] = None
     modules = []
     for module in result.modules:
         imports = []

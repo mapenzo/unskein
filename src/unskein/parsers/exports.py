@@ -11,6 +11,7 @@ MODULE_LEVEL_BLOCKS = ("body", "orelse", "handlers", "finalbody")
 DEFINITION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 IMPORT_NODES = (ast.Import, ast.ImportFrom)
+ALL_MUTATORS = ("append", "extend")
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,12 +25,16 @@ class ModuleExports:
             names left out of ``__all__`` included), sorted.
         defined_names: Those of them the module defines itself (``def``, ``class``,
             assignments), not through an import, sorted.
+        has_dynamic_all: Whether ``__all__`` is computed or changed in a way that cannot be
+            read (a non-literal value, ``.append``, ``.extend``): what a star import brings
+            is then unknown.
     """
 
     names: tuple[str, ...]
     declares_all: bool
     bound_names: tuple[str, ...] = ()
     defined_names: tuple[str, ...] = ()
+    has_dynamic_all: bool = False
 
 
 def _module_level_statements(tree: ast.Module) -> Iterator[ast.stmt]:
@@ -143,6 +148,34 @@ def _literal_all(statements: list[ast.stmt]) -> list[str] | None:
     return declared
 
 
+def _has_dynamic_all(statements: list[ast.stmt], declared: list[str] | None) -> bool:
+    """Tell whether the module's ``__all__`` cannot be read from its source.
+
+    Args:
+        statements: Module-level statements, in code order.
+        declared: The literal ``__all__``, or None when there is none or it is computed.
+
+    Returns:
+        True when ``__all__`` is assigned or changed by something that is not a literal.
+    """
+    assigned = False
+    for node in statements:
+        if isinstance(node, ast.Assign):
+            assigned |= any(ALL_NAME in _target_names(target) for target in node.targets)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            assigned |= isinstance(node.target, ast.Name) and node.target.id == ALL_NAME
+        elif (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and isinstance(node.value.func.value, ast.Name)
+            and node.value.func.value.id == ALL_NAME
+            and node.value.func.attr in ALL_MUTATORS
+        ):
+            return True
+    return assigned and declared is None
+
+
 def module_exports(tree: ast.Module) -> ModuleExports:
     """Compute the names ``from module import *`` brings in from a parsed module.
 
@@ -152,8 +185,8 @@ def module_exports(tree: ast.Module) -> ModuleExports:
         tree: Parsed module.
 
     Returns:
-        The exposed names, sorted, whether they come from ``__all__``, every bound name and
-        the names it defines itself.
+        The exposed names, sorted, whether they come from ``__all__``, every bound name, the
+        names it defines itself and whether ``__all__`` is dynamic.
     """
     statements = list(_module_level_statements(tree))
     names = {name for node in statements for name in _bound_names(node)}
@@ -169,7 +202,8 @@ def module_exports(tree: ast.Module) -> ModuleExports:
         )
     )
     declared = _literal_all(statements)
+    dynamic = _has_dynamic_all(statements, declared)
     if declared is not None:
-        return ModuleExports(tuple(sorted(set(declared))), True, bound, defined)
+        return ModuleExports(tuple(sorted(set(declared))), True, bound, defined, dynamic)
     public = {name for name in names if not name.startswith(PRIVATE_PREFIX)}
-    return ModuleExports(tuple(sorted(public)), False, bound, defined)
+    return ModuleExports(tuple(sorted(public)), False, bound, defined, dynamic)

@@ -12,6 +12,10 @@ from unskein.parsers.discovery import detect_encoding
 from unskein.parsers.indirection import walk_submodules
 from unskein.parsers.models import ImportKind, ModuleInfo, ParseResult
 
+IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
+# Longer strings are prose, not quoted annotations.
+MAX_ANNOTATION_LENGTH = 200
+
 
 @dataclass(slots=True)
 class NameUsage:
@@ -121,6 +125,38 @@ def collect_name_usage(tree: ast.Module, names: Collection[str]) -> dict[str, Na
             continue
         stack.extend(ast.iter_child_nodes(node))
     return usages
+
+
+def collect_read_names(tree: ast.Module) -> tuple[str, ...]:
+    """Collect every name a module may read, for the names a star import must keep.
+
+    Conservative on purpose: a name read in any scope counts, and so does every identifier
+    in a short string that is not a docstring (a quoted annotation such as ``"Tokenizer"``).
+    An extra name only lengthens a fix; a missing one would break it.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        The names, sorted.
+    """
+    docstrings = {
+        id(node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+    }
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            names.add(node.id)
+        elif (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and id(node) not in docstrings
+            and len(node.value) <= MAX_ANNOTATION_LENGTH
+        ):
+            names.update(IDENTIFIER.findall(node.value))
+    return tuple(sorted(names))
 
 
 class UseContext(StrEnum):

@@ -28,7 +28,7 @@ from unskein.parsers.models import (
     WarningCode,
 )
 from unskein.parsers.native import EVIDENCE_SUFFIXES, find_native_modules, is_evidence
-from unskein.parsers.usage import collect_name_usage
+from unskein.parsers.usage import collect_name_usage, collect_read_names
 
 # Import statements only occur in statement lists; ``handlers`` holds ExceptHandler
 # nodes and ``cases`` holds match_case nodes, each with its own ``body``. The order
@@ -365,6 +365,7 @@ class _ImportCollector:
         self.is_package = file_path.name == "__init__.py"
         self.edges: list[ImportEdge] = []
         self.re_exports: list[ReExport] = []
+        self.wildcards: list[tuple[int, str]] = []
         self.warnings: list[ParseWarning] = []
         self.package_bindings: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
         self.bound_objects: defaultdict[str, set[str]] = defaultdict(set)
@@ -514,7 +515,8 @@ class _ImportCollector:
         name is a symbol of base. Symbol imports in a package `__init__.py` are
         recorded as re-exports under their exported (alias) name. A star import in a
         package `__init__.py` of an existing project module is recorded as a star
-        re-export (``STAR_EXPORT``) instead of a warning.
+        re-export (``STAR_EXPORT``). A star import elsewhere of a project module is
+        recorded in ``wildcards``; a star import of an external module is only an edge.
 
         Args:
             base: Absolute dotted module the names are imported from.
@@ -527,8 +529,8 @@ class _ImportCollector:
                 is_star_reexport = (
                     self.is_package and base in self.index.modules and base != self.source
                 )
-                if not is_star_reexport:
-                    self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
+                if not is_star_reexport and not self.index.is_external(base):
+                    self.wildcards.append((node.lineno, base))
                 self.add(base, None, node.lineno, kind=kind, is_guarded=is_guarded)
                 if is_star_reexport:
                     self.re_exports.append(ReExport(self.source, base, STAR_EXPORT, is_guarded))
@@ -641,6 +643,10 @@ def parse_file(
     collector.visit(tree)
     collector.attach_usage(tree)
     exports = module_exports(tree)
+    wildcards = tuple(collector.wildcards)
+    star_reads = collect_read_names(tree) if wildcards else ()
+    if wildcards and exports.declares_all:
+        star_reads = tuple(sorted({*star_reads, *exports.names}))
     module = ModuleInfo(
         name,
         file_path,
@@ -650,6 +656,9 @@ def parse_file(
         exports.bound_names,
         is_packaged=name not in index.unpackaged,
         defined_names=exports.defined_names,
+        wildcards=wildcards,
+        star_reads=star_reads,
+        has_dynamic_all=exports.has_dynamic_all,
     )
     return FileParseResult(module, collector.re_exports, collector.warnings)
 
