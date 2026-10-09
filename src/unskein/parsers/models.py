@@ -128,6 +128,8 @@ class ImportEdge:
         is_guarded: Whether the statement sits in the body of a ``try`` that catches import
             errors, or of ``with contextlib.suppress(...)`` for them; such an import is
             optional by contract.
+        requested: Name the statement asked for when that module does not exist (``target``
+            is then its closest existing ancestor); None otherwise.
     """
 
     source: str
@@ -139,6 +141,7 @@ class ImportEdge:
     accessed: tuple[str, ...] = ()
     escapes: bool = False
     is_guarded: bool = False
+    requested: str | None = None
 
 
 class ManifestStyle(StrEnum):

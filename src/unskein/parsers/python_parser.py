@@ -43,6 +43,7 @@ IMPORT_ERROR_NAMES = frozenset({"ImportError", "ModuleNotFoundError", "Exception
 SUPPRESS_NAME = "suppress"
 # Names of non-importable files are POSIX paths; "/" never appears in a dotted name.
 PATH_SEPARATOR = "/"
+NAME_SEPARATOR = "."
 
 
 def is_type_checking_test(test: ast.expr) -> bool:
@@ -195,12 +196,15 @@ class ProjectIndex:
         top_level: First segments of those names (the project's top-level packages).
         packages: Modules that have submodules, i.e. the package facades (their ``__init__.py``).
         unpackaged: Modules no distribution ships (named by path or by their place under the root).
+        namespaces: Packages without an ``__init__.py`` (PEP 420): dotted prefixes of importable
+            names that are not modules themselves. They are also in ``modules`` and ``packages``.
     """
 
     modules: frozenset[str]
     top_level: frozenset[str]
     packages: frozenset[str]
     unpackaged: frozenset[str] = frozenset()
+    namespaces: frozenset[str] = frozenset()
 
     @classmethod
     def from_names(
@@ -210,6 +214,8 @@ class ProjectIndex:
 
         Names that are paths (files no import can reach) are kept as modules but
         never become top-level packages, so they cannot make an import internal.
+        Every dotted prefix of an importable name that is not a module is a namespace
+        package (a directory without ``__init__.py``).
 
         Args:
             names: Names of all project modules.
@@ -219,9 +225,26 @@ class ProjectIndex:
             The index over those names.
         """
         importable = {name for name in names if PATH_SEPARATOR not in name}
-        parents = {name.rpartition(".")[0] for name in importable}
-        top_level = frozenset(name.split(".")[0] for name in importable)
-        return cls(frozenset(names), top_level, frozenset(parents & importable), unpackaged)
+        prefixes = {
+            NAME_SEPARATOR.join(parts[:end])
+            for parts in (name.split(NAME_SEPARATOR) for name in importable)
+            for end in range(1, len(parts))
+        }
+        namespaces = frozenset(prefixes - importable)
+        modules = frozenset(names) | namespaces
+        top_level = frozenset(name.split(NAME_SEPARATOR)[0] for name in importable)
+        return cls(modules, top_level, frozenset(prefixes & modules), unpackaged, namespaces)
+
+    def is_namespace(self, name: str) -> bool:
+        """Return whether a name is a namespace package (a package without ``__init__.py``).
+
+        Args:
+            name: Dotted module name.
+
+        Returns:
+            True when some module lives under it but no file is it.
+        """
+        return name in self.namespaces
 
     def is_package(self, name: str) -> bool:
         """Return whether a project module has submodules.
@@ -350,8 +373,18 @@ class _ImportCollector:
         if target != name:
             self.warn(WarningCode.UNRESOLVED_IMPORT, line, f"{name} -> {target}")
         if target != self.source:
+            requested = name if target != name else None
             self.edges.append(
-                ImportEdge(self.source, target, False, symbol, line, kind, is_guarded=is_guarded)
+                ImportEdge(
+                    self.source,
+                    target,
+                    False,
+                    symbol,
+                    line,
+                    kind,
+                    is_guarded=is_guarded,
+                    requested=requested,
+                )
             )
             if binding is not None and self.binds_package(
                 binding, symbol, target, is_exact=target == name

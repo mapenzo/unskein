@@ -129,15 +129,15 @@ def test_missing_internal_module_falls_back_to_ancestor_with_warning(
     assert warning.detail == "app.missing.deep -> app"
 
 
-def test_missing_import_in_namespace_package_is_skipped_with_clear_warning(
+def test_missing_import_in_namespace_package_falls_back_to_the_namespace(
     make_project: MakeProject,
 ) -> None:
     root = make_project({"app/a.py": "import app.missing\n"})
     result = parse(root)
-    assert internal(result) == set()
+    assert internal(result) == {("app.a", "app", None, False)}
     [warning] = result.warnings
     assert warning.code is WarningCode.UNRESOLVED_IMPORT
-    assert warning.detail == "app.missing"
+    assert warning.detail == "app.missing -> app"
 
 
 def test_followed_symlink_outside_root_is_named_by_its_link_path(

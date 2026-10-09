@@ -1,0 +1,10 @@
+[build-system]
+build-backend = "hatchling.build"
+
+[project]
+name = "app"
+version = "1.0"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
