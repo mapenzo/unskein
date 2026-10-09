@@ -69,6 +69,14 @@ detección.
   Cada hallazgo entre
   distribuciones trae un **Arreglo** que se puede copiar (la línea a añadir y el manifiesto
   donde va). Se calcula también con `[findings] enabled = false`.
+- **Espacios de nombres**: un directorio con código pero sin `__init__.py` (PEP 420) es
+  un paquete de espacio de nombres. Si algún módulo lo importa, aparece en el grafo sin
+  archivo y con Ce 0, marcado *(espacio de nombres)*, contado aparte en el resumen y en
+  las métricas generales, y fuera de los hallazgos de módulos (sí puede ser destino de una
+  violación de capas). `import a.b` seguido de `a.b.c.f()` depende de `a.b.c`. Si el
+  espacio de nombres no tiene ningún paquete normal por encima (`google/cloud/` sin
+  `__init__.py`), otras distribuciones pueden completarlo: lo que el proyecto no tiene ahí
+  se queda en aviso, nunca en hallazgo.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto
@@ -108,6 +116,10 @@ detección.
     importa al cargarse y sin `try`/`except ImportError`.
   - **Import de código no empaquetado**: importa código que ninguna distribución
     empaqueta (solo existe en el repositorio).
+  - **Import de un módulo inexistente**: código empaquetado importa, al cargarse o en una
+    función y sin protegerlo, un módulo del proyecto que no existe; al ejecutarse lanza
+    `ImportError`. Los de `TYPE_CHECKING`, los protegidos y los de tests quedan como aviso.
+    El arreglo nombra el módulo que define el símbolo, o dice que ninguno lo define.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 

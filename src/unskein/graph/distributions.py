@@ -1,7 +1,8 @@
 """Dependencies between the distributions of a project: uses, rules 6-9 and installability."""
 
+from bisect import bisect_left
 from collections import Counter, defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -263,7 +264,7 @@ def import_use(edge: ImportEdge) -> ImportUse | None:
     return ImportUse.REQUIRED if edge.kind is ImportKind.MODULE else ImportUse.LAZY
 
 
-def _relative(path: Path, root: Path | None) -> str:
+def relative_path(path: Path, root: Path | None) -> str:
     """Return a path as POSIX, relative to the project root when it lies under it.
 
     Args:
@@ -309,12 +310,16 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     # Unparsed files (too large, syntax errors) still belong to their distribution.
     distribution_of: dict[str, str | None] = dict(result.module_distributions)
     distribution_of.update((module.name, module.distribution) for module in result.modules)
+    # Namespace packages have no file: their distribution and packaging come from their modules.
+    for namespace in result.namespaces:
+        distribution_of.setdefault(namespace, None)
     packaged = {module.name for module in result.modules if module.is_packaged}
     packaged.update(result.module_distributions)
+    packaged.update(name for name, shipped in result.namespaces.items() if shipped)
     # Sorted by relative POSIX path, so "first" is the same on every platform; computed
     # once per module (Path.relative_to is slow on tens of thousands of imports).
     sources = sorted(
-        (_relative(module.file_path, result.project_root), module)
+        (relative_path(module.file_path, result.project_root), module)
         for module in result.modules
         if module.distribution is not None and module.name not in scripts
     )
@@ -341,6 +346,31 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     return collector
 
 
+def _target_files(
+    name: str, files: Mapping[str, Path], ordered: list[tuple[str, Path]]
+) -> list[Path]:
+    """Return the file of a module, or the files under a namespace package.
+
+    Args:
+        name: Imported module or namespace package.
+        files: Source file per parsed module.
+        ordered: The same pairs sorted by module name, computed once by the caller.
+
+    Returns:
+        The files that make up the target.
+    """
+    if name in files:
+        return [files[name]]
+    prefix = f"{name}{NAME_SEPARATOR}"
+    start = bisect_left(ordered, (prefix,))
+    found = []
+    for module, path in ordered[start:]:
+        if not module.startswith(prefix):
+            break
+        found.append(path)
+    return found
+
+
 def _common_directory(paths: list[Path], root: Path | None) -> str:
     """Return the deepest directory holding every given file, relative to the project.
 
@@ -352,14 +382,14 @@ def _common_directory(paths: list[Path], root: Path | None) -> str:
         The directory with a trailing ``/``; the file itself when it sits at the root.
     """
     # Compared part by part, not with os.path.commonpath, which joins with "\\" on Windows.
-    parents = [PurePosixPath(_relative(path, root)).parent.parts for path in paths]
+    parents = [PurePosixPath(relative_path(path, root)).parent.parts for path in paths]
     common: list[str] = []
     for parts in zip(*parents, strict=False):
         if len(set(parts)) > 1:
             break
         common.append(parts[0])
     if not common:
-        return _relative(paths[0], root)
+        return relative_path(paths[0], root)
     return f"{PATH_SEPARATOR.join(common)}{PATH_SEPARATOR}"
 
 
@@ -417,7 +447,7 @@ def _manifest(info: DistributionInfo, root: Path | None) -> str:
     Returns:
         Its manifest path; empty when it has none.
     """
-    return "" if info.manifest is None else _relative(info.manifest, root)
+    return "" if info.manifest is None else relative_path(info.manifest, root)
 
 
 def _first_any(counts: UseCounts) -> str:
@@ -656,11 +686,13 @@ def analyze_distributions(result: ParseResult, scripts: Collection[str]) -> Dist
             status, extras, groups = _status(infos[source], target)
             edges.append(DistributionEdge(source, target, counter.freeze(), status, extras, groups))
     files = {module.name: module.file_path for module in result.modules}
+    ordered = sorted(files.items())
     uses = []
     for (source, package), counter in sorted(collector.unpackaged.items()):
         if source in infos:
             targets = tuple(sorted(collector.unpackaged_targets[source, package]))
-            directory = _common_directory([files[t] for t in targets], result.project_root)
+            paths = [path for target in targets for path in _target_files(target, files, ordered)]
+            directory = _common_directory(paths, result.project_root)
             uses.append(UnpackagedUse(source, package, counter.freeze(), targets, directory))
     context = _Context(infos, result.project_root)
     findings = [

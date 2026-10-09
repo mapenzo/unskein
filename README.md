@@ -82,6 +82,13 @@ Architecture health: fair.
   `add "litellm>=1.105.0" to [project] dependencies in enterprise/pyproject.toml`.
   Against deptry and tach on litellm, this replaces hundreds of per-import lines with one
   finding per pair of distributions and drops their false positives on guarded imports.
+- **Imports that break in production**: an import of a project module that does not
+  exist, from packaged code, at load time or in a function and unguarded. Imports under
+  `TYPE_CHECKING`, guarded ones and test imports are kept apart. pylint and mypy also find
+  the broken import, but they need the environment installed and do not tell these uses
+  apart. unskein needs no environment, and its fix comes from the code: it names the
+  module that defines the symbol, or says that none does. On litellm it found two such
+  imports, one of them to a module deleted in a refactor.
 - **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,

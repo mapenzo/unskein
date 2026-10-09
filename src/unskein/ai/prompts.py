@@ -70,6 +70,11 @@ prioritize them and explain their impact, but do not recompute or contradict the
 just list them again.
 A layer_violation finding names, in layer_from and layer_to, two layers the user declared;
 the importing module sits in the lower layer.
+namespaces lists namespace packages (directories without __init__.py): they have no code,
+so their ca says how many modules import them, not that the node needs refactoring.
+A missing_module finding is an import of a project module that does not exist and raises
+ImportError when it runs; its fix (import_from with defined_in, or restore_or_remove) is
+already computed from the code: repeat it, do not guess another module.
 The findings undeclared_dependency, optional_required, unpackaged_import and
 distribution_cycle are about the installable distributions of a monorepo: their modules are
 distribution names (or, for unpackaged_import, a top-level directory), not modules. required,
@@ -125,7 +130,12 @@ def build_context(result: AnalysisResult) -> AIContext:
                 evidence["impact"] = result.impact[finding.modules[0]]
             summaries.append(FindingSummary(finding.kind.value, list(finding.modules), evidence))
     return AIContext(
-        total_modules=result.graph.number_of_nodes(),
+        total_modules=result.graph.number_of_nodes() - len(result.namespaces),
+        namespaces=sorted(
+            metrics.module
+            for metrics in ranked[:MAX_MODULES_IN_PROMPT]
+            if metrics.module in result.namespaces
+        ),
         total_dependencies=result.graph.number_of_edges(),
         tangles=_tangle_summaries(result.tangles),
         total_tangles=len(result.tangles),

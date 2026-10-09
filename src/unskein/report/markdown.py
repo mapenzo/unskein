@@ -9,6 +9,7 @@ from unskein.ai.models import AIFailure, AIReport, Problem, Severity
 from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, DistributionSummary
 from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
+from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
 
@@ -127,6 +128,34 @@ def render_report(context: ReportContext, lang: Lang) -> str:
     return "\n\n".join("\n".join(lines) for lines in sections) + "\n"
 
 
+def _module_count(result: AnalysisResult) -> int:
+    """Return how many modules the graph has; namespace packages are not modules.
+
+    Args:
+        result: The deterministic analysis.
+
+    Returns:
+        Nodes of the graph that are files.
+    """
+    return result.graph.number_of_nodes() - len(result.namespaces)
+
+
+def _module_name(name: str, result: AnalysisResult, lang: Lang) -> str:
+    """Render a module name, marked when it is a namespace package with no file.
+
+    Args:
+        name: Dotted module name.
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        The name in backticks, followed by the namespace marker when it applies.
+    """
+    if name in result.namespaces:
+        return f"`{name}` {t('report.namespace_marker', lang)}"
+    return f"`{name}`"
+
+
 def _cycle_count(result: AnalysisResult) -> str:
     """Return the number of cycles, marked with ``+`` when the search was truncated.
 
@@ -150,6 +179,10 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         Markdown lines of the section.
     """
     result = context.result
+    namespaces = ""
+    if result.namespaces:
+        key = "one" if len(result.namespaces) == 1 else "other"
+        namespaces = t(f"report.summary_namespaces.{key}", lang, count=len(result.namespaces))
     scripts = ""
     if result.scripts:
         key = "one" if len(result.scripts) == 1 else "other"
@@ -157,8 +190,8 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     counts = t(
         "report.summary_counts",
         lang,
-        modules=result.graph.number_of_nodes(),
-        scripts=scripts,
+        modules=_module_count(result),
+        scripts=f"{namespaces}{scripts}",
         dependencies=result.graph.number_of_edges(),
         cycles=_cycle_count(result),
     )
@@ -166,7 +199,11 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     if result.high_coupling_modules:
         top = result.coupling_metrics[result.high_coupling_modules[0]]
         top_line = t(
-            "report.summary_top_module", lang, module=top.module, ca=top.afferent, ce=top.efferent
+            "report.summary_top_module",
+            lang,
+            module=_module_name(top.module, result, lang),
+            ca=top.afferent,
+            ce=top.efferent,
         )
         lines.append(top_line)
     if result.tangles:
@@ -220,7 +257,9 @@ def _metrics(result: AnalysisResult, lang: Lang) -> list[str]:
     Returns:
         Markdown lines of the section.
     """
-    rows = [("report.metric.modules", result.graph.number_of_nodes())]
+    rows = [("report.metric.modules", _module_count(result))]
+    if result.namespaces:
+        rows.append(("report.metric.namespaces", len(result.namespaces)))
     if result.scripts:
         rows.append(("report.metric.scripts", len(result.scripts)))
     rows += [
@@ -391,7 +430,8 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
         m = result.coupling_metrics[name]
         consumers = f" | {m.consumers}" if has_consumers else ""
         lines.append(
-            f"| `{name}` | {m.afferent} | {m.efferent} | {m.instability:.2f} "
+            f"| {_module_name(name, result, lang)} | {m.afferent} | {m.efferent} "
+            f"| {m.instability:.2f} "
             f"| {result.impact.get(name, NOT_MEASURED)}{consumers} |"
         )
     if len(modules) > MAX_MODULES_IN_TABLE:
@@ -623,6 +663,76 @@ def _distribution_finding_line(finding: Finding, result: AnalysisResult, lang: L
     return "\n".join([*lines, fix])
 
 
+def _pairs(value: object) -> list[tuple[str, str]]:
+    """Split ``symbol:value`` pairs of the evidence.
+
+    Args:
+        value: Evidence value such as ``"Model:app.models, helper:app.util"``.
+
+    Returns:
+        The pairs, in order.
+    """
+    pairs = []
+    for item in str(value).split(LIST_SEPARATOR):
+        symbol, _, rest = item.partition(PAIR_SEPARATOR)
+        if symbol:
+            pairs.append((symbol, rest))
+    return pairs
+
+
+def _import_from_text(evidence: Evidence, lang: Lang) -> str:
+    """Render the ``import_from`` fix: each symbol with the module that defines it.
+
+    Args:
+        evidence: Evidence of a ``MISSING_MODULE`` finding with ``fix = import_from``.
+        lang: Report language.
+
+    Returns:
+        The fix text, ending with the symbols no module defines, if any.
+    """
+    others = dict(_pairs(evidence["also_defined"]))
+    items = []
+    for symbol, module in _pairs(evidence["defined_in"]):
+        count = int(others.get(symbol, 0))
+        extra = t("finding.also_defined", lang, count=count) if count else ""
+        items.append(
+            t("finding.fix.import_from.item", lang, symbol=symbol, module=module, others=extra)
+        )
+    text = t("finding.fix.import_from", lang, items=DETAIL_SEPARATOR.join(items))
+    undefined = str(evidence.get("undefined", ""))
+    if undefined:
+        symbols = _backticked(undefined.split(LIST_SEPARATOR))
+        text += DETAIL_SEPARATOR + t("finding.fix.undefined", lang, symbols=symbols)
+    return text
+
+
+def _missing_module_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
+    """Render a finding of rule 10: the missing module, its uses, then its fix.
+
+    Args:
+        finding: A ``MISSING_MODULE`` finding.
+        result: The deterministic analysis, to mark a namespace package as the closest.
+        lang: Report language.
+
+    Returns:
+        A multi-line Markdown list item.
+    """
+    evidence = finding.evidence
+    (module,) = finding.modules
+    first = t("finding.first", lang, first=evidence["first"])
+    symbols = str(evidence["symbols"])
+    names = _backticked(symbols.split(LIST_SEPARATOR)) if symbols else ""
+    if evidence["fix"] == FIX_IMPORT_FROM:
+        text = _import_from_text(evidence, lang)
+    elif names:
+        text = t("finding.fix.restore_or_remove", lang, module=module, symbols=names)
+    else:
+        closest = _module_name(str(evidence["closest"]), result, lang)
+        text = t("finding.fix.restore_or_remove.module", lang, module=module, closest=closest)
+    fix = f"  - {t('finding.fix', lang)}: {text}"
+    return f"- `{module}` ({_uses(evidence, lang)}{DETAIL_SEPARATOR}{first})\n{fix}"
+
+
 def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
@@ -639,6 +749,8 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     impact = result.impact
     if finding.kind in (*EDGE_FINDINGS, FindingKind.DISTRIBUTION_CYCLE):
         return _distribution_finding_line(finding, result, lang)
+    if finding.kind is FindingKind.MISSING_MODULE:
+        return _missing_module_line(finding, result, lang)
     if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
         source, target = finding.modules
         return (
@@ -653,7 +765,7 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
             layer_from=evidence["layer_from"],
             layer_to=evidence["layer_to"],
         )
-        return f"- `{source}` → `{target}` ({layers})"
+        return f"- `{source}` → {_module_name(target, result, lang)} ({layers})"
     (module,) = finding.modules
     if finding.kind is FindingKind.ORPHAN:
         return f"- `{module}`"

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Namespace packages (PEP 420, directories without `__init__.py`): importing one is no
+  longer an "internal import not found" warning. They appear in the graph as marked
+  nodes with no file, counted apart from modules and left out of the module findings.
+- Finding: import of a module that does not exist. It fires when packaged code imports it
+  at load time or in a function, unguarded, so it raises `ImportError` when it runs. The
+  fix names the module that defines the symbol, or says that none does.
+  `TYPE_CHECKING`, guarded and test imports stay warnings, and so do modules that exist
+  as a `.pyi` stub or a compiled extension, and names under a namespace package that other
+  distributions can complete (`google.*`).
 - Monorepos without configuration: every `pyproject.toml`, `setup.py` or `setup.cfg`
   marks a distribution, and its files take the name Python imports them by (uv,
   maturin, hatch, poetry and setuptools declarations are read; `setup.py` is never
@@ -33,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `import a.b` followed by `a.b.c.x` now depends on `a.b.c`, the module really used,
+  and `import a` plus `import a.b` are analyzed together (they bind the same `a`).
 - In projects with nested manifests, module names follow the distribution that ships
   each file (`enterprise/litellm_enterprise/x.py` is `litellm_enterprise.x`). Set
   `[analysis] source_roots` to keep the previous naming.

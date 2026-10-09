@@ -15,6 +15,7 @@ from unskein.graph.distributions import (
 )
 from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
+from unskein.graph.missing import find_missing_modules
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
 from unskein.graph.scripts import ScriptGroup, count_consumers, find_scripts, group_scripts
@@ -53,6 +54,7 @@ class AnalysisResult:
         script_groups: Scripts by top-level directory, most first.
         distributions: Installability of each named distribution, by name.
         distribution_edges: Imports between distributions with what each declares.
+        namespaces: Namespace packages that are nodes of the graph; they have no file.
     """
 
     graph: nx.DiGraph
@@ -72,6 +74,7 @@ class AnalysisResult:
     script_groups: list[ScriptGroup] = field(default_factory=list)
     distributions: list[DistributionSummary] = field(default_factory=list)
     distribution_edges: list[DistributionEdge] = field(default_factory=list)
+    namespaces: frozenset[str] = frozenset()
 
 
 def compute_coupling(graph: nx.DiGraph) -> dict[str, CouplingMetrics]:
@@ -248,24 +251,40 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     full_graph = build_graph(result)
     unpackaged = {m.name for m in result.modules if not m.is_packaged}
     scripts = find_scripts(full_graph, unpackaged)
-    graph = nx.subgraph_view(full_graph, filter_node=lambda node: node not in scripts)
+    # A namespace package only scripts import is no part of the measured system either.
+    script_only = {
+        name
+        for name in result.namespaces
+        if name in full_graph
+        and all(importer in scripts for importer in full_graph.predecessors(name))
+    }
+    hidden = scripts | script_only
+    graph = nx.subgraph_view(full_graph, filter_node=lambda node: node not in hidden)
     coupling = compute_coupling(graph)
     for module, consumers in count_consumers(full_graph, scripts).items():
-        coupling[module].consumers = consumers
+        if module in coupling:
+            coupling[module].consumers = consumers
     import_graph = import_time_graph(graph)
     cycles, cycles_truncated = find_cycles(import_graph)
     tangles = find_tangles(import_graph)
     facades = {m.name for m in result.modules if m.file_path.name == PACKAGE_INIT_FILE}
+    namespaces = frozenset(name for name in result.namespaces if name in graph)
     high_coupling = find_high_coupling(coupling)
     findings = find_findings(
-        full_graph, coupling, findings_config, packages=facades, scripts=scripts
+        full_graph,
+        coupling,
+        findings_config,
+        packages=facades | namespaces,
+        scripts=scripts,
+        namespaces=namespaces,
     )
     distribution_analysis = analyze_distributions(result, scripts)
     impact_targets = _impact_targets(high_coupling, findings)
     if findings_config.enabled:
-        findings = [*findings, *distribution_analysis.findings]
+        missing = find_missing_modules(result, scripts)
+        findings = [*findings, *distribution_analysis.findings, *missing]
     package_metrics, package_edges = summarize_project_packages(
-        graph, findings_config.package_depth, facades=facades
+        graph, findings_config.package_depth, facades=facades, virtual=namespaces
     )
     return AnalysisResult(
         graph=graph,
@@ -285,4 +304,5 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         script_groups=group_scripts(full_graph, scripts),
         distributions=distribution_analysis.summaries,
         distribution_edges=distribution_analysis.edges,
+        namespaces=namespaces,
     )

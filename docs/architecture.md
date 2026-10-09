@@ -184,9 +184,13 @@ Decisiones:
 paquete, el parser recorre el árbol (`parsers/usage.py`, `collect_name_usage`) y guarda en
 la arista las cadenas de atributos leídas a través del nombre (`ImportEdge.accessed`,
 ordenadas) y si el nombre se usa suelto, se reasigna o se escribe a través de él (`p.x = ...`,
-`del p.x`) (`ImportEdge.escapes`). Solo se analizan los nombres ligados por un único
-import (un nombre ligado por dos imports no se analiza); `import a.b` (sin alias) liga `a`, no
-`a.b`, y no se analiza. `resolve_indirection` expande la arista (`expand_package_access`):
+`del p.x`) (`ImportEdge.escapes`). Los bindings se cuentan por objeto (`Binding.refers_to`):
+`import a` e `import a.b` ligan el mismo `a` y se analizan juntos; un nombre ligado a dos
+objetos distintos (`import a` y `from x import a`) no se analiza. `import a.b` liga `a` con el
+prefijo `b`: cada cadena va al import con el prefijo más largo (`a.b.c.f` leída por `a` es
+`c.f` de la arista `a.b`; `_split_chains`), y una cadena igual al prefijo cuenta como uso
+suelto de ese paquete. El recorrido usa una pila explícita, no `ast.NodeVisitor`, por coste.
+`resolve_indirection` expande la arista (`expand_package_access`):
 cada cadena baja por el prefijo más largo que sean submódulos del proyecto y el atributo
 siguiente se sigue por los re-exports hasta el módulo que lo define
 (`resolve_access`). Una arista por módulo destino, con el `kind` de la sentencia; si el
@@ -410,9 +414,28 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   | relativo (`from ..m import X`) | resuelto con `node.level` desde el paquete del archivo | igual |
   | `from x import *` | `x` + warning | `None` |
 
-  Import interno inexistente → ancestro existente más cercano + warning (o se
-  omite con warning si no hay ninguno, p. ej. namespace packages). Relativo
-  más allá del paquete raíz → warning, se omite. Auto-import → sin arista.
+  Import interno inexistente → ancestro existente más cercano + warning, y la arista
+  guarda el nombre pedido (`ImportEdge.requested`); se omite con warning si no hay
+  ninguno. Relativo más allá del paquete raíz → warning, se omite. Auto-import → sin
+  arista.
+
+  **Paquetes de espacio de nombres (PEP 420).** `ProjectIndex.from_names` deriva
+  `namespaces`: todo prefijo con punto de un nombre importable (sin `/`) que no es un
+  módulo (`litellm.types.utils` existe y `litellm.types` no). Están en `modules` y en
+  `packages` (`is_namespace`), así que importarlos es exacto y sin aviso, y
+  `walk_submodules` los atraviesa. Un directorio sin código Python nunca lo es. `plan_parse`
+  (`_namespace_owners`, una pasada) dice si una distribución empaqueta todos sus módulos
+  (`ParsePlan.namespaces`) y, si todos son de una misma distribución con nombre, la añade a
+  `module_distributions`.
+
+  Un espacio de nombres es **abierto** cuando todos sus ancestros, el primer segmento
+  incluido, también lo son (`google.cloud` en un repo `google-cloud-mylib`): otras
+  distribuciones pueden aportar porciones, así que un import bajo él que el proyecto no tiene
+  (`google.protobuf`) puede estar instalado. Se queda en aviso, como antes, sin arista ni
+  hallazgo (`ProjectIndex.is_open_namespace`). Bajo un paquete normal (`litellm.types`, con
+  `litellm/__init__.py`) es **cerrado** y lo que falta es inexistente. Un espacio de nombres
+  no tiene código: `from ns import X` solo puede ser un submódulo, y si `ns.X` no existe se
+  pide `ns.X` (aviso y, si es cerrado, regla 10).
 
   **Tipo de import (`ImportKind`)**: `MODULE` (nivel de módulo, también en clases,
   `try/except` e `if`), `LAZY` (cuerpo de una función o método) y `TYPE_CHECKING`
@@ -801,6 +824,34 @@ aplicados) y construye el grafo real.
   los módulos que definen cada símbolo. Los usos que no se pueden resolver siguen
   apuntando a la fachada, y ahí sí es un dato real.
 
+### Espacios de nombres en el grafo
+
+`build_graph` marca con `namespace=True` cada espacio de nombres que recibe alguna arista
+(los que nadie importa no son nodos; los que solo importan scripts quedan fuera del grafo
+de módulos, como los scripts). Sin archivo ni aristas de salida: Ce = 0, nunca en ciclos ni
+marañas. Cuentan en el percentil de acoplamiento como cualquier nodo, así que pueden salir en
+«Módulos con mayor acoplamiento», marcados. `AnalysisResult.namespaces` los lista. Quedan fuera de las reglas 1-5
+como las fachadas, pero pueden ser destino de una violación de capas; en paquetes son su
+propio paquete y no suman en «Módulos». En las reglas 6-9 heredan la distribución de sus
+módulos. El informe los cuenta aparte («N módulos + K espacios de nombres») y marca su
+nombre con *(espacio de nombres)*.
+
+### Regla 10: import de un módulo inexistente (`graph/missing.py`)
+
+`find_missing_modules(result, scripts)`: un hallazgo `MISSING_MODULE` por nombre pedido
+(`requested`) con alguna sentencia que rompe: uso `REQUIRED` o `LAZY` (`import_use`). Solo
+cuenta código empaquetado que no es script (tests y scripts quedan fuera de los recuentos).
+`TYPE_CHECKING` y protegidos quedan como aviso, y también un módulo que existe sin `.py`
+(stub `.pyi`, `__init__.pyi` o binario `.so`/`.pyd` en cualquiera de los directorios de su
+ancestro; un directorio ilegible cuenta como «no está» y nunca detiene el análisis).
+`closest` sale del nombre pedido, no del destino tras resolver re-exports. Evidencia:
+`required`, `lazy`, `guarded`, `first` (`ruta:línea`), `importers` (hasta 5), `closest`,
+`symbols`, `fix`. Arreglo, solo con evidencia y **por símbolo**: `import_from` con
+`defined_in` (`símbolo:módulo`, …), `also_defined` (`símbolo:n`, …) y `undefined` cuando un
+módulo empaquetado distinto de los importadores **define** alguno
+(`ModuleInfo.defined_names`: `def`, `class` o asignación, nunca un import); si ninguno,
+`restore_or_remove`. Sin sugerencias por nombre parecido.
+
 ### Hallazgos entre distribuciones (`graph/distributions.py`)
 
 `analyze_distributions(result, scripts)` cruza lo que declara cada distribución con nombre
@@ -1163,7 +1214,7 @@ Estructura del reporte:
 ```
 # Análisis de <proyecto>
 ## Resumen                          (con o sin IA — nunca vacío)
-## Métricas generales
+## Métricas generales             (fila «Espacios de nombres» solo si hay alguno)
 ## Ciclos de dependencia
 ## Paquetes                         (si hay resumen por paquetes)
 ## Distribuciones                   (con ≥ 2 distribuciones con nombre o alguna no instalable:

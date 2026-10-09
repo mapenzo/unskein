@@ -31,6 +31,8 @@ class FindingKind(StrEnum):
         OPTIONAL_REQUIRED: A distribution imports at load time one it only declares in an extra.
         UNPACKAGED_IMPORT: A distribution imports code that no distribution ships.
         DISTRIBUTION_CYCLE: Distributions that depend on each other.
+        MISSING_MODULE: An internal import of a module that does not exist, which breaks
+            when it runs.
     """
 
     UNSTABLE_DEPENDENCY = "unstable_dependency"
@@ -42,6 +44,7 @@ class FindingKind(StrEnum):
     OPTIONAL_REQUIRED = "optional_required"
     UNPACKAGED_IMPORT = "unpackaged_import"
     DISTRIBUTION_CYCLE = "distribution_cycle"
+    MISSING_MODULE = "missing_module"
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +71,7 @@ def find_findings(
     *,
     packages: Collection[str] = frozenset(),
     scripts: Collection[str] = frozenset(),
+    namespaces: Collection[str] = frozenset(),
 ) -> list[Finding]:
     """Apply every rule to the graph and its coupling metrics.
 
@@ -80,6 +84,8 @@ def find_findings(
         config: Thresholds, entry points and declared layers.
         packages: Names of modules that are package ``__init__`` files.
         scripts: Scripts: no metrics of their own, evaluated only by the layer rule.
+        namespaces: Namespace packages: no rule applies to them, but they can be the
+            target of a layer violation.
 
     Returns:
         The findings, ordered by kind and then by module; empty when disabled.
@@ -92,7 +98,7 @@ def find_findings(
         *_bottlenecks(candidates, config),
         *_orchestrators(candidates, config),
         *_orphans(candidates, config),
-        *_layer_violations(graph, candidates, config, scripts=scripts),
+        *_layer_violations(graph, candidates, config, scripts=scripts, targets=namespaces),
     ]
 
 
@@ -208,6 +214,7 @@ def _layer_violations(
     config: FindingsConfig,
     *,
     scripts: Collection[str] = frozenset(),
+    targets: Collection[str] = frozenset(),
 ) -> list[Finding]:
     """Find imports from a lower declared layer into a higher one.
 
@@ -216,6 +223,8 @@ def _layer_violations(
         metrics: Coupling metrics of the modules under analysis; only their names are used.
         config: Declared layers, highest first.
         scripts: Scripts, which may import from a layer although they have no metrics.
+        targets: Nodes outside the rules (namespace packages) that may still be imported
+            from a lower layer.
 
     Returns:
         One finding per offending import, sorted by the pair of modules; none without layers.
@@ -226,7 +235,8 @@ def _layer_violations(
     longest_first = sorted(config.layers, key=len, reverse=True)
     found = []
     for source, target in graph.edges:
-        if (source not in metrics and source not in scripts) or target not in metrics:
+        is_target = target in metrics or target in targets
+        if (source not in metrics and source not in scripts) or not is_target:
             continue
         layer_from = _layer_of(source, longest_first)
         layer_to = _layer_of(target, longest_first)

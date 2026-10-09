@@ -128,6 +128,8 @@ class ImportEdge:
         is_guarded: Whether the statement sits in the body of a ``try`` that catches import
             errors, or of ``with contextlib.suppress(...)`` for them; such an import is
             optional by contract.
+        requested: Name the statement asked for when that module does not exist (``target``
+            is then its closest existing ancestor); None otherwise.
     """
 
     source: str
@@ -139,6 +141,7 @@ class ImportEdge:
     accessed: tuple[str, ...] = ()
     escapes: bool = False
     is_guarded: bool = False
+    requested: str | None = None
 
 
 class ManifestStyle(StrEnum):
@@ -198,6 +201,8 @@ class ModuleInfo:
         bound_names: Every name the module binds at module level, sorted.
         is_packaged: Whether a distribution ships the module; unpackaged modules that
             nothing imports are scripts.
+        defined_names: Names the module defines itself at module level (``def``,
+            ``class``, assignments), not through an import, sorted.
         distribution: Name of the distribution that ships the module; None when none
             with a name does.
     """
@@ -210,6 +215,7 @@ class ModuleInfo:
     bound_names: tuple[str, ...] = ()
     is_packaged: bool = True
     distribution: str | None = None
+    defined_names: tuple[str, ...] = ()
 
 
 # Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.
@@ -266,6 +272,8 @@ class ParsePlan:
         distributions: Named distributions of the project.
         module_distributions: Distribution of each module that one ships.
         project_root: Absolute project directory, for relative paths in findings.
+        namespaces: Namespace packages, each with whether a distribution ships every
+            module under it.
     """
 
     tasks: list[ParseTask]
@@ -275,6 +283,7 @@ class ParsePlan:
     distributions: tuple[DistributionInfo, ...] = ()
     module_distributions: dict[str, str] = field(default_factory=dict)
     project_root: Path | None = None
+    namespaces: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -292,6 +301,8 @@ class ParseResult:
         project_root: Absolute project directory; None when parsed without a plan.
         module_distributions: Distribution of every module a named one ships, parsed or
             not (a file skipped as too large still belongs to its distribution).
+        namespaces: Namespace packages, each with whether a distribution ships every
+            module under it.
     """
 
     modules: list[ModuleInfo]
@@ -302,6 +313,7 @@ class ParseResult:
     distributions: tuple[DistributionInfo, ...] = ()
     project_root: Path | None = None
     module_distributions: dict[str, str] = field(default_factory=dict)
+    namespaces: dict[str, bool] = field(default_factory=dict)
 
     @classmethod
     def from_file_results(
@@ -329,6 +341,7 @@ class ParseResult:
             result.distributions = plan.distributions
             result.project_root = plan.project_root
             result.module_distributions = plan.module_distributions
+            result.namespaces = plan.namespaces
         for file_result in file_results:
             if file_result.module is not None:
                 module = file_result.module

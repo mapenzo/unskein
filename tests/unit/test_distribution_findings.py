@@ -352,3 +352,32 @@ def test_a_dependency_only_in_a_group_is_undeclared_for_installs(make_project: M
     assert finding.evidence["groups"] == "dev"
     (edge,) = result.distribution_edges
     assert (edge.status, edge.groups) == (DependencyStatus.UNDECLARED, ("dev",))
+
+
+def test_namespace_targets_carry_their_distribution(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\ndependencies = []\n',
+            "a/__init__.py": "import b_pkg.types\ndef f(x):\n    return x(b_pkg.types)\n",
+            "bdist/pyproject.toml": '[project]\nname = "b"\nversion = "1"\n'
+            '[tool.uv.build-backend]\nmodule-root = ""\nmodule-name = "b_pkg"\n',
+            "bdist/b_pkg/__init__.py": "",
+            "bdist/b_pkg/types/models.py": "",
+        }
+    )
+    (finding,) = _by_kind(_analyzed(root))[FindingKind.UNDECLARED_DEPENDENCY]
+    assert finding.modules == ("a", "b")
+
+
+def test_unpackaged_namespace_target_names_its_directory(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[build-system]\nbuild-backend = "hatchling.build"\n'
+            '[project]\nname = "core"\ndependencies = []\n',
+            "core/__init__.py": "import legacy.tools\ndef f(x):\n    return x(legacy.tools)\n",
+            "legacy/tools/run.py": "",
+            "legacy/tools/more.py": "",
+        }
+    )
+    (finding,) = _by_kind(_analyzed(root))[FindingKind.UNPACKAGED_IMPORT]
+    assert finding.evidence["directory"] == "legacy/tools/"

@@ -169,6 +169,22 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "report.summary_scripts.one": {Lang.ES: " + {count} script", Lang.EN: " + {count} script"},
     "report.summary_scripts.other": {Lang.ES: " + {count} scripts", Lang.EN: " + {count} scripts"},
     "report.metric.scripts": {Lang.ES: "Scripts", Lang.EN: "Scripts"},
+    "report.summary_namespaces.one": {
+        Lang.ES: " + {count} espacio de nombres",
+        Lang.EN: " + {count} namespace package",
+    },
+    "report.summary_namespaces.other": {
+        Lang.ES: " + {count} espacios de nombres",
+        Lang.EN: " + {count} namespace packages",
+    },
+    "report.metric.namespaces": {
+        Lang.ES: "Espacios de nombres",
+        Lang.EN: "Namespace packages",
+    },
+    "report.namespace_marker": {
+        Lang.ES: "*(espacio de nombres)*",
+        Lang.EN: "*(namespace package)*",
+    },
     "report.consumers": {Lang.ES: "Consumidores", Lang.EN: "Consumers"},
     "report.coupled_consumers_note": {
         Lang.ES: "Consumidores: scripts, ejemplos o CI del repositorio que importan el "
@@ -194,8 +210,8 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.EN: "- `{directory}/` ({count} scripts) → {uses}",
     },
     "report.summary_top_module": {
-        Lang.ES: "Módulo más acoplado: `{module}` (Ca {ca}, Ce {ce}).",
-        Lang.EN: "Most coupled module: `{module}` (Ca {ca}, Ce {ce}).",
+        Lang.ES: "Módulo más acoplado: {module} (Ca {ca}, Ce {ce}).",
+        Lang.EN: "Most coupled module: {module} (Ca {ca}, Ce {ce}).",
     },
     "report.health": {
         Lang.ES: "Salud de la arquitectura (IA): {health}.",
@@ -719,6 +735,47 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "distribuciones vayan en un solo sentido.",
         Lang.EN: "Cut the edge with the fewest breaking uses, so dependencies between "
         "distributions go one way only.",
+    },
+    "finding.missing_module.title": {
+        Lang.ES: "Import de un módulo inexistente",
+        Lang.EN: "Import of a module that does not exist",
+    },
+    "finding.missing_module.explanation": {
+        Lang.ES: "Código empaquetado importa un módulo del proyecto que no existe, al cargarse "
+        "o dentro de una función y sin protegerlo: cuando se ejecuta, lanza ImportError.",
+        Lang.EN: "Packaged code imports a project module that does not exist, at load time or "
+        "inside a function and unguarded: when it runs, it raises ImportError.",
+    },
+    "finding.missing_module.recommendation": {
+        Lang.ES: "Restaurar el módulo, importar el nombre desde el módulo que lo define, o "
+        "eliminar el import.",
+        Lang.EN: "Restore the module, import the name from the module that defines it, or "
+        "remove the import.",
+    },
+    "finding.fix.import_from": {Lang.ES: "importa {items}", Lang.EN: "import {items}"},
+    "finding.fix.import_from.item": {
+        Lang.ES: "`{symbol}` desde `{module}`, que lo define{others}",
+        Lang.EN: "`{symbol}` from `{module}`, which defines it{others}",
+    },
+    "finding.fix.undefined": {
+        Lang.ES: "ningún módulo del proyecto define {symbols}",
+        Lang.EN: "no module of the project defines {symbols}",
+    },
+    "finding.fix.restore_or_remove": {
+        Lang.ES: "`{module}` no existe y ningún módulo del proyecto define {symbols}: "
+        "restaura el módulo o elimina el import",
+        Lang.EN: "`{module}` does not exist and no module of the project defines {symbols}: "
+        "restore the module or remove the import",
+    },
+    "finding.fix.restore_or_remove.module": {
+        Lang.ES: "`{module}` no existe; el más cercano que existe es {closest}: restaura el "
+        "módulo o elimina el import",
+        Lang.EN: "`{module}` does not exist; the closest that exists is {closest}: restore "
+        "the module or remove the import",
+    },
+    "finding.also_defined": {
+        Lang.ES: " (y en {count} módulo(s) más)",
+        Lang.EN: " (and in {count} more module(s))",
     },
     "finding.layers": {
         Lang.ES: "capa {layer_from} → {layer_to}",

@@ -1,8 +1,8 @@
 """Parse Python source files with `ast` into modules, imports and re-exports."""
 
 import ast
-from collections import Counter
-from collections.abc import Iterator
+from collections import defaultdict
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +12,7 @@ from unskein.config import AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
 from unskein.parsers.exports import module_exports
-from unskein.parsers.layout import build_layout, name_files
+from unskein.parsers.layout import ModuleName, build_layout, name_files
 from unskein.parsers.models import (
     STAR_EXPORT,
     FileParseResult,
@@ -43,6 +43,10 @@ IMPORT_ERROR_NAMES = frozenset({"ImportError", "ModuleNotFoundError", "Exception
 SUPPRESS_NAME = "suppress"
 # Names of non-importable files are POSIX paths; "/" never appears in a dotted name.
 PATH_SEPARATOR = "/"
+NAME_SEPARATOR = "."
+# Identify the object an import binds: a module, or a name taken from a module.
+MODULE_OBJECT = "module:"
+FROM_OBJECT = "from:"
 
 
 def is_type_checking_test(test: ast.expr) -> bool:
@@ -195,12 +199,15 @@ class ProjectIndex:
         top_level: First segments of those names (the project's top-level packages).
         packages: Modules that have submodules, i.e. the package facades (their ``__init__.py``).
         unpackaged: Modules no distribution ships (named by path or by their place under the root).
+        namespaces: Packages without an ``__init__.py`` (PEP 420): dotted prefixes of importable
+            names that are not modules themselves. They are also in ``modules`` and ``packages``.
     """
 
     modules: frozenset[str]
     top_level: frozenset[str]
     packages: frozenset[str]
     unpackaged: frozenset[str] = frozenset()
+    namespaces: frozenset[str] = frozenset()
 
     @classmethod
     def from_names(
@@ -210,6 +217,8 @@ class ProjectIndex:
 
         Names that are paths (files no import can reach) are kept as modules but
         never become top-level packages, so they cannot make an import internal.
+        Every dotted prefix of an importable name that is not a module is a namespace
+        package (a directory without ``__init__.py``).
 
         Args:
             names: Names of all project modules.
@@ -219,9 +228,44 @@ class ProjectIndex:
             The index over those names.
         """
         importable = {name for name in names if PATH_SEPARATOR not in name}
-        parents = {name.rpartition(".")[0] for name in importable}
-        top_level = frozenset(name.split(".")[0] for name in importable)
-        return cls(frozenset(names), top_level, frozenset(parents & importable), unpackaged)
+        prefixes = {
+            NAME_SEPARATOR.join(parts[:end])
+            for parts in (name.split(NAME_SEPARATOR) for name in importable)
+            for end in range(1, len(parts))
+        }
+        namespaces = frozenset(prefixes - importable)
+        modules = frozenset(names) | namespaces
+        top_level = frozenset(name.split(NAME_SEPARATOR)[0] for name in importable)
+        return cls(modules, top_level, frozenset(prefixes & modules), unpackaged, namespaces)
+
+    def is_namespace(self, name: str) -> bool:
+        """Return whether a name is a namespace package (a package without ``__init__.py``).
+
+        Args:
+            name: Dotted module name.
+
+        Returns:
+            True when some module lives under it but no file is it.
+        """
+        return name in self.namespaces
+
+    def is_open_namespace(self, name: str) -> bool:
+        """Return whether a namespace package has no regular package above it.
+
+        Other distributions can add portions to such a namespace (``google.cloud``), so
+        a name under it that the project lacks may still be installed. A namespace under
+        a regular package (``litellm.types`` under ``litellm/__init__.py``) is closed.
+
+        Args:
+            name: Dotted module name.
+
+        Returns:
+            True when the name and every ancestor of it are namespace packages.
+        """
+        parts = name.split(NAME_SEPARATOR)
+        return all(
+            NAME_SEPARATOR.join(parts[:end]) in self.namespaces for end in range(1, len(parts) + 1)
+        )
 
     def is_package(self, name: str) -> bool:
         """Return whether a project module has submodules.
@@ -264,16 +308,19 @@ class ProjectIndex:
 
 @dataclass(frozen=True, slots=True)
 class Binding:
-    """A name an import statement binds in the module.
+    """A name an import statement binds in the module, and what it binds it to.
 
     Attributes:
         name: The bound name.
-        is_module: Whether the name refers to the imported module itself; ``import a.b``
-            binds ``a``, not ``a.b``.
+        prefix: Dotted path from the bound name to the import target: ``import a.b``
+            binds ``a`` with prefix ``b``; empty when the name is the target itself.
+        refers_to: The object the name refers to, so that two statements binding the
+            same object (``import a`` and ``import a.b``) count as one binding.
     """
 
     name: str
-    is_module: bool
+    prefix: str
+    refers_to: str
 
 
 class _ImportCollector:
@@ -285,8 +332,9 @@ class _ImportCollector:
         index: Index of all project modules.
 
     Attributes:
-        package_bindings: Bound name to the index of the edge of the package it refers to.
-        bound_counts: How many import statements bind each name.
+        package_bindings: Bound name to the edges of the packages it reaches, each with the
+            prefix that leads from the name to that package.
+        bound_objects: Objects each name is bound to by an import statement.
     """
 
     def __init__(self, file_path: Path, source: str, index: ProjectIndex):
@@ -297,8 +345,8 @@ class _ImportCollector:
         self.edges: list[ImportEdge] = []
         self.re_exports: list[ReExport] = []
         self.warnings: list[ParseWarning] = []
-        self.package_bindings: dict[str, int] = {}
-        self.bound_counts: Counter[str] = Counter()
+        self.package_bindings: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
+        self.bound_objects: defaultdict[str, set[str]] = defaultdict(set)
 
     def warn(self, code: WarningCode, line: int, detail: str) -> None:
         """Record a warning located at a line of the current file.
@@ -337,26 +385,38 @@ class _ImportCollector:
             The internal target module, or None if external or unresolved.
         """
         if binding is not None:
-            self.bound_counts[binding.name] += 1
+            self.bound_objects[binding.name].add(binding.refers_to)
         if self.index.is_external(name):
             self.edges.append(
                 ImportEdge(self.source, name, True, symbol, line, kind, is_guarded=is_guarded)
             )
             return None
         target = self.index.closest_module(name)
-        if target is None:
+        if target is None or (target != name and self.index.is_open_namespace(target)):
+            # An open namespace can get portions from other distributions: what the project
+            # lacks there may be installed, so it is only a warning, with no edge.
             self.warn(WarningCode.UNRESOLVED_IMPORT, line, name)
             return None
         if target != name:
             self.warn(WarningCode.UNRESOLVED_IMPORT, line, f"{name} -> {target}")
         if target != self.source:
+            requested = name if target != name else None
             self.edges.append(
-                ImportEdge(self.source, target, False, symbol, line, kind, is_guarded=is_guarded)
+                ImportEdge(
+                    self.source,
+                    target,
+                    False,
+                    symbol,
+                    line,
+                    kind,
+                    is_guarded=is_guarded,
+                    requested=requested,
+                )
             )
             if binding is not None and self.binds_package(
                 binding, symbol, target, is_exact=target == name
             ):
-                self.package_bindings[binding.name] = len(self.edges) - 1
+                self.package_bindings[binding.name].append((len(self.edges) - 1, binding.prefix))
         return target
 
     def binds_package(
@@ -371,15 +431,10 @@ class _ImportCollector:
             is_exact: Whether the target is the module the statement names, not a fallback ancestor.
 
         Returns:
-            True when the bound name is the package ``target`` itself.
+            True when the bound name reaches the package ``target`` itself, directly or
+            through the binding's prefix (``import a.b`` reaches ``a.b`` through ``a``).
         """
-        return (
-            binding is not None
-            and binding.is_module
-            and symbol is None
-            and is_exact
-            and self.index.is_package(target)
-        )
+        return binding is not None and symbol is None and is_exact and self.index.is_package(target)
 
     def relative_base(self, node: ast.ImportFrom) -> str | None:
         """Return the absolute module a relative `from` import refers to.
@@ -412,7 +467,10 @@ class _ImportCollector:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     top, _, rest = alias.name.partition(".")
-                    bound = Binding(alias.asname, True) if alias.asname else Binding(top, not rest)
+                    if alias.asname:
+                        bound = Binding(alias.asname, "", f"{MODULE_OBJECT}{alias.name}")
+                    else:
+                        bound = Binding(top, rest, f"{MODULE_OBJECT}{top}")
                     self.add(
                         alias.name,
                         None,
@@ -454,9 +512,10 @@ class _ImportCollector:
                 if is_star_reexport:
                     self.re_exports.append(ReExport(self.source, base, STAR_EXPORT))
                 continue
-            binding = Binding(alias.asname or alias.name, True)
+            binding = Binding(alias.asname or alias.name, "", f"{FROM_OBJECT}{base}.{alias.name}")
             submodule = f"{base}.{alias.name}"
-            if submodule in self.index.modules:
+            # A namespace package has no code: a name taken from it can only be a submodule.
+            if submodule in self.index.modules or self.index.is_namespace(base):
                 self.add(
                     submodule, None, node.lineno, kind=kind, binding=binding, is_guarded=is_guarded
                 )
@@ -471,25 +530,60 @@ class _ImportCollector:
     def attach_usage(self, tree: ast.Module) -> None:
         """Record on each package import how the module uses the name it binds.
 
-        Only names bound by exactly one import are analyzed: a second binding could
-        make the attribute uses belong to another module. The tree is walked only
-        when the module imports at least one package.
+        Only names bound to a single object are analyzed (``import a`` and ``import a.b``
+        bind the same ``a``); a name bound to two objects could make the attribute uses
+        belong to either. Each chain goes to the import with the longest matching prefix:
+        ``a.b.c.f`` read through ``a`` belongs to ``import a.b.c`` as ``f``. A chain equal
+        to a prefix means that package is used by itself. The tree is walked only when the
+        module imports at least one package.
 
         Args:
             tree: Parsed module the collector visited.
         """
         tracked = {
-            name: index
-            for name, index in self.package_bindings.items()
-            if self.bound_counts[name] == 1
+            name: entries
+            for name, entries in self.package_bindings.items()
+            if len(self.bound_objects[name]) == 1
         }
         if not tracked:
             return
         usages = collect_name_usage(tree, tracked)
-        for name, index in tracked.items():
-            edge = self.edges[index]
-            edge.accessed = tuple(sorted(usages[name].chains))
-            edge.escapes = usages[name].escapes
+        for name, entries in tracked.items():
+            chains, used_alone = _split_chains(usages[name].chains, entries)
+            for index, _ in entries:
+                edge = self.edges[index]
+                edge.accessed = tuple(sorted(chains[index]))
+                edge.escapes = usages[name].escapes or index in used_alone
+
+
+def _split_chains(
+    chains: Collection[str], entries: list[tuple[int, str]]
+) -> tuple[dict[int, set[str]], set[int]]:
+    """Give each attribute chain read through a name to the import it goes through.
+
+    Args:
+        chains: Dotted attribute chains read through the name.
+        entries: Edge index and prefix of each package import that binds the name.
+
+    Returns:
+        The chains of each edge, below its prefix, and the edges whose package is used by
+        itself (a chain equal to its prefix). A chain that matches no prefix is dropped.
+    """
+    by_prefix = sorted(entries, key=lambda entry: -len(entry[1]))
+    split: dict[int, set[str]] = {index: set() for index, _ in entries}
+    used_alone: set[int] = set()
+    for chain in chains:
+        for index, prefix in by_prefix:
+            if not prefix:
+                split[index].add(chain)
+                break
+            if chain == prefix:
+                used_alone.add(index)
+                break
+            if chain.startswith(f"{prefix}{NAME_SEPARATOR}"):
+                split[index].add(chain[len(prefix) + len(NAME_SEPARATOR) :])
+                break
+    return split, used_alone
 
 
 def parse_file(
@@ -534,8 +628,41 @@ def parse_file(
         exports.declares_all,
         exports.bound_names,
         is_packaged=name not in index.unpackaged,
+        defined_names=exports.defined_names,
     )
     return FileParseResult(module, collector.re_exports, collector.warnings)
+
+
+def _namespace_owners(
+    index: ProjectIndex, names: list[ModuleName], module_distributions: dict[str, str]
+) -> dict[str, bool]:
+    """Tell, for each namespace package, whether its modules are shipped and by whom.
+
+    One pass over the module names: each name updates the namespaces above it. A
+    namespace whose modules all belong to one named distribution is added to
+    ``module_distributions``.
+
+    Args:
+        index: Project index with the namespace packages.
+        names: Every file's module name.
+        module_distributions: Distribution per module; namespaces are added to it.
+
+    Returns:
+        Whether a distribution ships every module under each namespace, by namespace.
+    """
+    shipped: dict[str, bool] = {}
+    owners: defaultdict[str, set[str | None]] = defaultdict(set)
+    for name in names:
+        parts = name.name.split(NAME_SEPARATOR)
+        for end in range(1, len(parts)):
+            prefix = NAME_SEPARATOR.join(parts[:end])
+            if index.is_namespace(prefix):
+                shipped[prefix] = shipped.get(prefix, True) and name.is_packaged
+                owners[prefix].add(name.distribution)
+    for namespace, found in owners.items():
+        if len(found) == 1 and None not in found:
+            module_distributions[namespace] = next(iter(found))
+    return dict(sorted(shipped.items()))
 
 
 class PythonAdapter(LanguageAdapter):
@@ -610,6 +737,7 @@ class PythonAdapter(LanguageAdapter):
         module_distributions = {
             name.name: name.distribution for _, name in named if name.distribution is not None
         }
+        namespaces = _namespace_owners(index, [name for _, name in named], module_distributions)
         return ParsePlan(
             tasks,
             index,
@@ -618,6 +746,7 @@ class PythonAdapter(LanguageAdapter):
             layout.distribution_infos,
             module_distributions,
             layout.root,
+            namespaces=namespaces,
         )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:
