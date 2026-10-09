@@ -26,7 +26,7 @@ from unskein.errors import ErrorKey, UnskeinError
 from unskein.graph.findings import unmatched_layers
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
-from unskein.parsers.discovery import load_exclude_spec
+from unskein.parsers.discovery import load_evidence_spec, load_exclude_spec
 from unskein.parsers.models import ParseResult
 from unskein.parsers.native import PYTHON_SUFFIX
 from unskein.parsers.python_parser import PythonAdapter
@@ -172,7 +172,10 @@ def parse_sources(context: ScanContext) -> ParseResult:
     config = context.analysis
     adapter = PythonAdapter(config)
     spec = load_exclude_spec(root, config.exclude, config.include_tests)
-    files = sorted(adapter.discover_files(root, spec, config.follow_symlinks))
+    evidence = load_evidence_spec(root, config.exclude, config.include_tests)
+    files = sorted(
+        adapter.discover_files(root, spec, config.follow_symlinks, evidence_spec=evidence)
+    )
     sources = sum(1 for path in files if path.suffix == PYTHON_SUFFIX)
     if not sources:
         raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})

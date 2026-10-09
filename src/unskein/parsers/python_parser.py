@@ -706,7 +706,12 @@ class PythonAdapter(LanguageAdapter):
         return [".py"]
 
     def discover_files(
-        self, root: Path, exclude_spec: pathspec.PathSpec, follow_symlinks: bool = False
+        self,
+        root: Path,
+        exclude_spec: pathspec.PathSpec,
+        follow_symlinks: bool = False,
+        *,
+        evidence_spec: pathspec.PathSpec | None = None,
     ) -> Iterator[Path]:
         """Yield the Python files under root that are not excluded, plus stubs and binaries.
 
@@ -714,13 +719,16 @@ class PythonAdapter(LanguageAdapter):
             root: Project directory to walk.
             exclude_spec: Combined exclude patterns; matching paths are skipped.
             follow_symlinks: Whether to descend into symlinked directories.
+            evidence_spec: Patterns for stubs and binaries instead of ``exclude_spec``
+                (see ``load_evidence_spec``); None uses ``exclude_spec``.
 
         Returns:
             An iterator over the Python files to analyze and the files that prove a module
             exists without a ``.py`` (stubs, binaries, Cython sources).
         """
         extensions = (*self.file_extensions, *EVIDENCE_SUFFIXES)
-        return walk_files(root, extensions, exclude_spec, follow_symlinks)
+        file_specs = dict.fromkeys(EVIDENCE_SUFFIXES, evidence_spec) if evidence_spec else None
+        return walk_files(root, extensions, exclude_spec, follow_symlinks, file_specs=file_specs)
 
     def normalize_module_name(self, file_path: Path, root: Path) -> str:
         """Return the module name of a file, from the distribution that ships it.

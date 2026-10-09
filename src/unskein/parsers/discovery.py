@@ -2,12 +2,13 @@
 
 import os
 import tokenize
-from collections.abc import Hashable, Iterator
+from collections.abc import Hashable, Iterator, Mapping
 from pathlib import Path
 
 import pathspec
 
-IGNORE_FILES = (".gitignore", ".unskeinignore")
+GITIGNORE_FILE = ".gitignore"
+IGNORE_FILES = (GITIGNORE_FILE, ".unskeinignore")
 DEFAULT_TEST_PATTERNS = ("tests/", "test/", "test_*.py", "*_test.py", "conftest.py")
 
 
@@ -27,8 +28,45 @@ def load_exclude_spec(
     Returns:
         A spec that matches every path to leave out of the analysis.
     """
+    return _spec(root, cli_exclude, include_tests, IGNORE_FILES)
+
+
+def load_evidence_spec(
+    root: Path, cli_exclude: list[str], include_tests: bool = False
+) -> pathspec.PathSpec:
+    """Combine the exclude sources that apply to stubs and binaries: all but ``.gitignore``.
+
+    A binary built in place is usually git-ignored (``*.so``), yet it proves its module
+    exists. ``.unskeinignore`` and ``--exclude`` still leave it out.
+
+    Args:
+        root: Project directory holding the ignore files.
+        cli_exclude: Extra patterns passed with `--exclude`.
+        include_tests: Whether to keep test code instead of excluding it by default.
+
+    Returns:
+        A spec that matches every stub or binary to leave out of the analysis.
+    """
+    ignore_files = tuple(name for name in IGNORE_FILES if name != GITIGNORE_FILE)
+    return _spec(root, cli_exclude, include_tests, ignore_files)
+
+
+def _spec(
+    root: Path, cli_exclude: list[str], include_tests: bool, ignore_files: tuple[str, ...]
+) -> pathspec.PathSpec:
+    """Build a gitignore-style spec from the default test patterns, ignore files and CLI.
+
+    Args:
+        root: Project directory holding the ignore files.
+        cli_exclude: Extra patterns passed with `--exclude`.
+        include_tests: Whether to keep test code instead of excluding it by default.
+        ignore_files: Names of the ignore files to read.
+
+    Returns:
+        The union of every pattern.
+    """
     patterns: list[str] = [] if include_tests else list(DEFAULT_TEST_PATTERNS)
-    for name in IGNORE_FILES:
+    for name in ignore_files:
         ignore_file = root / name
         if ignore_file.exists():
             patterns += ignore_file.read_text(encoding="utf-8").splitlines()
@@ -79,6 +117,8 @@ def walk_files(
     extensions: tuple[str, ...],
     exclude_spec: pathspec.PathSpec,
     follow_symlinks: bool = False,
+    *,
+    file_specs: Mapping[str, pathspec.PathSpec] | None = None,
 ) -> Iterator[Path]:
     """Yield the files under root with the given extensions that are not excluded.
 
@@ -91,6 +131,8 @@ def walk_files(
         extensions: File suffixes to keep, e.g. (".py",).
         exclude_spec: Paths matching it (relative to root) are skipped.
         follow_symlinks: Whether to descend into symlinked directories.
+        file_specs: Spec to match files of a suffix against instead of ``exclude_spec``
+            (directories are always pruned with ``exclude_spec``).
 
     Yields:
         Each matching file path, as the walk reaches it.
@@ -109,7 +151,8 @@ def walk_files(
         for fname in filenames:
             if fname.endswith(extensions):
                 full = Path(dirpath, fname)
-                if not exclude_spec.match_file(full.relative_to(root).as_posix()):
+                spec = file_specs.get(full.suffix, exclude_spec) if file_specs else exclude_spec
+                if not spec.match_file(full.relative_to(root).as_posix()):
                     yield full
 
 

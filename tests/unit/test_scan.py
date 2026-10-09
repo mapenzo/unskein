@@ -305,3 +305,24 @@ def test_scan_does_not_warn_about_a_declared_layer_that_only_scripts_match(
         execute_scan(prepare(ScanOptions(path=root, no_ai=True)))
 
     assert caplog.records == []
+
+
+def test_gitignored_binary_built_in_place_still_proves_its_module(
+    make_project: MakeProject,
+) -> None:
+    root = make_project(
+        {
+            ".gitignore": "*.so\n",
+            ".unskeinignore": "app/skipped*\n",
+            "app/__init__.py": "",
+            "app/_fast.cpython-312-x86_64-linux-gnu.so": "",
+            "app/skipped.so": "",
+            "app/a.py": "def f():\n    from app._fast import go\n    from app.skipped import x\n",
+        }
+    )
+    result = execute_scan(prepare(ScanOptions(path=root, no_ai=True))).result
+    assert "app._fast" in result.virtual
+    assert "app.skipped" not in result.virtual
+    assert [f.modules for f in result.findings if f.kind.value == "missing_module"] == [
+        ("app.skipped",)
+    ]
