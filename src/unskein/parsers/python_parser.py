@@ -1,8 +1,8 @@
 """Parse Python source files with `ast` into modules, imports and re-exports."""
 
 import ast
-from collections import Counter
-from collections.abc import Iterator
+from collections import defaultdict
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +44,9 @@ SUPPRESS_NAME = "suppress"
 # Names of non-importable files are POSIX paths; "/" never appears in a dotted name.
 PATH_SEPARATOR = "/"
 NAME_SEPARATOR = "."
+# Identify the object an import binds: a module, or a name taken from a module.
+MODULE_OBJECT = "module:"
+FROM_OBJECT = "from:"
 
 
 def is_type_checking_test(test: ast.expr) -> bool:
@@ -287,16 +290,19 @@ class ProjectIndex:
 
 @dataclass(frozen=True, slots=True)
 class Binding:
-    """A name an import statement binds in the module.
+    """A name an import statement binds in the module, and what it binds it to.
 
     Attributes:
         name: The bound name.
-        is_module: Whether the name refers to the imported module itself; ``import a.b``
-            binds ``a``, not ``a.b``.
+        prefix: Dotted path from the bound name to the import target: ``import a.b``
+            binds ``a`` with prefix ``b``; empty when the name is the target itself.
+        refers_to: The object the name refers to, so that two statements binding the
+            same object (``import a`` and ``import a.b``) count as one binding.
     """
 
     name: str
-    is_module: bool
+    prefix: str
+    refers_to: str
 
 
 class _ImportCollector:
@@ -308,8 +314,9 @@ class _ImportCollector:
         index: Index of all project modules.
 
     Attributes:
-        package_bindings: Bound name to the index of the edge of the package it refers to.
-        bound_counts: How many import statements bind each name.
+        package_bindings: Bound name to the edges of the packages it reaches, each with the
+            prefix that leads from the name to that package.
+        bound_objects: Objects each name is bound to by an import statement.
     """
 
     def __init__(self, file_path: Path, source: str, index: ProjectIndex):
@@ -320,8 +327,8 @@ class _ImportCollector:
         self.edges: list[ImportEdge] = []
         self.re_exports: list[ReExport] = []
         self.warnings: list[ParseWarning] = []
-        self.package_bindings: dict[str, int] = {}
-        self.bound_counts: Counter[str] = Counter()
+        self.package_bindings: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
+        self.bound_objects: defaultdict[str, set[str]] = defaultdict(set)
 
     def warn(self, code: WarningCode, line: int, detail: str) -> None:
         """Record a warning located at a line of the current file.
@@ -360,7 +367,7 @@ class _ImportCollector:
             The internal target module, or None if external or unresolved.
         """
         if binding is not None:
-            self.bound_counts[binding.name] += 1
+            self.bound_objects[binding.name].add(binding.refers_to)
         if self.index.is_external(name):
             self.edges.append(
                 ImportEdge(self.source, name, True, symbol, line, kind, is_guarded=is_guarded)
@@ -389,7 +396,7 @@ class _ImportCollector:
             if binding is not None and self.binds_package(
                 binding, symbol, target, is_exact=target == name
             ):
-                self.package_bindings[binding.name] = len(self.edges) - 1
+                self.package_bindings[binding.name].append((len(self.edges) - 1, binding.prefix))
         return target
 
     def binds_package(
@@ -404,15 +411,10 @@ class _ImportCollector:
             is_exact: Whether the target is the module the statement names, not a fallback ancestor.
 
         Returns:
-            True when the bound name is the package ``target`` itself.
+            True when the bound name reaches the package ``target`` itself, directly or
+            through the binding's prefix (``import a.b`` reaches ``a.b`` through ``a``).
         """
-        return (
-            binding is not None
-            and binding.is_module
-            and symbol is None
-            and is_exact
-            and self.index.is_package(target)
-        )
+        return binding is not None and symbol is None and is_exact and self.index.is_package(target)
 
     def relative_base(self, node: ast.ImportFrom) -> str | None:
         """Return the absolute module a relative `from` import refers to.
@@ -445,7 +447,10 @@ class _ImportCollector:
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     top, _, rest = alias.name.partition(".")
-                    bound = Binding(alias.asname, True) if alias.asname else Binding(top, not rest)
+                    if alias.asname:
+                        bound = Binding(alias.asname, "", f"{MODULE_OBJECT}{alias.name}")
+                    else:
+                        bound = Binding(top, rest, f"{MODULE_OBJECT}{top}")
                     self.add(
                         alias.name,
                         None,
@@ -487,7 +492,7 @@ class _ImportCollector:
                 if is_star_reexport:
                     self.re_exports.append(ReExport(self.source, base, STAR_EXPORT))
                 continue
-            binding = Binding(alias.asname or alias.name, True)
+            binding = Binding(alias.asname or alias.name, "", f"{FROM_OBJECT}{base}.{alias.name}")
             submodule = f"{base}.{alias.name}"
             if submodule in self.index.modules:
                 self.add(
@@ -504,25 +509,60 @@ class _ImportCollector:
     def attach_usage(self, tree: ast.Module) -> None:
         """Record on each package import how the module uses the name it binds.
 
-        Only names bound by exactly one import are analyzed: a second binding could
-        make the attribute uses belong to another module. The tree is walked only
-        when the module imports at least one package.
+        Only names bound to a single object are analyzed (``import a`` and ``import a.b``
+        bind the same ``a``); a name bound to two objects could make the attribute uses
+        belong to either. Each chain goes to the import with the longest matching prefix:
+        ``a.b.c.f`` read through ``a`` belongs to ``import a.b.c`` as ``f``. A chain equal
+        to a prefix means that package is used by itself. The tree is walked only when the
+        module imports at least one package.
 
         Args:
             tree: Parsed module the collector visited.
         """
         tracked = {
-            name: index
-            for name, index in self.package_bindings.items()
-            if self.bound_counts[name] == 1
+            name: entries
+            for name, entries in self.package_bindings.items()
+            if len(self.bound_objects[name]) == 1
         }
         if not tracked:
             return
         usages = collect_name_usage(tree, tracked)
-        for name, index in tracked.items():
-            edge = self.edges[index]
-            edge.accessed = tuple(sorted(usages[name].chains))
-            edge.escapes = usages[name].escapes
+        for name, entries in tracked.items():
+            chains, used_alone = _split_chains(usages[name].chains, entries)
+            for index, _ in entries:
+                edge = self.edges[index]
+                edge.accessed = tuple(sorted(chains[index]))
+                edge.escapes = usages[name].escapes or index in used_alone
+
+
+def _split_chains(
+    chains: Collection[str], entries: list[tuple[int, str]]
+) -> tuple[dict[int, set[str]], set[int]]:
+    """Give each attribute chain read through a name to the import it goes through.
+
+    Args:
+        chains: Dotted attribute chains read through the name.
+        entries: Edge index and prefix of each package import that binds the name.
+
+    Returns:
+        The chains of each edge, below its prefix, and the edges whose package is used by
+        itself (a chain equal to its prefix). A chain that matches no prefix is dropped.
+    """
+    by_prefix = sorted(entries, key=lambda entry: -len(entry[1]))
+    split: dict[int, set[str]] = {index: set() for index, _ in entries}
+    used_alone: set[int] = set()
+    for chain in chains:
+        for index, prefix in by_prefix:
+            if not prefix:
+                split[index].add(chain)
+                break
+            if chain == prefix:
+                used_alone.add(index)
+                break
+            if chain.startswith(f"{prefix}{NAME_SEPARATOR}"):
+                split[index].add(chain[len(prefix) + len(NAME_SEPARATOR) :])
+                break
+    return split, used_alone
 
 
 def parse_file(

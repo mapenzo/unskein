@@ -2,6 +2,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from unskein.config import AnalysisConfig
+from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import WarningCode
 from unskein.parsers.python_parser import ProjectIndex, PythonAdapter
 
@@ -79,3 +80,73 @@ def test_missing_module_falls_back_to_its_namespace_and_keeps_the_name(
     assert (edge.target, edge.requested) == ("app.types", "app.types.gone")
     (warning,) = [w for w in result.warnings if w.code is WarningCode.UNRESOLVED_IMPORT]
     assert warning.detail == "app.types.gone -> app.types"
+
+
+def _resolved_targets(root: Path, module: str) -> list[str]:
+    """Return the sorted internal targets of a module after re-export resolution."""
+    result = resolve_indirection(_parse(root))
+    return sorted(e.target for e in _imports(result, module))
+
+
+def test_namespace_import_expands_to_the_modules_read(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/types/models.py": "class Model: ...\n",
+            "app/types/llms/openai.py": "class OpenAI: ...\n",
+            "app/core.py": "import app\nimport app.types\nimport app.types.llms\n"
+            "def f():\n    return app.types.models.Model(), app.types.llms.openai.OpenAI()\n",
+        }
+    )
+    assert _resolved_targets(root, "app.core") == [
+        "app",
+        "app.types.llms.openai",
+        "app.types.models",
+    ]
+
+
+def test_regular_package_import_expands_too(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/sub/__init__.py": "",
+            "app/sub/leaf.py": "def f(): ...\n",
+            "app/core.py": "import app.sub\ndef g():\n    return app.sub.leaf.f()\n",
+        }
+    )
+    assert _resolved_targets(root, "app.core") == ["app.sub.leaf"]
+
+
+def test_namespace_used_by_itself_keeps_the_edge(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/types/models.py": "",
+            "app/core.py": "import app.types\ndef f(x):\n    return x(app.types)\n",
+        }
+    )
+    assert _resolved_targets(root, "app.core") == ["app.types"]
+
+
+def test_aliased_submodule_import_expands_from_the_alias(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/types/models.py": "class Model: ...\n",
+            "app/core.py": "import app.types as t\ndef f():\n    return t.models.Model()\n",
+        }
+    )
+    assert _resolved_targets(root, "app.core") == ["app.types.models"]
+
+
+def test_name_bound_to_two_objects_is_not_analyzed(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/types/models.py": "",
+            "other/__init__.py": "",
+            "app/core.py": "import app.types\nfrom other import app\n"
+            "def f():\n    return app.types.models\n",
+        }
+    )
+    assert "app.types" in _resolved_targets(root, "app.core")
