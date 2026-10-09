@@ -115,7 +115,7 @@ def test_star_import_keeps_module_edge_and_is_recorded(make_project: MakeProject
     result = parse(root)
     assert internal(result) == {("app.a", "app.b", None, False)}
     assert codes(result) == []
-    assert [m.wildcards for m in result.modules if m.name == "app.a"] == [((1, "app.b"),)]
+    assert [m.stars.statements for m in result.modules if m.name == "app.a"] == [((1, "app.b"),)]
 
 
 def test_missing_internal_module_falls_back_to_ancestor_with_warning(

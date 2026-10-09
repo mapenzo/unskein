@@ -70,7 +70,7 @@ def test_wildcards_of_a_file_follow_the_order_of_the_code(
         {"pkg/__init__.py": "", "pkg/a.py": "", "pkg/b.py": "", "pkg/mod.py": source}
     )
     (module,) = [m for m in parse_project(root).modules if m.name == "pkg.mod"]
-    assert [line for line, _ in module.wildcards] == [2, 3]
+    assert [line for line, _ in module.stars.statements] == [2, 3]
 
 
 def test_wildcards_follow_the_order_of_every_block_of_a_try(
@@ -86,4 +86,4 @@ def test_wildcards_follow_the_order_of_every_block_of_a_try(
     files |= {f"pkg/{name}.py": "" for name in "abcd"}
     root = make_project(files)
     (module,) = [m for m in parse_project(root).modules if m.name == "pkg.mod"]
-    assert [line for line, _ in module.wildcards] == [2, 4, 6, 8]
+    assert [line for line, _ in module.stars.statements] == [2, 4, 6, 8]

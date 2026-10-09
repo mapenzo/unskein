@@ -58,7 +58,7 @@ def test_star_outside_a_facade_is_recorded_without_warning(make_project: MakePro
     files = {"app/__init__.py": "", "app/a.py": "from app.b import *\n", "app/b.py": "X = 1\n"}
     result = parse(make_project(files))
     assert result.warnings == []
-    assert [m.wildcards for m in result.modules if m.name == "app.a"] == [((1, "app.b"),)]
+    assert [m.stars.statements for m in result.modules if m.name == "app.a"] == [((1, "app.b"),)]
     assert result.re_exports == []
 
 

@@ -190,7 +190,7 @@ def star_imports(
                 (FACADE_LINE, re_export.original_module)
             )
     for module in modules:
-        for line, base in module.wildcards:
+        for line, base in module.stars.statements:
             if base != module.name:
                 stars.setdefault(module.name, []).append((line, base))
     return stars
@@ -433,7 +433,7 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
     every_star = star_imports(result.modules, result.re_exports)
     cycles = star_cycles(every_star)
     for module in result.modules:
-        for line, base in module.wildcards:
+        for line, base in module.stars.statements:
             unknown = (module.name, base) in cycles or (
                 wildcard_names(base, by_name, every_star) is None
             )

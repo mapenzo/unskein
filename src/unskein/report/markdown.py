@@ -11,7 +11,7 @@ from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.graph.native import NativeModule
-from unskein.graph.stars import KIND_SELF, WildcardAction, WildcardFix
+from unskein.graph.stars import ANY_READER, KIND_SELF, WildcardAction, WildcardFix
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, VirtualKind, WarningCode
 
@@ -947,7 +947,10 @@ def _wildcard_fix_line(fix: WildcardFix, module: str, lang: Lang) -> str:
         notes = [
             t("finding.wildcard.note.kept", lang, importer=needer, names=_backticked(names))
             for needer, names in needers.items()
+            if needer != ANY_READER
         ]
+        if ANY_READER in needers:
+            notes.insert(0, t("finding.wildcard.note.any_reader", lang, module=fix.importer))
         origins: dict[str, list[str]] = {}
         for origin, name in fix.defined_elsewhere:
             origins.setdefault(origin, []).append(name)

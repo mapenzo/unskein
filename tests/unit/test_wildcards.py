@@ -6,7 +6,7 @@ import pathspec
 import pytest
 
 from unskein.config import AnalysisConfig
-from unskein.parsers.exports import module_exports
+from unskein.parsers.exports import module_exports, shadowed_after
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import WarningCode
 from unskein.parsers.python_parser import PythonAdapter
@@ -43,16 +43,16 @@ def test_read_names_include_loads_and_string_annotations_not_docstrings() -> Non
 
 def test_non_facade_and_self_stars_are_recorded_in_code_order() -> None:
     result = _parse()
-    assert _module(result, "app.both").wildcards == ((1, "app.types"), (2, "app.models"))
-    assert _module(result, "app.sub").wildcards == ((1, "app.sub"),)
-    assert _module(result, "app").wildcards == ()
-    assert _module(result, "app.ext").wildcards == ()
+    assert _module(result, "app.both").stars.statements == ((1, "app.types"), (2, "app.models"))
+    assert _module(result, "app.sub").stars.statements == ((1, "app.sub"),)
+    assert _module(result, "app").stars.statements == ()
+    assert _module(result, "app.ext").stars.statements == ()
 
 
 def test_star_reads_are_kept_only_for_modules_with_wildcards() -> None:
     result = _parse()
-    assert "D" in _module(result, "app.annot").star_reads
-    assert _module(result, "app.models").star_reads == ()
+    assert "D" in _module(result, "app.annot").stars.reads
+    assert _module(result, "app.models").stars.reads == ()
 
 
 def test_only_unresolvable_stars_warn_after_resolution() -> None:
@@ -84,3 +84,18 @@ def test_star_of_a_module_that_was_not_parsed_warns(make_project: MakeProject) -
 )
 def test_every_change_to_all_that_cannot_be_read_is_dynamic(source: str) -> None:
     assert module_exports(ast.parse(source)).has_dynamic_all
+
+
+@pytest.mark.parametrize(
+    ("source", "shadowed"),
+    [
+        ("from app.b import *\nfrom typing import Final\n", ("Final",)),
+        ("from app.b import *\nprint(X)\nX = 1\n", ()),
+        ("from app.b import *\nX = (\n    X + 1\n)\n", ()),
+        ("Y = 1\nfrom app.b import *\n", ()),
+        ("from app.b import *\nif flag:\n    Z = 1\n", ()),
+        ("from app.b import *\n\n\ndef f():\n    return W\n\n\nW = 2\n", ("W", "f")),
+    ],
+)
+def test_names_rebound_for_good_after_the_stars_are_shadowed(source: str, shadowed) -> None:
+    assert shadowed_after(ast.parse(source), 1) == shadowed

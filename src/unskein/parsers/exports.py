@@ -231,3 +231,62 @@ def module_exports(tree: ast.Module) -> ModuleExports:
         return ModuleExports(tuple(sorted(set(declared))), True, bound, defined, dynamic)
     public = {name for name in names if not name.startswith(PRIVATE_PREFIX)}
     return ModuleExports(tuple(sorted(public)), False, bound, defined, dynamic)
+
+
+def _module_level_reads(tree: ast.Module) -> Iterator[ast.AST]:
+    """Yield the nodes that run while the module is imported, function bodies excluded.
+
+    Decorators, default values and annotations of a function run at import time; its body
+    does not. Class bodies do run.
+
+    Args:
+        tree: Parsed module.
+
+    Yields:
+        Every such node.
+    """
+    stack: list[ast.AST] = list(tree.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            stack.extend(node.decorator_list)
+            stack.append(node.args)
+            if node.returns is not None:
+                stack.append(node.returns)
+        elif not isinstance(node, ast.Lambda):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def shadowed_after(tree: ast.Module, line: int) -> tuple[str, ...]:
+    """Return the names the module rebinds for good after a line, unread before that.
+
+    A top-level statement after the last star import that binds a name hides the star's
+    one for good, unless code that runs at import time reads it first. Only direct
+    statements of the module count (not ones inside ``if`` or ``try``), so the binding
+    always runs.
+
+    Args:
+        tree: Parsed module.
+        line: Line of the module's last star import.
+
+    Returns:
+        The hidden names, sorted.
+    """
+    bound_until: dict[str, int] = {}
+    for node in tree.body:
+        if node.lineno > line:
+            for name in _bound_names(node):
+                bound_until.setdefault(name, node.end_lineno or node.lineno)
+    if not bound_until:
+        return ()
+    read_first: set[str] = set()
+    for node in _module_level_reads(tree):
+        name = None
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Load, ast.Del)):
+            name = node.id
+        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+            name = node.target.id
+        if name in bound_until and node.lineno <= bound_until[name]:
+            read_first.add(name)
+    return tuple(sorted(set(bound_until) - read_first))

@@ -11,7 +11,7 @@ import pathspec
 from unskein.config import AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
-from unskein.parsers.exports import module_exports
+from unskein.parsers.exports import module_exports, shadowed_after
 from unskein.parsers.layout import ModuleName, build_layout, name_files
 from unskein.parsers.models import (
     STAR_EXPORT,
@@ -23,6 +23,7 @@ from unskein.parsers.models import (
     ParseTask,
     ParseWarning,
     ReExport,
+    StarImports,
     VirtualKind,
     VirtualModule,
     WarningCode,
@@ -685,10 +686,13 @@ def parse_file(
     collector.visit(tree)
     collector.attach_usage(tree)
     exports = module_exports(tree)
-    wildcards = tuple(collector.wildcards)
-    star_reads = collect_read_names(tree) if wildcards else ()
-    if wildcards and exports.declares_all:
-        star_reads = tuple(sorted({*star_reads, *exports.names}))
+    stars = StarImports()
+    if collector.wildcards:
+        reads = collect_read_names(tree)
+        if exports.declares_all:
+            reads = tuple(sorted({*reads, *exports.names}))
+        last = max(line for line, _ in collector.wildcards)
+        stars = StarImports(tuple(collector.wildcards), reads, shadowed_after(tree, last))
     module = ModuleInfo(
         name,
         file_path,
@@ -698,8 +702,7 @@ def parse_file(
         exports.bound_names,
         is_packaged=name not in index.unpackaged,
         defined_names=exports.defined_names,
-        wildcards=wildcards,
-        star_reads=star_reads,
+        stars=stars,
         has_dynamic_all=exports.has_dynamic_all,
     )
     return FileParseResult(module, collector.re_exports, collector.warnings)

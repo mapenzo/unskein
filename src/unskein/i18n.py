@@ -965,6 +965,13 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "se conservan para `{importer}`: {names}",
         Lang.EN: "kept for `{importer}`: {names}",
     },
+    "finding.wildcard.note.any_reader": {
+        Lang.ES: "se conservan todos: `{module}` se usa entero en otro sitio o a través de un "
+        "import con asterisco cuyos nombres no se pueden saber, así que cualquiera de sus "
+        "nombres puede leerse",
+        Lang.EN: "all kept: `{module}` is used by itself elsewhere or through a star import "
+        "whose names cannot be known, so any of its names may be read",
+    },
     "finding.wildcard.note.elsewhere": {
         Lang.ES: "los define `{origin}`: {names}",
         Lang.EN: "defined in `{origin}`: {names}",

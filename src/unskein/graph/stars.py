@@ -20,6 +20,8 @@ LINE_SEPARATOR = ":"
 NAME_SEPARATOR = "."
 KIND_MODULE = "module"
 KIND_SELF = "self"
+# Needer of the names a module keeps because it is used by itself: any may be read.
+ANY_READER = ""
 
 
 class WildcardAction(StrEnum):
@@ -46,7 +48,8 @@ class WildcardFix:
         action: What to do with it.
         names: Names the explicit import must list, sorted.
         kept: Those of them the importer never reads: other modules need them through it.
-        kept_for: (module that needs it, name) for each kept name, sorted.
+        kept_for: (module that needs it, name) for each kept name, sorted; the module is
+            ``ANY_READER`` when the importer is used by itself, so any name may be read.
         defined_elsewhere: (origin module, name) of names the star-imported module only
             passes on, sorted.
         external: Names that reach it from a third-party import, sorted.
@@ -124,7 +127,9 @@ class _Context:
 
 
 def _providers(
-    statements: list[Star], brings: Mapping[str, frozenset[str] | None]
+    statements: list[Star],
+    brings: Mapping[str, frozenset[str] | None],
+    shadowed: Collection[str] = (),
 ) -> dict[str, list[Star]]:
     """Return, for each name, every star statement of a module that brings it.
 
@@ -135,6 +140,7 @@ def _providers(
     Args:
         statements: The module's star statements, in code order.
         brings: Names each star-imported module brings.
+        shadowed: Names the module rebinds for good after its stars: none provides them.
 
     Returns:
         The statements that bring each name.
@@ -142,7 +148,8 @@ def _providers(
     providers: defaultdict[str, list[Star]] = defaultdict(list)
     for statement in statements:
         for name in brings.get(statement[1]) or ():
-            providers[name].append(statement)
+            if name not in shadowed:
+                providers[name].append(statement)
     return providers
 
 
@@ -169,7 +176,7 @@ def _initial_demand(
     needer: dict[tuple[str, str], str] = {}
     opaque: set[str] = set()
     for module in result.modules:
-        demand[module.name].update(module.star_reads)
+        demand[module.name].update(module.stars.reads)
         for edge in module.imports:
             if edge.is_external:
                 continue
@@ -184,7 +191,9 @@ def _initial_demand(
                 opaque.add(base)
     for name in opaque:
         for _, base in stars.get(name, []):
-            demand[name].update(brings.get(base) or ())
+            for brought in brings.get(base) or ():
+                demand[name].add(brought)
+                needer.setdefault((name, brought), ANY_READER)
     return demand, needer
 
 
@@ -204,7 +213,12 @@ def _demand(
         The needed names per module, the first module needing each (module, name) through
         someone else, and the star statements that bring each name, per module.
     """
-    providers = {name: _providers(statements, brings) for name, statements in stars.items()}
+    by_name = {module.name: module for module in result.modules}
+    providers = {}
+    for name, statements in stars.items():
+        module = by_name.get(name)
+        shadowed = module.stars.shadowed if module is not None else ()
+        providers[name] = _providers(statements, brings, shadowed)
     demand, needer = _initial_demand(result, stars, brings)
     changed = True
     while changed:
@@ -292,7 +306,7 @@ def _fix(module: ModuleInfo, statement: Star, context: _Context) -> WildcardFix:
     )
     if not names:
         return WildcardFix(location, module.name, WildcardAction.REMOVE)
-    reads = set(module.star_reads)
+    reads = set(module.stars.reads)
     kept = tuple(name for name in names if name not in reads)
     kept_for = tuple(
         sorted((context.needer.get((module.name, name), module.name), name) for name in kept)
@@ -330,7 +344,7 @@ def summarize_wildcards(result: ParseResult, scripts: Collection[str]) -> list[W
     for module in result.modules:
         if not module.is_packaged or module.name in scripts:
             continue
-        for line, base in module.wildcards:
+        for line, base in module.stars.statements:
             if base == module.name:
                 if not module.declares_all and not module.has_dynamic_all:
                     location = _location(module, line, result.project_root)

@@ -1076,3 +1076,19 @@ def test_one_name_reads_in_the_singular(make_project) -> None:
 def test_the_recommendation_warns_when_tests_are_not_analyzed() -> None:
     report = render(STAR_ROOT, analyzed(STAR_ROOT))
     assert "--include-tests" in report.split("### Wildcard import")[1]
+
+
+def test_a_module_used_by_itself_keeps_every_name_and_says_why(make_project) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/b.py": "X = 1\nY = 2\n",
+            "app/m.py": "from app.b import *\n",
+            "app/user.py": "import app.m\n\n\ndef f(handler):\n    return handler(app.m)\n",
+        }
+    )
+    report = render(root, analyzed(root))
+    assert (
+        "`from app.b import X, Y` (all kept: `app.m` is used by itself elsewhere or through "
+        "a star import whose names cannot be known, so any of its names may be read)"
+    ) in report

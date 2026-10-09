@@ -237,6 +237,24 @@ class DistributionInfo:
     groups: OptionalDependencies = ()
 
 
+@dataclass(frozen=True, slots=True)
+class StarImports:
+    """A module's star imports outside a package facade, and what decides their fix.
+
+    Attributes:
+        statements: Star imports of project modules (the module itself included), as
+            (line, imported module), in code order.
+        reads: Names the module may read (see ``collect_read_names``), sorted; empty
+            without statements.
+        shadowed: Names the module rebinds for good after its last star import, unread
+            before (see ``shadowed_after``), sorted: no star provides them.
+    """
+
+    statements: tuple[tuple[int, str], ...] = ()
+    reads: tuple[str, ...] = ()
+    shadowed: tuple[str, ...] = ()
+
+
 @dataclass(slots=True)
 class ModuleInfo:
     """A parsed project module and the imports it makes.
@@ -254,10 +272,7 @@ class ModuleInfo:
             ``class``, assignments), not through an import, sorted.
         distribution: Name of the distribution that ships the module; None when none
             with a name does.
-        wildcards: Star imports outside a package facade of project modules (the module
-            itself included), as (line, imported module), in code order.
-        star_reads: Names the module may read, only for modules with wildcards (see
-            ``collect_read_names``), sorted.
+        stars: Its star imports outside a package facade and what decides their fix.
         has_dynamic_all: Whether its ``__all__`` cannot be read, so a star import of it
             brings unknown names.
     """
@@ -271,8 +286,7 @@ class ModuleInfo:
     is_packaged: bool = True
     distribution: str | None = None
     defined_names: tuple[str, ...] = ()
-    wildcards: tuple[tuple[int, str], ...] = ()
-    star_reads: tuple[str, ...] = ()
+    stars: StarImports = field(default_factory=StarImports)
     has_dynamic_all: bool = False
 
 
