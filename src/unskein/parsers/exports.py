@@ -10,6 +10,8 @@ PRIVATE_PREFIX = "_"
 MODULE_LEVEL_BLOCKS = ("body", "orelse", "handlers", "finalbody")
 DEFINITION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
+IMPORT_NODES = (ast.Import, ast.ImportFrom)
+
 
 @dataclass(frozen=True, slots=True)
 class ModuleExports:
@@ -20,11 +22,14 @@ class ModuleExports:
         declares_all: Whether they come from a literal ``__all__``.
         bound_names: Every name the module binds at module level (private ones and
             names left out of ``__all__`` included), sorted.
+        defined_names: Those of them the module defines itself (``def``, ``class``,
+            assignments), not through an import, sorted.
     """
 
     names: tuple[str, ...]
     declares_all: bool
     bound_names: tuple[str, ...] = ()
+    defined_names: tuple[str, ...] = ()
 
 
 def _module_level_statements(tree: ast.Module) -> Iterator[ast.stmt]:
@@ -147,13 +152,24 @@ def module_exports(tree: ast.Module) -> ModuleExports:
         tree: Parsed module.
 
     Returns:
-        The exposed names, sorted, whether they come from ``__all__``, and every bound name.
+        The exposed names, sorted, whether they come from ``__all__``, every bound name and
+        the names it defines itself.
     """
     statements = list(_module_level_statements(tree))
     names = {name for node in statements for name in _bound_names(node)}
     bound = tuple(sorted(names))
+    defined = tuple(
+        sorted(
+            {
+                name
+                for node in statements
+                if not isinstance(node, IMPORT_NODES)
+                for name in _bound_names(node)
+            }
+        )
+    )
     declared = _literal_all(statements)
     if declared is not None:
-        return ModuleExports(tuple(sorted(set(declared))), True, bound)
+        return ModuleExports(tuple(sorted(set(declared))), True, bound, defined)
     public = {name for name in names if not name.startswith(PRIVATE_PREFIX)}
-    return ModuleExports(tuple(sorted(public)), False, bound)
+    return ModuleExports(tuple(sorted(public)), False, bound, defined)

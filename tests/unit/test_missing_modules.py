@@ -85,3 +85,28 @@ def test_a_binding_that_comes_from_the_missing_import_is_not_a_definition(
 
 def test_disabled_findings_hide_rule_10() -> None:
     assert _missing(FIXTURE, FindingsConfig(enabled=False)) == []
+
+
+def test_stubs_and_compiled_extensions_are_not_missing(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/a.py": "def f():\n    from app._native import Handle\n    return Handle\n",
+            "app/_native.pyi": "class Handle: ...\n",
+            "app/b.py": "def g():\n    from app.fast import go\n    return go\n",
+            "app/fast.cpython-312-x86_64-linux-gnu.so": "",
+        }
+    )
+    assert _missing(root) == []
+
+
+def test_names_bound_by_imports_are_not_definitions(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/alias.py": "from json import JSONDecoder as Tokenizer\n",
+            "app/a.py": "def f():\n    from app.gone import Tokenizer\n    return Tokenizer\n",
+        }
+    )
+    (finding,) = _missing(root)
+    assert finding.evidence["fix"] == "restore_or_remove"

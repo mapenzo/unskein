@@ -607,6 +607,7 @@ def parse_file(
         exports.declares_all,
         exports.bound_names,
         is_packaged=name not in index.unpackaged,
+        defined_names=exports.defined_names,
     )
     return FileParseResult(module, collector.re_exports, collector.warnings)
 

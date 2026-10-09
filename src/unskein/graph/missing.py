@@ -3,6 +3,7 @@
 from collections import defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from unskein.graph.distributions import ImportUse, import_use, relative_path
 from unskein.graph.findings import Evidence, Finding, FindingKind
@@ -13,6 +14,12 @@ LIST_SEPARATOR = ", "
 FIX_IMPORT_FROM = "import_from"
 FIX_RESTORE_OR_REMOVE = "restore_or_remove"
 BREAKING_USES = (ImportUse.REQUIRED, ImportUse.LAZY)
+NAME_SEPARATOR = "."
+PACKAGE_INIT_FILE = "__init__.py"
+# A module with no .py source can still exist: a type stub or a compiled extension.
+STUB_SUFFIX = ".pyi"
+STUB_INIT = "__init__.pyi"
+COMPILED_SUFFIXES = (".so", ".pyd")
 
 
 @dataclass(slots=True)
@@ -35,28 +42,73 @@ class _Missing:
 
 
 def _definitions(result: ParseResult) -> dict[str, list[str]]:
-    """Index which modules bind each name at module level, by name.
+    """Index which modules define each name themselves, by name.
 
-    A module does not define a name it imports from a module that does not exist:
-    that binding would fail too.
+    A name bound by an import (``from json import JSONDecoder as Tokenizer``) is not a
+    definition: suggesting that module would point at an alias, or at another library.
 
     Args:
         result: Parsed project.
 
     Returns:
-        The modules, sorted, that bind each name.
+        The modules, sorted, that define each name with ``def``, ``class`` or an assignment.
     """
     defined: defaultdict[str, list[str]] = defaultdict(list)
     for module in sorted(result.modules, key=lambda m: m.name):
-        broken = {
-            edge.symbol_name
-            for edge in module.imports
-            if edge.requested is not None and edge.symbol_name is not None
-        }
-        for name in module.bound_names:
-            if name not in broken:
-                defined[name].append(module.name)
+        for name in module.defined_names:
+            defined[name].append(module.name)
     return defined
+
+
+def _package_directory(name: str, result: ParseResult) -> Path | None:
+    """Return the directory of a package, also of a namespace package with no file.
+
+    Args:
+        name: Dotted name of an existing package.
+        result: Parsed project.
+
+    Returns:
+        Its directory, or None when it is a plain module (it cannot hold submodules).
+    """
+    depth = len(name.split(NAME_SEPARATOR))
+    for module in result.modules:
+        if module.name == name:
+            is_facade = module.file_path.name == PACKAGE_INIT_FILE
+            return module.file_path.parent if is_facade else None
+        if module.name.startswith(f"{name}{NAME_SEPARATOR}"):
+            below = len(module.name.split(NAME_SEPARATOR)) - depth
+            if module.file_path.name == PACKAGE_INIT_FILE:
+                below += 1
+            return module.file_path.parents[below - 1]
+    return None
+
+
+def _exists_without_source(name: str, closest: str, result: ParseResult) -> bool:
+    """Tell whether a module that has no ``.py`` file exists as a stub or a compiled binary.
+
+    Args:
+        name: Dotted name the import asked for.
+        closest: Its closest existing ancestor.
+        result: Parsed project.
+
+    Returns:
+        True when a ``.pyi`` stub, an ``__init__.pyi`` or a compiled extension (``.so``,
+        ``.pyd``) is there.
+    """
+    directory = _package_directory(closest, result)
+    if directory is None:
+        return False
+    rest = name.split(NAME_SEPARATOR)[len(closest.split(NAME_SEPARATOR)) :]
+    candidate = directory.joinpath(*rest)
+    if candidate.with_suffix(STUB_SUFFIX).is_file() or (candidate / STUB_INIT).is_file():
+        return True
+    if not candidate.parent.is_dir():
+        return False
+    stem = f"{candidate.name}."
+    return any(
+        path.name.startswith(stem) and path.suffix in COMPILED_SUFFIXES
+        for path in candidate.parent.iterdir()
+    )
 
 
 def _collect(result: ParseResult, scripts: Collection[str]) -> dict[str, _Missing]:
@@ -96,7 +148,8 @@ def find_missing_modules(result: ParseResult, scripts: Collection[str]) -> list[
     """Apply rule 10: packaged code imports a module that does not exist, unguarded.
 
     Imports under ``TYPE_CHECKING``, guarded ones and those of unpackaged code stay
-    warnings only. The fix comes from evidence: a module that defines the imported name,
+    warnings only, and so do modules that exist without a ``.py`` file (a stub or a
+    compiled extension). The fix comes from evidence: a module that defines the imported name,
     or the statement that none does.
 
     Args:
@@ -109,7 +162,7 @@ def find_missing_modules(result: ParseResult, scripts: Collection[str]) -> list[
     definitions = _definitions(result)
     findings = []
     for name, entry in sorted(_collect(result, scripts).items()):
-        if entry.first is None:
+        if entry.first is None or _exists_without_source(name, entry.closest, result):
             continue
         evidence: Evidence = {
             "required": entry.counts[ImportUse.REQUIRED],

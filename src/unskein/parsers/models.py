@@ -201,6 +201,8 @@ class ModuleInfo:
         bound_names: Every name the module binds at module level, sorted.
         is_packaged: Whether a distribution ships the module; unpackaged modules that
             nothing imports are scripts.
+        defined_names: Names the module defines itself at module level (``def``,
+            ``class``, assignments), not through an import, sorted.
         distribution: Name of the distribution that ships the module; None when none
             with a name does.
     """
@@ -213,6 +215,7 @@ class ModuleInfo:
     bound_names: tuple[str, ...] = ()
     is_packaged: bool = True
     distribution: str | None = None
+    defined_names: tuple[str, ...] = ()
 
 
 # Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.
