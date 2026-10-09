@@ -782,3 +782,22 @@ def test_distributions_section_does_not_depend_on_findings(tmp_path: Path) -> No
     parsed = adapter.resolve_indirection(adapter.parse(sorted(tmp_path.rglob("*.py")), tmp_path))
     result = analyze(parsed, FindingsConfig(enabled=False))
     assert "## Distributions" in render(tmp_path, result)
+
+
+def test_undeclared_dependency_listed_only_in_a_group_says_so_en(tmp_path: Path) -> None:
+    files = {
+        "pyproject.toml": '[project]\nname = "a"\ndependencies = []\n'
+        '[dependency-groups]\ndev = ["b"]\n',
+        "a/__init__.py": "import b_pkg\n",
+        "bdist/pyproject.toml": '[project]\nname = "b"\nversion = "1"\n'
+        '[tool.uv.build-backend]\nmodule-root = ""\nmodule-name = "b_pkg"\n',
+        "bdist/b_pkg/__init__.py": "",
+    }
+    for relative, content in files.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(content)
+    report = render(tmp_path, analyzed(tmp_path))
+    assert (
+        "- `a` → `b` (1 required, 0 lazy, 0 guarded; first: `a/__init__.py:1`; "
+        "only in group `dev`, never installed with the package)" in report
+    )

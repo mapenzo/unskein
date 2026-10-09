@@ -545,6 +545,10 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.EN: "{required} required, {lazy} lazy, {guarded} guarded",
     },
     "finding.first": {Lang.ES: "primero: `{first}`", Lang.EN: "first: `{first}`"},
+    "finding.only_in_groups": {
+        Lang.ES: "solo en el grupo {groups}, que nunca se instala con el paquete",
+        Lang.EN: "only in group {groups}, never installed with the package",
+    },
     "finding.fix": {Lang.ES: "Arreglo", Lang.EN: "Fix"},
     "finding.status.required": {Lang.ES: "requerida", Lang.EN: "required"},
     "finding.status.optional": {

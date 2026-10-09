@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (each edge marked required, optional, undeclared or unknown, with the edges to cut).
   Imports inside a `try` that catches import errors (and does not re-raise), or
   `contextlib.suppress`, count as optional by contract.
+  A dependency listed only in a dependency group counts as undeclared: groups are never
+  installed with the package. Poetry manifests are read too.
 - A Distributions section: what each distribution really imports from the others and
   whether it can be installed alone.
 - Warnings for declared dependencies without a valid name and for two manifests that

@@ -67,8 +67,9 @@ class DependencyStatus(StrEnum):
 
     Attributes:
         REQUIRED: Declared in its required dependencies.
-        OPTIONAL: Declared only in extras or dependency groups.
-        UNDECLARED: Not declared anywhere.
+        OPTIONAL: Declared only in extras.
+        UNDECLARED: Not declared as a dependency (at most listed in a dependency group,
+            which is never installed with the package).
         UNKNOWN: Its dependencies cannot be read (dynamic, ``setup.py`` only).
     """
 
@@ -126,7 +127,8 @@ class DistributionEdge:
         target: Imported distribution.
         counts: Uses behind the edge.
         status: What the source declares about the target.
-        extras: Extras or groups that declare the target, sorted, when optional.
+        extras: Extras that declare the target, sorted, when optional.
+        groups: Dependency groups that list the target, sorted, when undeclared.
     """
 
     source: str
@@ -134,6 +136,7 @@ class DistributionEdge:
     counts: UseCounts
     status: DependencyStatus
     extras: tuple[str, ...] = ()
+    groups: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,7 +360,9 @@ def _common_directory(paths: list[Path], root: Path | None) -> str:
     return f"{common}{PATH_SEPARATOR}"
 
 
-def _status(info: DistributionInfo, target: str) -> tuple[DependencyStatus, tuple[str, ...]]:
+def _status(
+    info: DistributionInfo, target: str
+) -> tuple[DependencyStatus, tuple[str, ...], tuple[str, ...]]:
     """Return what a distribution declares about another one.
 
     Args:
@@ -365,16 +370,18 @@ def _status(info: DistributionInfo, target: str) -> tuple[DependencyStatus, tupl
         target: Name of the imported distribution.
 
     Returns:
-        The status, plus the extras or groups that declare it when optional.
+        The status, the extras that declare it when optional, and the dependency groups
+        that list it when undeclared.
     """
     if info.requires is None:
-        return DependencyStatus.UNKNOWN, ()
+        return DependencyStatus.UNKNOWN, (), ()
     if target in info.requires:
-        return DependencyStatus.REQUIRED, ()
+        return DependencyStatus.REQUIRED, (), ()
     extras = tuple(name for name, names in info.optional if target in names)
     if extras:
-        return DependencyStatus.OPTIONAL, extras
-    return DependencyStatus.UNDECLARED, ()
+        return DependencyStatus.OPTIONAL, extras, ()
+    groups = tuple(name for name, names in info.groups if target in names)
+    return DependencyStatus.UNDECLARED, (), groups
 
 
 def _requirement(target: DistributionInfo | None, name: str, style: ManifestStyle) -> str:
@@ -460,6 +467,8 @@ def _undeclared(edges: list[DistributionEdge], context: _Context) -> list[Findin
             "table": TABLES[source.style],
             "requirement": _requirement(context.infos.get(edge.target), edge.target, source.style),
         }
+        if edge.groups:
+            evidence["groups"] = LIST_SEPARATOR.join(edge.groups)
         findings.append(
             Finding(FindingKind.UNDECLARED_DEPENDENCY, (edge.source, edge.target), evidence)
         )
@@ -641,8 +650,8 @@ def analyze_distributions(result: ParseResult, scripts: Collection[str]) -> Dist
     edges = []
     for (source, target), counter in sorted(collector.edges.items()):
         if source in infos and target in infos:
-            status, extras = _status(infos[source], target)
-            edges.append(DistributionEdge(source, target, counter.freeze(), status, extras))
+            status, extras, groups = _status(infos[source], target)
+            edges.append(DistributionEdge(source, target, counter.freeze(), status, extras, groups))
     files = {module.name: module.file_path for module in result.modules}
     uses = []
     for (source, package), counter in sorted(collector.unpackaged.items()):

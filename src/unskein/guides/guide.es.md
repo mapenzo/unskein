@@ -60,8 +60,10 @@ detección.
   de un `try` que captura `ImportError`, `ModuleNotFoundError`, `Exception` o un `except:`
   desnudo y no termina en `raise`, o de `with contextlib.suppress(...)` de esos errores); los protegidos son
   opcionales por contrato y nunca impiden instalarla. Las dependencias declaradas se leen de
-  `[project] dependencies`, sus extras, `[dependency-groups]`, `[tool.poetry]`
-  (dependencias, extras y grupos) y `setup.cfg`; con `dynamic = ["dependencies"]` o solo
+  `[project] dependencies` y sus extras, `[tool.poetry]` (dependencias y extras) y
+  `setup.cfg`. Una dependencia que solo aparece en un grupo de dependencias
+  (`[dependency-groups]`, grupos de Poetry) cuenta como no declarada, porque ningún
+  instalador instala los grupos con el paquete; el hallazgo dice qué grupo la lista. Con `dynamic = ["dependencies"]` o solo
   `setup.py` son desconocidas, y esa distribución nunca origina una dependencia no declarada.
   Dos manifiestos con el mismo nombre dan un aviso, y solo el menos profundo lo conserva.
   Cada hallazgo entre

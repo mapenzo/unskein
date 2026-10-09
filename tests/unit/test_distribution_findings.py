@@ -334,3 +334,21 @@ def test_distribution_values_are_hashable() -> None:
         hash(edge)
     for summary in result.distributions:
         hash(summary)
+
+
+def test_a_dependency_only_in_a_group_is_undeclared_for_installs(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\ndependencies = []\n'
+            '[dependency-groups]\ndev = ["b"]\n',
+            "a/__init__.py": "def f():\n    import b_pkg\n",
+            "bdist/pyproject.toml": '[project]\nname = "b"\nversion = "1"\n'
+            '[tool.uv.build-backend]\nmodule-root = ""\nmodule-name = "b_pkg"\n',
+            "bdist/b_pkg/__init__.py": "",
+        }
+    )
+    result = _analyzed(root)
+    (finding,) = _by_kind(result)[FindingKind.UNDECLARED_DEPENDENCY]
+    assert finding.evidence["groups"] == "dev"
+    (edge,) = result.distribution_edges
+    assert (edge.status, edge.groups) == (DependencyStatus.UNDECLARED, ("dev",))

@@ -171,6 +171,8 @@ class DistributionInfo:
         version: Its literal version; None when dynamic or missing.
         manifest: File that declares its dependencies; None when there is none.
         style: Where that manifest declares required dependencies.
+        groups: Names per dependency group, sorted by group; they do not declare a
+            dependency, since no installer installs them with the package.
     """
 
     name: str
@@ -180,6 +182,7 @@ class DistributionInfo:
     version: str | None
     manifest: Path | None
     style: ManifestStyle = ManifestStyle.PROJECT
+    groups: OptionalDependencies = ()
 
 
 @dataclass(slots=True)

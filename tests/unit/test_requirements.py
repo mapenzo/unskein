@@ -73,10 +73,11 @@ def test_dependency_groups_with_includes(make_project: MakeProject) -> None:
         }
     )
     declared, warnings = _read(root)
-    assert dict(declared.optional)["test"] == frozenset({"pytest", "ruff"})
-    assert dict(declared.optional)["lint"] == frozenset({"ruff"})
-    assert dict(declared.optional)["loop"] == frozenset()
-    assert dict(declared.optional)["bad"] == frozenset()
+    assert declared.optional == ()
+    assert dict(declared.groups)["test"] == frozenset({"pytest", "ruff"})
+    assert dict(declared.groups)["lint"] == frozenset({"ruff"})
+    assert dict(declared.groups)["loop"] == frozenset()
+    assert dict(declared.groups)["bad"] == frozenset()
     assert sorted(w.detail for w in warnings) == ["include-group = loop", "include-group = missing"]
     assert {w.code for w in warnings} == {WarningCode.INVALID_REQUIREMENT}
 
@@ -157,9 +158,7 @@ def test_poetry_dependencies_extras_groups_and_version(make_project: MakeProject
     )
     declared, _ = _read(root)
     assert declared.requires == frozenset({"core"})
-    assert dict(declared.optional) == {
-        "dev": frozenset({"pytest"}),
-        "speed": frozenset({"fast"}),
-    }
+    assert dict(declared.optional) == {"speed": frozenset({"fast"})}
+    assert dict(declared.groups) == {"dev": frozenset({"pytest"})}
     assert declared.version == "2.0"
     assert declared.style is ManifestStyle.POETRY

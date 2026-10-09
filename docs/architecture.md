@@ -353,8 +353,8 @@ de los scripts de todas las distribuciones, no solo de la raíz.
 **Dependencias declaradas** (`parsers/requirements.py`, `read_dependencies`). Una
 distribución cuyo manifiesto declara nombre (`[project] name`, `[tool.poetry] name` o
 `[metadata] name` de `setup.cfg`) lleva un `DistributionInfo`: nombre normalizado PEP 503,
-raíz, `requires`, `optional` (tupla ordenada de pares extra → nombres, inmutable y
-serializable), versión literal, manifiesto y `ManifestStyle` (dónde se declaran las
+raíz, `requires`, `optional` y `groups` (tuplas ordenadas de pares extra o grupo →
+nombres, inmutables y serializables; los grupos no declaran dependencias), versión literal, manifiesto y `ManifestStyle` (dónde se declaran las
 requeridas, que decide la sintaxis del arreglo). Gana `pyproject.toml` con tabla `[project]`
 (`dependencies`, `[project.optional-dependencies]`, `[dependency-groups]` de PEP 735 con
 `include-group`); después `[tool.poetry]` (`dependencies` sin `python` ni las marcadas
@@ -815,7 +815,8 @@ distribuciones con nombre no hace nada.
   a un módulo parseado de B ≠ A suma en A → B, con su primera ubicación por uso
   (`ruta:línea` POSIX relativa a la raíz; los módulos se recorren en el orden de esa ruta,
   igual en todas las plataformas). Su `DependencyStatus` sale del manifiesto de A:
-  `REQUIRED`, `OPTIONAL` (con los extras o grupos que la declaran), `UNDECLARED` o `UNKNOWN`
+  `REQUIRED`, `OPTIONAL` (con los extras que la declaran), `UNDECLARED` (con los grupos de
+  dependencias que la listan, si alguno: un grupo nunca se instala con el paquete) o `UNKNOWN`
   (`requires = None`). Un import a código no empaquetado (`is_packaged=False`, ni script ni
   nombrado por ruta) se agrupa por su primer segmento (`UnpackagedUse`), con el directorio
   más profundo que contiene todos sus archivos. Un import a lo que empaqueta una

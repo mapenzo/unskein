@@ -179,6 +179,7 @@ def _distribution_at(directory: Path, warnings: list[ParseWarning]) -> Distribut
             declared.version,
             declared.manifest,
             declared.style,
+            declared.groups,
         )
     return Distribution(directory, import_root, packages, declaration.script_modules, info)
 

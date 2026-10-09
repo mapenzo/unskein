@@ -25,6 +25,7 @@ MIN_PACKAGES_SHOWN = 2
 NOT_MEASURED = "—"
 MIN_DISTRIBUTIONS_SHOWN = 2
 CYCLE_SEPARATOR = " ↔ "
+DETAIL_SEPARATOR = "; "
 # Kinds whose line shows the uses behind an edge between a distribution and its target.
 EDGE_FINDINGS = (
     FindingKind.UNDECLARED_DEPENDENCY,
@@ -595,13 +596,22 @@ def _distribution_finding_line(finding: Finding, result: AnalysisResult, lang: L
     fix = f"  - {t('finding.fix', lang)}: {_fix_text(finding, lang)}"
     if finding.kind in EDGE_FINDINGS:
         source, target = finding.modules
-        first = t("finding.first", lang, first=finding.evidence["first"])
-        return f"- `{source}` → `{target}` ({_uses(finding.evidence, lang)}; {first})\n{fix}"
+        details = [
+            _uses(finding.evidence, lang),
+            t("finding.first", lang, first=finding.evidence["first"]),
+        ]
+        if "groups" in finding.evidence:
+            groups = _backticked(str(finding.evidence["groups"]).split(LIST_SEPARATOR))
+            details.append(t("finding.only_in_groups", lang, groups=groups))
+        return f"- `{source}` → `{target}` ({DETAIL_SEPARATOR.join(details)})\n{fix}"
     members = set(finding.modules)
     lines = [f"- {CYCLE_SEPARATOR.join(f'`{member}`' for member in finding.modules)}"]
     for edge in result.distribution_edges:
         if edge.source in members and edge.target in members:
             status = t(f"finding.status.{edge.status}", lang, extras=_backticked(edge.extras))
+            if edge.groups:
+                groups = t("finding.only_in_groups", lang, groups=_backticked(edge.groups))
+                status = f"{status} ({groups})"
             uses = t(
                 "finding.uses",
                 lang,

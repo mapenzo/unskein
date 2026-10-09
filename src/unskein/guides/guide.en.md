@@ -57,8 +57,10 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   `try` that catches `ImportError`, `ModuleNotFoundError`, `Exception` or a bare `except:`
   and does not end in `raise`, or of `with contextlib.suppress(...)` for those errors); guarded imports are optional by
   contract and never prevent installing it. Declared dependencies are read from
-  `[project] dependencies`, its extras, `[dependency-groups]`, `[tool.poetry]`
-  (dependencies, extras and groups) and `setup.cfg`; with `dynamic = ["dependencies"]` or
+  `[project] dependencies` and its extras, `[tool.poetry]` (dependencies and extras) and
+  `setup.cfg`. A dependency listed only in a dependency group (`[dependency-groups]`, Poetry
+  groups) counts as undeclared, since no installer installs groups with the package; the
+  finding says which group lists it. With `dynamic = ["dependencies"]` or
   only `setup.py` they are unknown, and that distribution is never the source of an
   undeclared dependency. Two manifests with the same name give a warning, and only the
   shallower one keeps it. Each finding between

@@ -45,11 +45,12 @@ class DeclaredDependencies:
         requires: Names of its required dependencies; None when unknown (dynamic,
             ``setup.py`` only, or no readable declaration).
         optional: Names per extra (``[project.optional-dependencies]``,
-            ``[options.extras_require]``, ``[tool.poetry.extras]``) and per dependency
-            group, sorted by extra.
+            ``[options.extras_require]``, ``[tool.poetry.extras]``), sorted by extra.
         version: Its literal version; None when dynamic or missing.
         manifest: File that declares them; None when there is none.
         style: Where the manifest declares required dependencies.
+        groups: Names per dependency group (PEP 735, Poetry groups), sorted by group;
+            never installed with the package, so they do not declare a dependency.
     """
 
     requires: frozenset[str] | None = None
@@ -57,6 +58,7 @@ class DeclaredDependencies:
     version: str | None = None
     manifest: Path | None = None
     style: ManifestStyle = ManifestStyle.PROJECT
+    groups: OptionalDependencies = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +179,8 @@ def _as_list(value: object) -> list:
 def _from_project(project: dict, data: dict, source: _Source) -> DeclaredDependencies:
     """Read ``[project]`` dependencies, extras and version, plus ``[dependency-groups]``.
 
+    Groups are kept apart from extras: no installer installs them with the package.
+
     Args:
         project: The ``[project]`` table.
         data: The whole parsed ``pyproject.toml``.
@@ -195,11 +199,12 @@ def _from_project(project: dict, data: dict, source: _Source) -> DeclaredDepende
         for extra in sorted(extras):
             optional[extra] = _names(_as_list(extras[extra]), source)
     groups = data.get("dependency-groups")
-    if isinstance(groups, dict):
-        optional.update(_GroupResolver(groups, source).resolve_all())
+    resolved = _GroupResolver(groups, source).resolve_all() if isinstance(groups, dict) else {}
     version = project.get("version")
     literal = version if isinstance(version, str) and DYNAMIC_VERSION not in dynamic else None
-    return DeclaredDependencies(requires, _frozen(optional), literal, source.manifest)
+    return DeclaredDependencies(
+        requires, _frozen(optional), literal, source.manifest, groups=_frozen(resolved)
+    )
 
 
 def _frozen(optional: dict[str, frozenset[str]]) -> OptionalDependencies:
@@ -252,18 +257,24 @@ def _from_poetry(poetry: dict, manifest: Path) -> DeclaredDependencies:
             optional[extra] = frozenset(
                 normalize_name(name) for name in _as_list(names) if isinstance(name, str)
             )
-    groups = poetry.get("group")
-    if isinstance(groups, dict):
-        for group, table in groups.items():
+    groups: dict[str, frozenset[str]] = {}
+    tables = poetry.get("group")
+    if isinstance(tables, dict):
+        for group, table in tables.items():
             dependencies = table.get("dependencies") if isinstance(table, dict) else None
-            optional[group] = _poetry_names(dependencies, include_optional=True)
+            groups[group] = _poetry_names(dependencies, include_optional=True)
     if POETRY_LEGACY_DEV in poetry:
         legacy = _poetry_names(poetry[POETRY_LEGACY_DEV], include_optional=True)
-        optional[POETRY_DEV_GROUP] = optional.get(POETRY_DEV_GROUP, frozenset()) | legacy
+        groups[POETRY_DEV_GROUP] = groups.get(POETRY_DEV_GROUP, frozenset()) | legacy
     version = poetry.get("version")
     literal = version if isinstance(version, str) else None
     return DeclaredDependencies(
-        requires, _frozen(optional), literal, manifest, ManifestStyle.POETRY
+        requires,
+        _frozen(optional),
+        literal,
+        manifest,
+        ManifestStyle.POETRY,
+        _frozen(groups),
     )
 
 
