@@ -75,6 +75,22 @@ class _Declaration:
     native_declarations: tuple[tuple[str, int | None], ...] = ()
 
 
+def relative_path(path: Path, root: Path | None) -> str:
+    """Return a path as POSIX, relative to the project root when it lies under it.
+
+    Args:
+        path: File path.
+        root: Absolute project directory, if known.
+
+    Returns:
+        The relative POSIX path, or the path as given.
+    """
+    absolute = _absolute(path)
+    if root is not None and absolute.is_relative_to(root):
+        return absolute.relative_to(root).as_posix()
+    return path.as_posix()
+
+
 def _absolute(path: Path) -> Path:
     """Return an absolute path without resolving symlinks.
 

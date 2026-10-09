@@ -4,8 +4,9 @@ from collections import defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass, field
 
-from unskein.graph.distributions import ImportUse, import_use, relative_path
+from unskein.graph.distributions import ImportUse, import_use
 from unskein.graph.findings import Evidence, Finding, FindingKind
+from unskein.parsers.layout import relative_path
 from unskein.parsers.models import ParseResult
 
 MAX_IMPORTERS_SHOWN = 5

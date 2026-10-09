@@ -81,8 +81,10 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   a `.pyi` are types, not dependencies). `from pkg import _native` and
   `from pkg._native import X` reach the same node, with no warning. The **Native boundary**
   section says, per module, what proves it, how packaged code uses it (required / lazy /
-  guarded / type-only) and whether it works without it. Excluded files (`.gitignore`,
-  `.unskeinignore`, `--exclude`) do not count as evidence.
+  guarded / type-only) and whether it works without it; a binary nothing imports is not
+  listed. `.gitignore` does not apply to stubs and binaries (a `.so` built in place is
+  usually git-ignored, yet it exists); `.unskeinignore` and `--exclude` do. A name under
+  compiled code is never reported as a missing module: the extension may provide it.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.
@@ -125,8 +127,10 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     module that defines the symbol, or says that none does.
   - **Optional extension used as required**: the code guards the import of a compiled (or
     stub-only) module in one place, because it expects it can be missing, and imports it
-    unguarded elsewhere, where it raises `ImportError` when it is missing. It lists every
-    unguarded `path:line`; the fix is to guard them the same way or to drop the fallback.
+    unguarded elsewhere, where it raises `ImportError` when it is missing. It lists the
+    unguarded `path:line` (up to five, with the total); the fix is to guard them the same
+    way or to drop the fallback. A name taken from a facade that imports it in such a `try`
+    counts as guarded too.
     It does not follow control flow: an earlier check (`if available():`) is not seen.
   - **Cycle between distributions**: distributions that import each other; it says which
     edge to cut.

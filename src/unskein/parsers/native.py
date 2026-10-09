@@ -1,11 +1,10 @@
 """Modules with no ``.py`` source: stubs, compiled extensions and what proves they exist."""
 
-import os
 from collections import defaultdict
 from collections.abc import Collection, Iterable
 from pathlib import Path
 
-from unskein.parsers.layout import PYPROJECT_NAME, ProjectLayout
+from unskein.parsers.layout import PYPROJECT_NAME, ProjectLayout, relative_path
 from unskein.parsers.models import VirtualKind, VirtualModule
 
 PYTHON_SUFFIX = ".py"
@@ -45,22 +44,6 @@ def _as_source_path(path: Path) -> Path:
     return path.with_name(f"{stem}{PYTHON_SUFFIX}")
 
 
-def _relative(path: Path, root: Path) -> str:
-    """Return a path as POSIX, relative to the project root when it lies under it.
-
-    Args:
-        path: File path.
-        root: Absolute project directory.
-
-    Returns:
-        The relative POSIX path, or the path itself as POSIX.
-    """
-    absolute = Path(os.path.abspath(path))
-    return (
-        absolute.relative_to(root).as_posix() if absolute.is_relative_to(root) else path.as_posix()
-    )
-
-
 def find_native_modules(
     layout: ProjectLayout, evidence: Iterable[Path], sources: Collection[str]
 ) -> tuple[dict[str, VirtualModule], dict[str, str]]:
@@ -88,14 +71,14 @@ def find_native_modules(
             # A dangling symlink proves nothing.
             continue
         module = layout.name_of(_as_source_path(path))
-        proofs[module.name].add(_relative(path, layout.root))
+        proofs[module.name].add(relative_path(path, layout.root))
         if path.suffix in COMPILED_SUFFIXES:
             compiled.add(module.name)
         packaged[module.name] = packaged.get(module.name, False) or module.is_packaged
         if module.distribution is not None:
             distributions[module.name] = module.distribution
     for distribution in layout.distributions:
-        manifest = _relative(distribution.root / PYPROJECT_NAME, layout.root)
+        manifest = relative_path(distribution.root / PYPROJECT_NAME, layout.root)
         for name, line in distribution.native_declarations:
             proofs[name].add(f"{manifest}{LINE_SEPARATOR}{line}" if line else manifest)
             compiled.add(name)

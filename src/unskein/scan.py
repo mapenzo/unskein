@@ -28,7 +28,6 @@ from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
 from unskein.parsers.discovery import load_evidence_spec, load_exclude_spec
 from unskein.parsers.models import ParseResult
-from unskein.parsers.native import PYTHON_SUFFIX
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.pipeline import parse_all
 from unskein.report.markdown import AIStatus
@@ -176,7 +175,7 @@ def parse_sources(context: ScanContext) -> ParseResult:
     files = sorted(
         adapter.discover_files(root, spec, config.follow_symlinks, evidence_spec=evidence)
     )
-    sources = sum(1 for path in files if path.suffix == PYTHON_SUFFIX)
+    sources = sum(1 for path in files if path.suffix in adapter.file_extensions)
     if not sources:
         raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
     logger.debug("Discovered %d Python files under %s", sources, root)

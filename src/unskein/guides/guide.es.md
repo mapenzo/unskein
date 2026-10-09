@@ -84,8 +84,10 @@ detección.
   tipos, no dependencias). `from pkg import _native` y `from pkg._native import X` llevan
   al mismo nodo, sin aviso. La sección **Frontera nativa** dice, por módulo, qué lo
   prueba, cómo lo usa el código empaquetado (requeridos / perezosos / protegidos / solo
-  tipos) y si funciona sin él. Los archivos excluidos (`.gitignore`, `.unskeinignore`,
-  `--exclude`) no cuentan como prueba.
+  tipos) y si funciona sin él; un binario que nadie importa no aparece. `.gitignore` no se
+  aplica a stubs ni binarios (un `.so` compilado en su sitio suele estar ignorado por git y
+  sí existe); `.unskeinignore` y `--exclude`, sí. Un nombre bajo código compilado nunca se
+  informa como módulo inexistente: la extensión puede aportarlo.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto
@@ -131,9 +133,11 @@ detección.
     El arreglo nombra el módulo que define el símbolo, o dice que ninguno lo define.
   - **Extensión opcional usada como obligatoria**: el código protege el import de un
     módulo compilado (o solo stub) en un sitio, porque cuenta con que puede faltar, y lo
-    importa sin protección en otros, donde lanza `ImportError` si falta. Lista cada
-    `ruta:línea` sin protección; el arreglo es protegerlas igual o quitar el respaldo. No
-    sigue el flujo de control: una comprobación previa (`if disponible():`) no se ve.
+    importa sin protección en otros, donde lanza `ImportError` si falta. Lista las
+    `ruta:línea` sin protección (hasta cinco, con el total); el arreglo es protegerlas igual
+    o quitar el respaldo. Un nombre tomado de una fachada que lo importa en ese `try` también
+    cuenta como protegido. No sigue el flujo de control: una comprobación previa
+    (`if available():`) no se ve.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 

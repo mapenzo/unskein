@@ -27,8 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without it.
 - Finding: optional extension used as required. The code guards the import of a compiled
   module in one place and imports it unguarded elsewhere, where it raises `ImportError`
-  when the extension is missing. It lists every unguarded line; the fix is to guard them
-  the same way or to drop the fallback.
+  when the extension is missing. It lists the unguarded lines (up to five, with the total);
+  the fix is to guard them the same way or to drop the fallback.
 - Monorepos without configuration: every `pyproject.toml`, `setup.py` or `setup.cfg`
   marks a distribution, and its files take the name Python imports them by (uv,
   maturin, hatch, poetry and setuptools declarations are read; `setup.py` is never
@@ -56,7 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The module count of the report and of the AI context counts parsed `.py` modules only;
   namespace packages, compiled extensions and stubs are counted apart.
 - `discover_files` also yields `.pyi`, `.so`, `.pyd` and `.pyx` files (they are named, never
-  parsed); excluded ones do not count as evidence.
+  parsed). `.gitignore` does not apply to them (an in-place build is usually git-ignored);
+  `.unskeinignore` and `--exclude` do.
+- A name taken from a package facade that imports it inside a `try` for import errors now
+  counts as a guarded import for its users too (the facade falls back instead of failing).
 - `import a.b` followed by `a.b.c.x` now depends on `a.b.c`, the module really used,
   and `import a` plus `import a.b` are analyzed together (they bind the same `a`).
 - In projects with nested manifests, module names follow the distribution that ships

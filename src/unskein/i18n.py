@@ -623,11 +623,13 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
     "report.native": {Lang.ES: "Frontera nativa", Lang.EN: "Native boundary"},
     "report.native_intro": {
         Lang.ES: "Módulos sin código Python legible: extensiones compiladas y módulos que solo "
-        "tienen stub `.pyi`. Los usos cuentan solo el código empaquetado (sin tests ni "
-        "scripts): requeridos / perezosos / protegidos / solo tipos.",
+        "tienen stub `.pyi`, que algún módulo importa. Ca como en el resto del informe; los "
+        "usos cuentan solo el código empaquetado (sin tests ni scripts): requeridos / "
+        "perezosos / protegidos / solo tipos.",
         Lang.EN: "Modules with no readable Python code: compiled extensions and modules that "
-        "only have a `.pyi` stub. Uses count only packaged code (no tests or scripts): "
-        "required / lazy / guarded / type-only.",
+        "only have a `.pyi` stub, imported by some module. Ca as in the rest of the report; "
+        "uses count only packaged code (no tests or scripts): required / lazy / guarded / "
+        "type-only.",
     },
     "report.native_note": {
         Lang.ES: "Lo que importa el código compilado no se ve: su Ce es desconocido, y los "
@@ -862,7 +864,7 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "que puede faltar (PyPy, una plataforma sin wheel, una instalación sin compilador). En "
         "otros sitios lo importa sin protección, y ahí lanza ImportError si falta. unskein no "
         "sigue el flujo de control: comprueba cada línea por si una comprobación previa "
-        "(`if disponible():`) ya la protege.",
+        "(`if available():`) ya la protege.",
         Lang.EN: "The code guards the import of this compiled module in one place: it expects "
         "that it can be missing (PyPy, a platform without a wheel, an install without a "
         "compiler). Elsewhere it imports it unguarded, and there it raises ImportError when it "

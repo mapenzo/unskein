@@ -6,8 +6,9 @@ from dataclasses import dataclass
 
 import networkx as nx
 
-from unskein.graph.distributions import ImportUse, import_use, relative_path
+from unskein.graph.distributions import ImportUse, import_use
 from unskein.graph.findings import Finding, FindingKind
+from unskein.parsers.layout import relative_path
 from unskein.parsers.models import ParseResult, VirtualKind
 
 MAX_LOCATIONS_SHOWN = 5

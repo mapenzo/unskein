@@ -273,11 +273,11 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     for kind, key_prefix, _ in VIRTUAL_COUNT_KEYS:
         count = _virtual_count(result, kind)
         if count:
-            key = "one" if count == 1 else "other"
+            key = _plural_key(count)
             virtual += t(f"{key_prefix}.{key}", lang, count=count)
     scripts = ""
     if result.scripts:
-        key = "one" if len(result.scripts) == 1 else "other"
+        key = _plural_key(len(result.scripts))
         scripts = t(f"report.summary_scripts.{key}", lang, count=len(result.scripts))
     counts = t(
         "report.summary_counts",
@@ -308,7 +308,7 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     if result.hidden_tangles:
         lines.append(_tangle_summary(result.hidden_tangles, lang, "report.summary_hidden"))
     if result.findings:
-        key = "one" if len(result.findings) == 1 else "other"
+        key = _plural_key(len(result.findings))
         lines.append(t(f"report.summary_findings.{key}", lang, count=len(result.findings)))
     if _shows_distributions(result):
         blocked = sum(1 for summary in result.distributions if summary.installable is False)
@@ -490,7 +490,7 @@ def _packages(result: AnalysisResult, lang: Lang) -> list[str]:
     if result.package_edges:
         lines += ["", f"### {t('report.package_edges', lang)}", ""]
         for edge in result.package_edges[:MAX_PACKAGE_EDGES_SHOWN]:
-            key = "one" if edge.imports == 1 else "other"
+            key = _plural_key(edge.imports)
             label = t(f"report.package_edge.{key}", lang, imports=edge.imports)
             lines.append(f"- `{edge.source}` → `{edge.target}` ({label})")
         hidden = len(result.package_edges) - MAX_PACKAGE_EDGES_SHOWN
@@ -630,7 +630,7 @@ def _scripts(result: AnalysisResult, lang: Lang) -> list[str]:
     """
     lines = [f"## {t('report.scripts', lang)}", "", t("report.scripts_intro", lang), ""]
     for group in result.script_groups:
-        key = "one" if group.scripts == 1 else "other"
+        key = _plural_key(group.scripts)
         uses = ", ".join(f"`{use}`" for use in group.uses) or NOT_MEASURED
         lines.append(
             t(
@@ -845,7 +845,7 @@ def _native_works(native: NativeModule, lang: Lang) -> str:
     """
     if native.works_without:
         return t("report.native_works.yes", lang)
-    key = "one" if len(native.unguarded) == 1 else "other"
+    key = _plural_key(len(native.unguarded))
     return t(
         f"report.native_works.no.{key}",
         lang,

@@ -435,8 +435,10 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
     distribución empaqueta todos sus módulos y, si todos son de una misma distribución con
     nombre, la añade a `module_distributions`.
   - **Extensiones compiladas (`COMPILED`) y stubs (`STUB`)** (`parsers/native.py`).
-    `discover_files` recoge en el mismo recorrido, con los mismos excludes, `.pyi`, `.so`,
-    `.pyd` y `.pyx`; `plan_parse` no los parsea: `find_native_modules` los nombra con el
+    `discover_files` recoge en el mismo recorrido `.pyi`, `.so`, `.pyd` y `.pyx`, con los
+    excludes salvo `.gitignore` (`load_evidence_spec`: un binario compilado en su sitio suele
+    estar ignorado por git y sí existe; los directorios se podan igual que siempre). Un
+    enlace simbólico roto no es prueba. `plan_parse` no los parsea: `find_native_modules` los nombra con el
     layout como si fueran `.py` (el nombre hasta el primer punto:
     `_speed.cpython-314-x86_64-linux-gnu.so` → `_speed`; `__init__.pyi` → el paquete) y
     añade el `module-name` completo de `[tool.maturin]` (`Distribution.native_declarations`,
@@ -445,7 +447,9 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
     stub de un módulo puro se ignora) ni uno fuera de los paquetes de primer nivel. Son
     nombres importables al derivar espacios de nombres (un `.so` solo en `pkg/fast/` hace de
     `pkg.fast` un espacio de nombres) y un `__init__.pyi` marca un paquete normal que cierra
-    el espacio de nombres. Los imports de un `.pyi` nunca son aristas: describen tipos, no
+    el espacio de nombres (sin compilar, Python lo vería como espacio de nombres, pero ese
+    stub suele acompañar a un `__init__` compilado o generado; tratarlo como existente evita
+    un falso «no existe»). Los imports de un `.pyi` nunca son aristas: describen tipos, no
     lo que el binario importa al ejecutarse.
 
   Un espacio de nombres es **abierto** cuando todos sus ancestros, el primer segmento
@@ -870,7 +874,8 @@ El informe los cuenta aparte («N módulos + K espacios de nombres + J extension
 cuenta código empaquetado que no es script (tests y scripts quedan fuera de los recuentos).
 `TYPE_CHECKING` y protegidos quedan como aviso. Un módulo que existe como stub o extensión
 compilada está en el índice, así que sus imports no llevan `requested` y nunca son
-inexistentes (la regla no lee el disco).
+inexistentes (la regla no lee el disco), y un nombre bajo uno de ellos tampoco se da por
+inexistente: el código compilado puede registrar submódulos (`_inside_native`).
 `closest` sale del nombre pedido, no del destino tras resolver re-exports. Evidencia:
 `required`, `lazy`, `guarded`, `first` (`ruta:línea`), `importers` (hasta 5), `closest`,
 `symbols`, `fix`. Arreglo, solo con evidencia y **por símbolo**: `import_from` con
@@ -881,8 +886,14 @@ módulo empaquetado distinto de los importadores **define** alguno
 
 ### Frontera nativa y regla 11 (`graph/native.py`)
 
-`summarize_native(result, graph, scripts)`: un `NativeModule` por módulo `COMPILED`/`STUB`,
-ordenado por nombre, con su prueba, su Ca y sus usos desde código empaquetado que no es
+Antes, `resolve_indirection` lleva la protección de la fachada al importador: si un
+`__init__.py` importa un nombre dentro de un `try` para errores de import
+(`ReExport.is_guarded`, `guarded_reexports`, `passes_guard`), quien lo toma de la fachada
+tampoco falla sin el módulo, y su arista queda protegida.
+
+`summarize_native(result, graph, scripts)`: un `NativeModule` por módulo `COMPILED`/`STUB`
+que algún módulo importa (un binario que nadie importa, como una biblioteca de ctypes, no
+dice nada), ordenado por nombre, con su prueba, su Ca y sus usos desde código empaquetado que no es
 script (tests y scripts fuera): `required`, `lazy`, `guarded` (`import_use`), `type_only`
 (`TYPE_CHECKING`), todos los `ruta:línea` sin protección (`unguarded`) y el primero
 protegido. `works_without` = ningún uso sin protección. Se calcula siempre
@@ -895,7 +906,7 @@ requerido o perezoso sin protección**. Sin ningún uso protegido no hay hallazg
 extensión es obligatoria y el código es coherente. Evidencia: `kind`, `guarded`,
 `first_guarded`, `required`, `lazy`, `unguarded` (hasta 5), `unguarded_total`, `fix`
 (`guard_or_drop_fallback`: protegerlos igual o quitar el respaldo). Límite: no sigue el flujo
-de control, así que una comprobación previa (`if disponible():`) no se ve; el texto pide
+de control, así que una comprobación previa (`if available():`) no se ve; el texto pide
 verificar cada línea.
 
 ### Hallazgos entre distribuciones (`graph/distributions.py`)
