@@ -172,11 +172,6 @@ class ImportEdge:
             optional by contract.
         requested: Name the statement asked for when that module does not exist (``target``
             is then its closest existing ancestor); None otherwise.
-        attribute_reads: Attributes the module reads through the name a whole-module import
-            of a module (not a package) binds, sorted (``W`` for ``import app.m`` and
-            ``app.m.W``); they tell which names a star import in the target must keep.
-        attribute_escapes: Whether that name is used by itself, or its use could not be
-            analyzed, so any attribute of the target may be read.
     """
 
     source: str
@@ -189,8 +184,6 @@ class ImportEdge:
     escapes: bool = False
     is_guarded: bool = False
     requested: str | None = None
-    attribute_reads: tuple[str, ...] = ()
-    attribute_escapes: bool = False
 
 
 class ManifestStyle(StrEnum):
@@ -246,13 +239,32 @@ class StarImports:
             (line, imported module), in code order.
         reads: Names the module may read (see ``collect_read_names``), sorted; empty
             without statements.
-        shadowed: Names the module rebinds for good after its last star import, unread
-            before (see ``shadowed_after``), sorted: no star provides them.
+        dynamic_imports: Modules the module loads by a literal name with
+            ``importlib.import_module`` or ``__import__``, sorted: any of their names may be
+            read.
     """
 
     statements: tuple[tuple[int, str], ...] = ()
     reads: tuple[str, ...] = ()
-    shadowed: tuple[str, ...] = ()
+    dynamic_imports: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class StarSurface:
+    """What a star import of a module brings, as far as its source tells.
+
+    Attributes:
+        dynamic_all: Whether its ``__all__`` cannot be read.
+        uncertain: Whether a star of it brings names nobody can list: it star-imports an
+            external module or one inside a block, or calls ``globals()``, ``vars()`` or
+            ``exec``.
+        conditional: Names a star of it may bring that may be unbound when the star runs,
+            sorted.
+    """
+
+    dynamic_all: bool = False
+    uncertain: bool = False
+    conditional: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -273,8 +285,7 @@ class ModuleInfo:
         distribution: Name of the distribution that ships the module; None when none
             with a name does.
         stars: Its star imports outside a package facade and what decides their fix.
-        has_dynamic_all: Whether its ``__all__`` cannot be read, so a star import of it
-            brings unknown names.
+        surface: What a star import of it brings, as far as its source tells.
     """
 
     name: str
@@ -287,7 +298,7 @@ class ModuleInfo:
     distribution: str | None = None
     defined_names: tuple[str, ...] = ()
     stars: StarImports = field(default_factory=StarImports)
-    has_dynamic_all: bool = False
+    surface: StarSurface = field(default_factory=StarSurface)
 
 
 # Symbol name of a ReExport that stands for a whole ``from x import *`` in a facade.

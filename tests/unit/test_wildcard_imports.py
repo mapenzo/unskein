@@ -6,7 +6,7 @@ import pathspec
 from unskein.config import AnalysisConfig, FindingsConfig
 from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import AnalysisResult, analyze
-from unskein.graph.stars import WildcardAction, WildcardFix
+from unskein.graph.stars import WildcardAction, WildcardFix, WildcardReason
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.python_parser import PythonAdapter
 
@@ -121,6 +121,7 @@ def test_findings_carry_the_summary_and_follow_the_same_order() -> None:
         "used_min": 0,
         "used_max": 2,
         "unused_statements": 1,
+        "no_fix_statements": 0,
         "reexported": 1,
         "fixes": (
             "app/annot.py:1 from app.types import D; app/api.py:1 from app.types import A, B; "
@@ -147,7 +148,11 @@ def test_stars_in_a_cycle_get_no_fix_and_warn(make_project: MakeProject) -> None
         }
     )
     result = _analyzed(root)
-    assert result.wildcards == []
+    reasons = [(f.location, f.action, f.reason) for w in result.wildcards for f in w.fixes]
+    assert sorted(reasons) == [
+        ("app/a.py:1", WildcardAction.NO_FIX, WildcardReason.CYCLE),
+        ("app/b.py:1", WildcardAction.NO_FIX, WildcardReason.CYCLE),
+    ]
     stars = sorted(w.path.name for w in result.parse_warnings if w.code == "star_import")
     assert stars == ["a.py", "b.py"]
 

@@ -935,7 +935,15 @@ def _wildcard_fix_line(fix: WildcardFix, module: str, lang: Lang) -> str:
     Returns:
         One Markdown sub-item.
     """
-    if fix.action is WildcardAction.REMOVE:
+    if fix.action is WildcardAction.NO_FIX:
+        text = t(
+            f"finding.wildcard.reason.{fix.reason}",
+            lang,
+            module=module,
+            importer=fix.importer,
+            names=_backticked(fix.reason_names),
+        )
+    elif fix.action is WildcardAction.REMOVE:
         text = t("finding.wildcard.fix.remove", lang, module=module)
     elif fix.action is WildcardAction.REMOVE_SELF:
         text = t("finding.wildcard.fix.remove_self", lang)
@@ -1007,6 +1015,12 @@ def _wildcard_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
                 f"finding.wildcard.unused.{_plural_key(wildcard.unused)}",
                 lang,
                 count=wildcard.unused,
+            )
+        if wildcard.no_fix:
+            summary += DETAIL_SEPARATOR + t(
+                f"finding.wildcard.no_fix.{_plural_key(wildcard.no_fix)}",
+                lang,
+                count=wildcard.no_fix,
             )
         if wildcard.reexported:
             summary += DETAIL_SEPARATOR + t(

@@ -882,14 +882,18 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.EN: "Wildcard import",
     },
     "finding.wildcard_import.explanation": {
-        Lang.ES: "`from módulo import *` trae todos los nombres públicos del módulo, pero el "
-        "código solo usa algunos. unskein calcula, con el proyecto entero, los nombres que "
-        "necesita cada sentencia: los que el módulo lee, los que otros módulos importan desde "
-        "él y los que pasan a quienes lo importan con asterisco.",
-        Lang.EN: "`from module import *` brings every public name of the module, but the code "
-        "uses only some of them. unskein computes, with the whole project, the names each "
-        "statement needs: those the module reads, those other modules import from it and "
-        "those that pass on to modules that star-import it.",
+        Lang.ES: "`from módulo import *` trae los nombres del módulo (su `__all__` o, sin él, "
+        "todos los públicos), pero el código solo usa algunos. unskein calcula, con el proyecto "
+        "entero, los nombres que necesita cada sentencia: los que el módulo lee, los que otros "
+        "módulos importan desde él o leen como atributos suyos, y los que pasan a quienes lo "
+        "importan con asterisco; ante la duda, el nombre se conserva. Solo da un arreglo cuando "
+        "puede demostrar que es seguro; si no, dice por qué.",
+        Lang.EN: "`from module import *` brings the module's names (its `__all__` or, without "
+        "it, every public one), but the code uses only some of them. unskein computes, with "
+        "the whole project, the names each statement needs: those the module reads, those "
+        "other modules import from it or read as its attributes, and those that pass on to "
+        "modules that star-import it; when in doubt a name is kept. It gives a fix only when it "
+        "can prove it safe, and says why otherwise.",
     },
     "finding.wildcard_import.recommendation": {
         Lang.ES: "Sustituir cada sentencia por el import explícito que se indica, o eliminarla "
@@ -946,6 +950,33 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "quienes lo importan con asterisco",
         Lang.EN: "{count} names kept because other modules import them through the modules "
         "that star-import it",
+    },
+    "finding.wildcard.no_fix.one": {
+        Lang.ES: "{count} sin arreglo seguro",
+        Lang.EN: "{count} without a safe fix",
+    },
+    "finding.wildcard.no_fix.other": {
+        Lang.ES: "{count} sin arreglo seguro",
+        Lang.EN: "{count} without a safe fix",
+    },
+    "finding.wildcard.reason.conditional": {
+        Lang.ES: "sin arreglo seguro: `{module}` puede dejar {names} sin ligar cuando corre la "
+        "estrella (ligado solo dentro de un bloque, bajo `TYPE_CHECKING`, solo anotado o "
+        "borrado)",
+        Lang.EN: "no safe fix: `{module}` may leave {names} unbound when the star runs (bound "
+        "only inside a block, under `TYPE_CHECKING`, only annotated or deleted)",
+    },
+    "finding.wildcard.reason.cycle": {
+        Lang.ES: "sin arreglo seguro: `{importer}` y `{module}` se importan entre sí, así que "
+        "lo que trae la estrella depende del orden de importación",
+        Lang.EN: "no safe fix: `{importer}` and `{module}` import each other, so what the star "
+        "brings depends on import order",
+    },
+    "finding.wildcard.reason.submodule": {
+        Lang.ES: "sin arreglo seguro: {names} es un submódulo de `{module}` que otro módulo "
+        "puede haber importado, así que la estrella puede traerlo o no",
+        Lang.EN: "no safe fix: {names} is a submodule of `{module}` that another module may "
+        "have imported, so the star may or may not bring it",
     },
     "finding.wildcard.self": {
         Lang.ES: "{count} `from . import *` sin efecto",

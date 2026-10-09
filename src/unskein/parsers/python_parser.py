@@ -11,7 +11,7 @@ import pathspec
 from unskein.config import AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
-from unskein.parsers.exports import module_exports, shadowed_after
+from unskein.parsers.exports import module_exports
 from unskein.parsers.layout import ModuleName, build_layout, name_files
 from unskein.parsers.models import (
     STAR_EXPORT,
@@ -24,12 +24,17 @@ from unskein.parsers.models import (
     ParseWarning,
     ReExport,
     StarImports,
+    StarSurface,
     VirtualKind,
     VirtualModule,
     WarningCode,
 )
 from unskein.parsers.native import EVIDENCE_SUFFIXES, find_native_modules, is_evidence
-from unskein.parsers.usage import collect_name_usage, collect_read_names
+from unskein.parsers.usage import (
+    collect_dynamic_imports,
+    collect_name_usage,
+    collect_read_names,
+)
 
 # Import statements only occur in statement lists; ``handlers`` holds ExceptHandler
 # nodes and ``cases`` holds match_case nodes, each with its own ``body``. The order
@@ -48,6 +53,8 @@ SUPPRESS_NAME = "suppress"
 # Names of non-importable files are POSIX paths; "/" never appears in a dotted name.
 PATH_SEPARATOR = "/"
 NAME_SEPARATOR = "."
+# Text a module must contain to load modules by name; skips the walk for every other module.
+DYNAMIC_IMPORT_HINTS = ("import_module", "__import__")
 # Identify the object an import binds: a module, or a name taken from a module.
 MODULE_OBJECT = "module:"
 FROM_OBJECT = "from:"
@@ -367,9 +374,9 @@ class _ImportCollector:
         self.edges: list[ImportEdge] = []
         self.re_exports: list[ReExport] = []
         self.wildcards: list[tuple[int, str]] = []
+        self.has_external_star = False
         self.warnings: list[ParseWarning] = []
         self.package_bindings: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
-        self.module_bindings: defaultdict[str, list[tuple[int, str]]] = defaultdict(list)
         self.bound_objects: defaultdict[str, set[str]] = defaultdict(set)
 
     def warn(self, code: WarningCode, line: int, detail: str) -> None:
@@ -441,8 +448,6 @@ class _ImportCollector:
                 binding, symbol, target, is_exact=target == name
             ):
                 self.package_bindings[binding.name].append((len(self.edges) - 1, binding.prefix))
-            elif binding is not None and symbol is None and target == name:
-                self.module_bindings[binding.name].append((len(self.edges) - 1, binding.prefix))
         return target
 
     def binds_package(
@@ -533,7 +538,9 @@ class _ImportCollector:
                 is_star_reexport = (
                     self.is_package and base in self.index.modules and base != self.source
                 )
-                if not is_star_reexport and not self.index.is_external(base):
+                if self.index.is_external(base):
+                    self.has_external_star = True
+                elif not is_star_reexport:
                     self.wildcards.append((node.lineno, base))
                 self.add(base, None, node.lineno, kind=kind, is_guarded=is_guarded)
                 if is_star_reexport:
@@ -564,9 +571,6 @@ class _ImportCollector:
         to a prefix means that package is used by itself. The tree is walked only when the
         module imports at least one package.
 
-        Whole-module imports of modules get the attributes read through them instead
-        (``attribute_reads``), only to tell which names a star import in the target must keep.
-
         Args:
             tree: Parsed module the collector visited.
         """
@@ -575,51 +579,15 @@ class _ImportCollector:
             for name, entries in self.package_bindings.items()
             if len(self.bound_objects[name]) == 1
         }
-        modules = {}
-        for name, entries in self.module_bindings.items():
-            if len(self.bound_objects[name]) == 1:
-                modules[name] = entries
-            else:
-                for index, _ in entries:
-                    self.edges[index].attribute_escapes = True
-        if not tracked and not modules:
+        if not tracked:
             return
-        usages = collect_name_usage(tree, tracked.keys() | modules.keys())
+        usages = collect_name_usage(tree, tracked)
         for name, entries in tracked.items():
             chains, used_alone = _split_chains(usages[name].chains, entries)
             for index, _ in entries:
                 edge = self.edges[index]
                 edge.accessed = tuple(sorted(chains[index]))
                 edge.escapes = usages[name].escapes or index in used_alone
-        for name, entries in modules.items():
-            for index, prefix in entries:
-                reads, used_alone = _attribute_reads(usages[name].chains, prefix)
-                edge = self.edges[index]
-                edge.attribute_reads = reads
-                edge.attribute_escapes = usages[name].escapes or used_alone
-
-
-def _attribute_reads(chains: Collection[str], prefix: str) -> tuple[tuple[str, ...], bool]:
-    """Return the attributes read through a binding that reaches a module after a prefix.
-
-    Args:
-        chains: Attribute chains read through the bound name.
-        prefix: Dotted path from the bound name to the module (``m`` for ``import app.m``
-            read through ``app``); empty when the name is the module.
-
-    Returns:
-        The first attribute after the prefix of each chain, sorted, and whether a chain is
-        the prefix itself (the module used by itself).
-    """
-    reads: set[str] = set()
-    used_alone = False
-    start = f"{prefix}{NAME_SEPARATOR}" if prefix else ""
-    for chain in chains:
-        if prefix and chain == prefix:
-            used_alone = True
-        elif chain.startswith(start):
-            reads.add(chain[len(start) :].split(NAME_SEPARATOR)[0])
-    return tuple(sorted(reads)), used_alone
 
 
 def _split_chains(
@@ -676,7 +644,8 @@ def parse_file(
             warning = ParseWarning(WarningCode.FILE_TOO_LARGE, file_path, None, detail)
             return FileParseResult(None, warnings=[warning])
         encoding = detect_encoding(file_path, config.default_encoding)
-        tree = ast.parse(file_path.read_text(encoding=encoding), filename=str(file_path))
+        source = file_path.read_text(encoding=encoding)
+        tree = ast.parse(source, filename=str(file_path))
     except (OSError, SyntaxError, UnicodeDecodeError, RecursionError) as e:
         line = e.lineno if isinstance(e, SyntaxError) else None
         detail = f"{type(e).__name__}: {e}"
@@ -686,13 +655,22 @@ def parse_file(
     collector.visit(tree)
     collector.attach_usage(tree)
     exports = module_exports(tree)
-    stars = StarImports()
+    reads: tuple[str, ...] = ()
     if collector.wildcards:
         reads = collect_read_names(tree)
         if exports.declares_all:
             reads = tuple(sorted({*reads, *exports.names}))
-        last = max(line for line, _ in collector.wildcards)
-        stars = StarImports(tuple(collector.wildcards), reads, shadowed_after(tree, last))
+    dynamic = (
+        collect_dynamic_imports(tree)
+        if any(hint in source for hint in DYNAMIC_IMPORT_HINTS)
+        else ()
+    )
+    stars = StarImports(tuple(collector.wildcards), reads, dynamic)
+    surface = StarSurface(
+        exports.has_dynamic_all,
+        exports.is_uncertain or collector.has_external_star,
+        exports.conditional_names,
+    )
     module = ModuleInfo(
         name,
         file_path,
@@ -703,7 +681,7 @@ def parse_file(
         is_packaged=name not in index.unpackaged,
         defined_names=exports.defined_names,
         stars=stars,
-        has_dynamic_all=exports.has_dynamic_all,
+        surface=surface,
     )
     return FileParseResult(module, collector.re_exports, collector.warnings)
 

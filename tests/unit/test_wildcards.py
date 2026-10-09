@@ -6,7 +6,7 @@ import pathspec
 import pytest
 
 from unskein.config import AnalysisConfig
-from unskein.parsers.exports import module_exports, shadowed_after
+from unskein.parsers.exports import module_exports
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import WarningCode
 from unskein.parsers.python_parser import PythonAdapter
@@ -87,15 +87,27 @@ def test_every_change_to_all_that_cannot_be_read_is_dynamic(source: str) -> None
 
 
 @pytest.mark.parametrize(
-    ("source", "shadowed"),
+    ("source", "conditional"),
     [
-        ("from app.b import *\nfrom typing import Final\n", ("Final",)),
-        ("from app.b import *\nprint(X)\nX = 1\n", ()),
-        ("from app.b import *\nX = (\n    X + 1\n)\n", ()),
-        ("Y = 1\nfrom app.b import *\n", ()),
-        ("from app.b import *\nif flag:\n    Z = 1\n", ()),
-        ("from app.b import *\n\n\ndef f():\n    return W\n\n\nW = 2\n", ("W", "f")),
+        (
+            "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from x import Foo\nB = 1\n",
+            ("Foo",),
+        ),
+        ("X: int\nY = 1\n", ("X",)),
+        ("value = 1\nCONST = value\ndel value\n", ("value",)),
+        ("for item in []:\n    pass\n", ("item",)),
+        ("def f():\n    global G\n    G = 1\n", ("G",)),
+        ("try:\n    import fast as impl\nexcept ImportError:\n    impl = None\n", ("impl",)),
+        ("A = 1\nclass B: ...\n", ()),
     ],
 )
-def test_names_rebound_for_good_after_the_stars_are_shadowed(source: str, shadowed) -> None:
-    assert shadowed_after(ast.parse(source), 1) == shadowed
+def test_names_that_may_be_unbound_are_conditional(source: str, conditional) -> None:
+    assert module_exports(ast.parse(source)).conditional_names == conditional
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["if x:\n    from a import *\n", "globals()['X'] = 1\n", "exec('X = 1')\n"],
+)
+def test_a_star_of_a_module_that_writes_its_namespace_is_uncertain(source: str) -> None:
+    assert module_exports(ast.parse(source)).is_uncertain

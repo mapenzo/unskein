@@ -11,6 +11,10 @@ MODULE_LEVEL_BLOCKS = ("body", "orelse", "handlers", "finalbody")
 DEFINITION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 IMPORT_NODES = (ast.Import, ast.ImportFrom)
+STAR = "*"
+# Calls that can bind module names nobody can read from the source.
+NAMESPACE_WRITERS = frozenset({"globals", "vars", "exec"})
+FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +31,12 @@ class ModuleExports:
         has_dynamic_all: Whether ``__all__`` is computed or changed in a way that cannot be
             read (a non-literal value, a method call, a subscript, two assignments): what a
             star import brings is then unknown.
+        conditional_names: Names a star import may bring that may be unbound when it runs:
+            bound only inside a block (``if``, ``try``, ``for``…), by a walrus, a ``match``,
+            ``except … as`` or a ``global`` in a function, only annotated, or deleted;
+            sorted.
+        is_uncertain: Whether a star import of it brings names nobody can list: it has a
+            star import inside a block, or calls ``globals()``, ``vars()`` or ``exec``.
     """
 
     names: tuple[str, ...]
@@ -34,6 +44,8 @@ class ModuleExports:
     bound_names: tuple[str, ...] = ()
     defined_names: tuple[str, ...] = ()
     has_dynamic_all: bool = False
+    conditional_names: tuple[str, ...] = ()
+    is_uncertain: bool = False
 
 
 def _module_level_statements(tree: ast.Module) -> Iterator[ast.stmt]:
@@ -210,7 +222,8 @@ def module_exports(tree: ast.Module) -> ModuleExports:
 
     Returns:
         The exposed names, sorted, whether they come from ``__all__``, every bound name, the
-        names it defines itself and whether ``__all__`` is dynamic.
+        names it defines itself, whether ``__all__`` is dynamic, the exposed names that may be
+        unbound and whether a star of it brings names nobody can list.
     """
     statements = list(_module_level_statements(tree))
     names = {name for node in statements for name in _bound_names(node)}
@@ -227,66 +240,92 @@ def module_exports(tree: ast.Module) -> ModuleExports:
     )
     declared = _literal_all(statements)
     dynamic = _has_dynamic_all(statements, declared)
+    loose, uncertain = _loose_bindings(tree)
     if declared is not None:
-        return ModuleExports(tuple(sorted(set(declared))), True, bound, defined, dynamic)
-    public = {name for name in names if not name.startswith(PRIVATE_PREFIX)}
-    return ModuleExports(tuple(sorted(public)), False, bound, defined, dynamic)
+        exposed = set(declared)
+        shown = exposed
+    else:
+        shown = {name for name in names if not name.startswith(PRIVATE_PREFIX)}
+        exposed = shown | {name for name in loose if not name.startswith(PRIVATE_PREFIX)}
+    steady = _steady_names(tree, statements)
+    conditional = tuple(sorted(name for name in exposed if name not in steady))
+    return ModuleExports(
+        tuple(sorted(shown)),
+        declared is not None,
+        bound,
+        defined,
+        dynamic,
+        conditional,
+        uncertain,
+    )
 
 
-def _module_level_reads(tree: ast.Module) -> Iterator[ast.AST]:
-    """Yield the nodes that run while the module is imported, function bodies excluded.
-
-    Decorators, default values and annotations of a function run at import time; its body
-    does not. Class bodies do run.
-
-    Args:
-        tree: Parsed module.
-
-    Yields:
-        Every such node.
-    """
-    stack: list[ast.AST] = list(tree.body)
-    while stack:
-        node = stack.pop()
-        yield node
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            stack.extend(node.decorator_list)
-            stack.append(node.args)
-            if node.returns is not None:
-                stack.append(node.returns)
-        elif not isinstance(node, ast.Lambda):
-            stack.extend(ast.iter_child_nodes(node))
-
-
-def shadowed_after(tree: ast.Module, line: int) -> tuple[str, ...]:
-    """Return the names the module rebinds for good after a line, unread before that.
-
-    A top-level statement after the last star import that binds a name hides the star's
-    one for good, unless code that runs at import time reads it first. Only direct
-    statements of the module count (not ones inside ``if`` or ``try``), so the binding
-    always runs.
+def _steady_names(tree: ast.Module, statements: list[ast.stmt]) -> set[str]:
+    """Return the names the module always binds: direct statements, never deleted.
 
     Args:
         tree: Parsed module.
-        line: Line of the module's last star import.
+        statements: Its module-level statements.
 
     Returns:
-        The hidden names, sorted.
+        Names bound by a direct statement of the module (not inside a block), other than a
+        bare annotation, and never deleted at module level.
     """
-    bound_until: dict[str, int] = {}
-    for node in tree.body:
-        if node.lineno > line:
-            for name in _bound_names(node):
-                bound_until.setdefault(name, node.end_lineno or node.lineno)
-    if not bound_until:
-        return ()
-    read_first: set[str] = set()
-    for node in _module_level_reads(tree):
-        name = None
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Load, ast.Del)):
-            name = node.id
-        elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
-            name = node.target.id
-        if name in bound_until and node.lineno <= bound_until[name]:
-            read_first.add(name)
-    return tuple(sorted(set(bound_until) - read_first))
+    steady = {
+        name
+        for node in tree.body
+        if not (isinstance(node, ast.AnnAssign) and node.value is None)
+        for name in _bound_names(node)
+    }
+    deleted = {
+        target.id
+        for node in statements
+        if isinstance(node, ast.Delete)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    return steady - deleted
+
+
+def _loose_bindings(tree: ast.Module) -> tuple[set[str], bool]:
+    """Find the module names bound in ways a star import cannot count on.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        Names bound by ``for``/``with`` targets, walrus, ``match`` captures, ``except … as``
+        and ``global`` declarations in functions; and whether the module has a star import
+        inside a block or calls ``globals()``, ``vars()`` or ``exec``.
+    """
+    loose: set[str] = set()
+    uncertain = False
+    top = {id(node) for node in tree.body}
+    stack: list[tuple[ast.AST, bool]] = [(node, False) for node in tree.body]
+    while stack:
+        node, in_function = stack.pop()
+        if isinstance(node, ast.Global):
+            loose.update(node.names)
+        elif isinstance(node, ast.ImportFrom) and id(node) not in top:
+            uncertain |= any(alias.name == STAR for alias in node.names)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            uncertain |= node.func.id in NAMESPACE_WRITERS
+        if not in_function:
+            if isinstance(node, (ast.For, ast.AsyncFor)):
+                loose.update(_target_names(node.target))
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        loose.update(_target_names(item.optional_vars))
+            elif isinstance(node, ast.NamedExpr) and isinstance(node.target, ast.Name):
+                loose.add(node.target.id)
+            elif (
+                isinstance(node, (ast.MatchAs, ast.MatchStar))
+                and node.name
+                or isinstance(node, ast.ExceptHandler)
+                and node.name
+            ):
+                loose.add(node.name)
+        nested = in_function or isinstance(node, FUNCTION_NODES)
+        stack.extend((child, nested) for child in ast.iter_child_nodes(node))
+    return loose, uncertain

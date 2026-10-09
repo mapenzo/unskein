@@ -1092,3 +1092,49 @@ def test_a_module_used_by_itself_keeps_every_name_and_says_why(make_project) -> 
         "`from app.b import X, Y` (all kept: `app.m` is used by itself elsewhere or through "
         "a star import whose names cannot be known, so any of its names may be read)"
     ) in report
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        (
+            {
+                "app/b.py": (
+                    "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    Foo = 1\nB = 1\n"
+                ),
+                "app/m.py": "from app.b import *\nprint(B, Foo)\n",
+            },
+            "`app/m.py:1`: no safe fix: `app.b` may leave `Foo` unbound when the star runs "
+            "(bound only inside a block, under `TYPE_CHECKING`, only annotated or deleted)",
+        ),
+        (
+            {
+                "app/b.py": "import app.m\nX = 1\n",
+                "app/m.py": "from app.b import *\nprint(X)\n",
+            },
+            "`app/m.py:1`: no safe fix: `app.m` and `app.b` import each other, so what the "
+            "star brings depends on import order",
+        ),
+        (
+            {
+                "app/pkg/__init__.py": "X = 1\n",
+                "app/pkg/sub.py": "Y = 1\n",
+                "app/m.py": "from app.pkg import *\nprint(X, sub)\n",
+            },
+            "`app/m.py:1`: no safe fix: `sub` is a submodule of `app.pkg` that another module "
+            "may have imported, so the star may or may not bring it",
+        ),
+    ],
+)
+def test_statements_without_a_safe_fix_say_why(make_project, files, expected) -> None:
+    root = make_project({"app/__init__.py": "", **files})
+    report = render(root, analyzed(root))
+    assert expected in report
+    assert "1 without a safe fix" in report
+
+
+def test_the_wildcard_explanation_says_names_are_kept_when_in_doubt() -> None:
+    report = render(STAR_ROOT, analyzed(STAR_ROOT))
+    section = report.split("### Wildcard import")[1]
+    assert "when in doubt" in section
+    assert "read as its attributes" in section

@@ -12,6 +12,10 @@ from unskein.parsers.discovery import detect_encoding
 from unskein.parsers.indirection import walk_submodules
 from unskein.parsers.models import ImportKind, ModuleInfo, ParseResult
 
+MODULE_SEPARATOR = "."
+PACKAGE_INIT_FILE = "__init__.py"
+
+DYNAMIC_IMPORTERS = frozenset({"import_module", "__import__"})
 IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 # Longer strings are prose, not quoted annotations.
 MAX_ANNOTATION_LENGTH = 200
@@ -161,6 +165,31 @@ def collect_read_names(tree: ast.Module) -> tuple[str, ...]:
             continue
         stack.extend(ast.iter_child_nodes(node))
     return tuple(sorted(names))
+
+
+def collect_dynamic_imports(tree: ast.Module) -> tuple[str, ...]:
+    """Collect the modules loaded by a literal name with ``import_module`` or ``__import__``.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        The module names, sorted.
+    """
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+        first = node.args[0]
+        if (
+            name in DYNAMIC_IMPORTERS
+            and isinstance(first, ast.Constant)
+            and isinstance(first.value, str)
+        ):
+            found.add(first.value)
+    return tuple(sorted(found))
 
 
 class UseContext(StrEnum):
@@ -632,3 +661,128 @@ def collect_names_read_from(
         if pending:
             _whole_module_reads(_parse_source(module.file_path, encoding), pending, collector)
     return {module: frozenset(names) for module, names in collector.found.items()}
+
+
+def _attribute_reads(chains: Collection[str], prefix: str) -> tuple[tuple[str, ...], bool]:
+    """Return the attributes read through a binding that reaches a module after a prefix.
+
+    Args:
+        chains: Attribute chains read through the bound name.
+        prefix: Dotted path from the bound name to the module (``m`` for ``import app.m``
+            read through ``app``); empty when the name is the module.
+
+    Returns:
+        The first attribute after the prefix of each chain, sorted, and whether a chain is
+        the prefix itself (the module used by itself).
+    """
+    reads: set[str] = set()
+    used_alone = False
+    start = f"{prefix}{MODULE_SEPARATOR}" if prefix else ""
+    for chain in chains:
+        if prefix and chain == prefix:
+            used_alone = True
+        elif chain.startswith(start):
+            reads.add(chain[len(start) :].split(MODULE_SEPARATOR)[0])
+    return tuple(sorted(reads)), used_alone
+
+
+def _relative_base(module: ModuleInfo, node: ast.ImportFrom) -> str | None:
+    """Return the absolute module a ``from`` import refers to.
+
+    Args:
+        module: Module holding the statement.
+        node: The statement.
+
+    Returns:
+        The dotted base, or None when a relative import climbs too high.
+    """
+    if not node.level:
+        return node.module
+    parts = module.name.split(MODULE_SEPARATOR)
+    if module.file_path.name != PACKAGE_INIT_FILE:
+        parts = parts[:-1]
+    up = node.level - 1
+    if up > len(parts):
+        return None
+    parts = parts[: len(parts) - up]
+    if node.module:
+        parts.append(node.module)
+    return MODULE_SEPARATOR.join(parts)
+
+
+def _module_bindings(module: ModuleInfo, tree: ast.Module, targets: Collection[str]) -> dict:
+    """Find the names a module binds to whole modules among the targets.
+
+    Args:
+        module: The importing module.
+        tree: Its parsed source.
+        targets: Modules of interest.
+
+    Returns:
+        Each bound name with the (target, prefix) pairs it reaches: ``import app.m`` binds
+        ``app`` with prefix ``m``; ``import app.m as x`` and ``from app import m`` bind
+        the name itself with an empty prefix.
+    """
+    bindings: dict[str, set[tuple[str, str]]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                for target in targets:
+                    if alias.asname and alias.name == target:
+                        bindings.setdefault(alias.asname, set()).add((target, ""))
+                    elif not alias.asname and (
+                        alias.name == target or alias.name.startswith(f"{target}.")
+                    ):
+                        top = alias.name.split(MODULE_SEPARATOR)[0]
+                        prefix = target[len(top) + 1 :] if target != top else ""
+                        bindings.setdefault(top, set()).add((target, prefix))
+        elif isinstance(node, ast.ImportFrom):
+            base = _relative_base(module, node)
+            for alias in node.names:
+                full = f"{base}{MODULE_SEPARATOR}{alias.name}"
+                if base is not None and full in targets:
+                    bindings.setdefault(alias.asname or alias.name, set()).add((full, ""))
+    return bindings
+
+
+def collect_attribute_reads(
+    module: ModuleInfo, targets: Collection[str], encoding: str | None
+) -> dict[str, tuple[frozenset[str], bool]]:
+    """Find the attributes a module reads through whole-module imports of some targets.
+
+    Reads the source again: only modules that import a module holding a star import need
+    it. A name bound to more than one object, or also rebound, makes every target it
+    reaches escape (any attribute may be read).
+
+    Args:
+        module: The importing module.
+        targets: Modules it imports whole, that hold star imports.
+        encoding: Fallback encoding when the file declares none.
+
+    Returns:
+        For each target, the attributes read and whether the module object escapes.
+    """
+    result: dict[str, tuple[frozenset[str], bool]] = {}
+    tree = _parse_source(module.file_path, encoding)
+    if tree is None:
+        return {target: (frozenset(), True) for target in targets}
+    bindings = _module_bindings(module, tree, targets)
+    rebound = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load)
+    }
+    usages = collect_name_usage(tree, bindings)
+    reads: dict[str, set[str]] = {target: set() for target in targets}
+    # A target no name is bound to (a star import edge) has no attribute reads.
+    escapes: set[str] = set()
+    for name, pairs in bindings.items():
+        unclear = len({t for t, _ in pairs}) > 1 or name in rebound or usages[name].escapes
+        for target, prefix in pairs:
+            found, used_alone = _attribute_reads(usages[name].chains, prefix)
+            reads[target].update(found)
+            if unclear or used_alone:
+                escapes.add(target)
+    for target in targets:
+        result[target] = (frozenset(reads[target]), target in escapes)
+    return result

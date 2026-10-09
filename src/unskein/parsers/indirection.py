@@ -231,16 +231,19 @@ def wildcard_names(
         stars: Star imports of every module (``star_imports``).
 
     Returns:
-        The names; None when some module on the way was not parsed or computes ``__all__``.
+        The names (those that may be unbound included, see ``wildcard_conditional``); None
+        when some module on the way was not parsed, computes ``__all__`` or brings names
+        nobody can list.
     """
     names: set[str] = set()
     seen = {base}
     pending = [base]
     while pending:
         module = by_name.get(pending.pop())
-        if module is None or module.has_dynamic_all:
+        if module is None or module.surface.dynamic_all or module.surface.uncertain:
             return None
         names.update(module.public_names)
+        names.update(module.surface.conditional)
         if module.declares_all:
             continue
         names.update(_submodules_bound(module))
@@ -269,6 +272,36 @@ def star_cycles(stars: Mapping[str, list[Star]]) -> frozenset[tuple[str, str]]:
         if len(component) > 1:
             pairs.update(edge for edge in graph.subgraph(component).edges)
     return frozenset(pairs)
+
+
+def wildcard_conditional(
+    base: str, by_name: Mapping[str, ModuleInfo], stars: Mapping[str, list[Star]]
+) -> frozenset[str]:
+    """Return the names ``from base import *`` may bring that may be unbound when it runs.
+
+    Args:
+        base: Star-imported module.
+        by_name: Parsed modules by name.
+        stars: Star imports of every module (``star_imports``).
+
+    Returns:
+        The conditional names of every module the star reaches.
+    """
+    names: set[str] = set()
+    seen = {base}
+    pending = [base]
+    while pending:
+        module = by_name.get(pending.pop())
+        if module is None:
+            continue
+        names.update(module.surface.conditional)
+        if module.declares_all:
+            continue
+        for _, nested in stars.get(module.name, []):
+            if nested not in seen:
+                seen.add(nested)
+                pending.append(nested)
+    return frozenset(names)
 
 
 def resolve_target(

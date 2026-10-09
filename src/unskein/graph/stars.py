@@ -6,10 +6,18 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+import networkx as nx
+
 from unskein.graph.findings import Evidence, Finding, FindingKind
-from unskein.parsers.indirection import Star, star_cycles, star_imports, wildcard_names
+from unskein.parsers.indirection import (
+    Star,
+    star_imports,
+    wildcard_conditional,
+    wildcard_names,
+)
 from unskein.parsers.layout import relative_path
-from unskein.parsers.models import ModuleInfo, ParseResult
+from unskein.parsers.models import ImportKind, ModuleInfo, ParseResult
+from unskein.parsers.usage import collect_attribute_reads
 
 # Caps of the fixes sent to the AI; the report shows every statement and name.
 MAX_FIXES_SHOWN = 5
@@ -20,6 +28,7 @@ LINE_SEPARATOR = ":"
 NAME_SEPARATOR = "."
 KIND_MODULE = "module"
 KIND_SELF = "self"
+PACKAGE_INIT_FILE = "__init__.py"
 # Needer of the names a module keeps because it is used by itself: any may be read.
 ANY_READER = ""
 
@@ -31,11 +40,30 @@ class WildcardAction(StrEnum):
         REMOVE: It needs no name; remove it.
         EXPLICIT: Replace it with an explicit import of the names it needs.
         REMOVE_SELF: A package imports itself without ``__all__``; it does nothing.
+        NO_FIX: No fix can be proven safe; ``WildcardFix.reason`` says why.
     """
 
     REMOVE = "remove"
     EXPLICIT = "explicit"
     REMOVE_SELF = "remove_self"
+    NO_FIX = "no_fix"
+
+
+class WildcardReason(StrEnum):
+    """Why a star import gets no fix.
+
+    Attributes:
+        CONDITIONAL: A needed name may be unbound when the star runs (bound only inside a
+            block, under ``TYPE_CHECKING``, only annotated or deleted).
+        CYCLE: The importer and the imported module import each other: what the star
+            brings depends on import order.
+        SUBMODULE: The module reads a submodule of the imported package that another module
+            may have loaded, so the star may or may not bring it.
+    """
+
+    CONDITIONAL = "conditional"
+    CYCLE = "cycle"
+    SUBMODULE = "submodule"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +81,8 @@ class WildcardFix:
         defined_elsewhere: (origin module, name) of names the star-imported module only
             passes on, sorted.
         external: Names that reach it from a third-party import, sorted.
+        reason: Why there is no fix, for ``NO_FIX``.
+        reason_names: The names behind that reason, sorted.
     """
 
     location: str
@@ -63,6 +93,8 @@ class WildcardFix:
     kept_for: tuple[tuple[str, str], ...] = ()
     defined_elsewhere: tuple[tuple[str, str], ...] = ()
     external: tuple[str, ...] = ()
+    reason: WildcardReason | None = None
+    reason_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +134,11 @@ class WildcardModule:
         return sum(1 for fix in self.fixes if fix.action is WildcardAction.REMOVE)
 
     @property
+    def no_fix(self) -> int:
+        """Return how many statements get no fix."""
+        return sum(1 for fix in self.fixes if fix.action is WildcardAction.NO_FIX)
+
+    @property
     def reexported(self) -> int:
         """Return how many names are kept only because other modules need them."""
         return sum(len(fix.kept) for fix in self.fixes)
@@ -117,6 +154,9 @@ class _Context:
         demand: Names each module must provide.
         needer: First module needing each (module, name) through someone else.
         root: Project root, for relative paths.
+        cycles: Group of mutually importing modules each module belongs to, if any.
+        conditional: Names each star-imported module may leave unbound.
+        unloaded: Submodules of each star-imported package its star may or may not bring.
     """
 
     by_name: Mapping[str, ModuleInfo]
@@ -124,59 +164,13 @@ class _Context:
     demand: Mapping[str, set[str]]
     needer: Mapping[tuple[str, str], str]
     root: Path | None
-
-
-def _import_origin(module: ModuleInfo, name: str) -> tuple[str, str | None] | None:
-    """Return what the one import that binds a name refers to.
-
-    Args:
-        module: A parsed module.
-        name: A name it binds.
-
-    Returns:
-        (imported module, symbol) when exactly one import statement binds the name without an
-        alias and the module does not also assign it; None otherwise.
-    """
-    if name not in module.bound_names or name in module.defined_names:
-        return None
-    star_lines = {line for line, _ in module.stars.statements}
-    found = {
-        (edge.target, edge.symbol_name)
-        for edge in module.imports
-        if edge.line_number not in star_lines
-        and (
-            edge.symbol_name == name
-            or (edge.symbol_name is None and edge.target.split(NAME_SEPARATOR)[0] == name)
-        )
-    }
-    return next(iter(found)) if len(found) == 1 else None
-
-
-def _same_object(module: ModuleInfo | None, base: ModuleInfo | None, name: str) -> bool:
-    """Tell whether a module and the module it star-imports bind a name to the same object.
-
-    Args:
-        module: The importing module.
-        base: The star-imported module.
-        name: A name both bind.
-
-    Returns:
-        True when the module imports it from the star-imported module itself, or both take
-        it with the same import (same module and symbol): the star changes nothing for it.
-    """
-    if module is None or base is None:
-        return False
-    origin = _import_origin(module, name)
-    # Importing the name from the star-imported module itself gives its very object.
-    return origin is not None and (
-        origin == (base.name, name) or origin == _import_origin(base, name)
-    )
+    cycles: Mapping[str, int]
+    conditional: Mapping[str, frozenset[str]]
+    unloaded: Mapping[str, frozenset[str]]
 
 
 def _providers(
-    statements: list[Star],
-    brings: Mapping[str, frozenset[str] | None],
-    context: tuple[ModuleInfo | None, Mapping[str, ModuleInfo]],
+    statements: list[Star], brings: Mapping[str, frozenset[str] | None]
 ) -> dict[str, list[Star]]:
     """Return, for each name, every star statement of a module that brings it.
 
@@ -184,25 +178,17 @@ def _providers(
     ``except``, ``if`` and ``else``) may each be the one that runs, and an explicit import
     of a name the module also binds keeps the same meaning whatever the order.
 
-    A name the module rebinds for good after its stars, or binds with the same import as
-    the star-imported module, is provided by no star.
-
     Args:
         statements: The module's star statements, in code order.
         brings: Names each star-imported module brings.
-        context: The importing module, if parsed, and every parsed module by name.
 
     Returns:
         The statements that bring each name.
     """
-    module, by_name = context
-    shadowed = set(module.stars.shadowed) if module is not None else set()
     providers: defaultdict[str, list[Star]] = defaultdict(list)
     for statement in statements:
-        base = by_name.get(statement[1])
         for name in brings.get(statement[1]) or ():
-            if name not in shadowed and not _same_object(module, base, name):
-                providers[name].append(statement)
+            providers[name].append(statement)
     return providers
 
 
@@ -228,17 +214,27 @@ def _initial_demand(
     demand: defaultdict[str, set[str]] = defaultdict(set)
     needer: dict[tuple[str, str], str] = {}
     opaque: set[str] = set()
+    by_name = {module.name: module for module in result.modules}
     for module in result.modules:
         demand[module.name].update(module.stars.reads)
+        opaque.update(name for name in module.stars.dynamic_imports if name in by_name)
+        star_lines = {line for line, _ in module.stars.statements}
+        whole = set()
         for edge in module.imports:
             if edge.is_external:
                 continue
-            names = (edge.symbol_name,) if edge.symbol_name is not None else edge.attribute_reads
-            for name in names:
-                demand[edge.target].add(name)
-                needer.setdefault((edge.target, name), module.name)
-            if edge.attribute_escapes:
-                opaque.add(edge.target)
+            if edge.symbol_name is not None:
+                demand[edge.target].add(edge.symbol_name)
+                needer.setdefault((edge.target, edge.symbol_name), module.name)
+            elif edge.target in stars and edge.line_number not in star_lines:
+                whole.add(edge.target)
+        if whole:
+            for target, (reads, escapes) in collect_attribute_reads(module, whole, None).items():
+                for name in reads:
+                    demand[target].add(name)
+                    needer.setdefault((target, name), module.name)
+                if escapes:
+                    opaque.add(target)
         for _, base in stars.get(module.name, []):
             if brings.get(base) is None:
                 opaque.add(base)
@@ -266,17 +262,14 @@ def _demand(
         The needed names per module, the first module needing each (module, name) through
         someone else, and the star statements that bring each name, per module.
     """
-    by_name = {module.name: module for module in result.modules}
-    providers = {}
-    for name, statements in stars.items():
-        providers[name] = _providers(statements, brings, (by_name.get(name), by_name))
+    providers = {name: _providers(statements, brings) for name, statements in stars.items()}
     demand, needer = _initial_demand(result, stars, brings)
     changed = True
     while changed:
         changed = False
-        for importer, by_name in providers.items():
+        for importer, by_statement in providers.items():
             for name in list(demand[importer]):
-                for _, base in by_name.get(name, ()):
+                for _, base in by_statement.get(name, ()):
                     if name not in demand[base]:
                         demand[base].add(name)
                         needer.setdefault((base, name), needer.get((importer, name), importer))
@@ -339,7 +332,7 @@ def _location(module: ModuleInfo, line: int, root: Path | None) -> str:
 
 
 def _fix(module: ModuleInfo, statement: Star, context: _Context) -> WildcardFix:
-    """Build the fix of one star statement.
+    """Build the fix of one star statement, or say why none is safe.
 
     Args:
         module: Module that holds it.
@@ -347,7 +340,8 @@ def _fix(module: ModuleInfo, statement: Star, context: _Context) -> WildcardFix:
         context: Project-wide data.
 
     Returns:
-        Remove it when it needs nothing; otherwise the explicit import, with notes.
+        Remove it when it needs nothing; otherwise the explicit import, with notes; or no
+        fix with its reason.
     """
     line, base = statement
     location = _location(module, line, context.root)
@@ -355,8 +349,33 @@ def _fix(module: ModuleInfo, statement: Star, context: _Context) -> WildcardFix:
     names = tuple(
         sorted(n for n in context.demand[module.name] if statement in providers.get(n, ()))
     )
+    cycle = context.cycles.get(module.name)
+    if cycle is not None and cycle == context.cycles.get(base):
+        return WildcardFix(
+            location, module.name, WildcardAction.NO_FIX, names, reason=WildcardReason.CYCLE
+        )
+    loaded_elsewhere = tuple(sorted(set(module.stars.reads) & context.unloaded.get(base, set())))
+    if loaded_elsewhere:
+        return WildcardFix(
+            location,
+            module.name,
+            WildcardAction.NO_FIX,
+            names,
+            reason=WildcardReason.SUBMODULE,
+            reason_names=loaded_elsewhere,
+        )
     if not names:
         return WildcardFix(location, module.name, WildcardAction.REMOVE)
+    unbound = tuple(name for name in names if name in context.conditional.get(base, ()))
+    if unbound:
+        return WildcardFix(
+            location,
+            module.name,
+            WildcardAction.NO_FIX,
+            names,
+            reason=WildcardReason.CONDITIONAL,
+            reason_names=unbound,
+        )
     reads = set(module.stars.reads)
     kept = tuple(name for name in names if name not in reads)
     kept_for = tuple(
@@ -368,13 +387,67 @@ def _fix(module: ModuleInfo, statement: Star, context: _Context) -> WildcardFix:
     )
 
 
+def _import_cycles(result: ParseResult) -> dict[str, int]:
+    """Return the group of mutually importing modules (at import time) of each module.
+
+    Args:
+        result: Parsed project, re-exports resolved.
+
+    Returns:
+        A group number per module that sits in a cycle of module-level imports.
+    """
+    graph = nx.DiGraph(
+        (module.name, edge.target)
+        for module in result.modules
+        for edge in module.imports
+        if not edge.is_external and edge.kind is ImportKind.MODULE
+    )
+    groups: dict[str, int] = {}
+    for number, component in enumerate(nx.strongly_connected_components(graph)):
+        if len(component) > 1:
+            groups.update(dict.fromkeys(component, number))
+    return groups
+
+
+def _unloaded_submodules(
+    bases: Iterable[str],
+    by_name: Mapping[str, ModuleInfo],
+    brings: Mapping[str, frozenset[str] | None],
+    names: Collection[str],
+) -> dict[str, frozenset[str]]:
+    """Return the submodules of each star-imported package its star may or may not bring.
+
+    A star of a package without ``__all__`` brings a submodule only if it was imported
+    before, here or by another module: the source cannot tell.
+
+    Args:
+        bases: Star-imported modules.
+        by_name: Parsed modules by name.
+        brings: Names each star-imported module brings.
+        names: Every module and namespace package of the project.
+
+    Returns:
+        The uncertain submodule names of each package.
+    """
+    unloaded: dict[str, frozenset[str]] = {}
+    for base in bases:
+        module = by_name.get(base)
+        if module is None or module.declares_all or module.file_path.name != PACKAGE_INIT_FILE:
+            continue
+        start = f"{base}{NAME_SEPARATOR}"
+        children = {n[len(start) :].split(NAME_SEPARATOR)[0] for n in names if n.startswith(start)}
+        unloaded[base] = frozenset(children - (brings.get(base) or frozenset()))
+    return unloaded
+
+
 def summarize_wildcards(result: ParseResult, scripts: Collection[str]) -> list[WildcardModule]:
     """Compute the fix of every star import of packaged code, grouped by imported module.
 
-    Demand comes from every analyzed module, scripts and analyzed tests included, so a fix
-    never drops a name another analyzed module needs; only packaged code that is no script
-    gets fixes. When in doubt a name is kept: an extra name only lengthens a fix. Stars
-    whose names cannot be known, or in a cycle of star imports, get no fix (they warn).
+    A fix is given only when it can be proven safe: the names it lists are bound for sure
+    by the imported module, the two modules do not import each other, and no module reads
+    a submodule the star may or may not bring. Otherwise the statement gets no fix and its
+    reason. Demand comes from every analyzed module, scripts and analyzed tests included.
+    Stars whose names cannot be known get no entry (they warn).
 
     Args:
         result: Parsed project, re-exports resolved.
@@ -389,20 +462,29 @@ def summarize_wildcards(result: ParseResult, scripts: Collection[str]) -> list[W
     bases = {base for statements in stars.values() for _, base in statements}
     brings = {base: wildcard_names(base, by_name, stars) for base in bases}
     demand, needer, providers = _demand(result, stars, brings)
-    context = _Context(by_name, providers, demand, needer, result.project_root)
-    cycles = star_cycles(stars)
+    every_name = set(by_name) | set(result.virtual)
+    context = _Context(
+        by_name,
+        providers,
+        demand,
+        needer,
+        result.project_root,
+        _import_cycles(result),
+        {base: wildcard_conditional(base, by_name, stars) for base in bases},
+        _unloaded_submodules(bases, by_name, brings, every_name),
+    )
     grouped: defaultdict[tuple[str, bool], list[WildcardFix]] = defaultdict(list)
     for module in result.modules:
         if not module.is_packaged or module.name in scripts:
             continue
         for line, base in module.stars.statements:
             if base == module.name:
-                if not module.declares_all and not module.has_dynamic_all:
+                if not module.declares_all and not module.surface.dynamic_all:
                     location = _location(module, line, result.project_root)
                     grouped[base, True].append(
                         WildcardFix(location, module.name, WildcardAction.REMOVE_SELF)
                     )
-            elif brings.get(base) is not None and (module.name, base) not in cycles:
+            elif brings.get(base) is not None:
                 grouped[base, False].append(_fix(module, (line, base), context))
     summaries = [
         WildcardModule(
@@ -426,6 +508,8 @@ def _fix_summary(fix: WildcardFix, module: str) -> str:
     Returns:
         ``path:line remove`` or ``path:line from module import a, b``.
     """
+    if fix.action is WildcardAction.NO_FIX:
+        return f"{fix.location} {fix.action} ({fix.reason})"
     if fix.action is not WildcardAction.EXPLICIT:
         return f"{fix.location} {fix.action}"
     names = list(fix.names[:MAX_NAMES_SHOWN])
@@ -453,6 +537,7 @@ def find_wildcard_imports(wildcards: Iterable[WildcardModule]) -> list[Finding]:
             "used_min": wildcard.used_min,
             "used_max": wildcard.used_max,
             "unused_statements": wildcard.unused,
+            "no_fix_statements": wildcard.no_fix,
             "reexported": wildcard.reexported,
             "fixes": FIX_SEPARATOR.join(
                 _fix_summary(fix, wildcard.name) for fix in wildcard.fixes[:MAX_FIXES_SHOWN]

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pathspec
 import pytest
+from wildcard_scenarios import REVIEW_SCENARIOS
 
 from unskein.config import AnalysisConfig
 from unskein.graph.metrics import AnalysisResult, analyze
@@ -128,6 +129,8 @@ def _apply(root: Path, result: AnalysisResult) -> None:
     """Rewrite every star import the report fixes, exactly as the report says."""
     for wildcard in result.wildcards:
         for fix in wildcard.fixes:
+            if fix.action is WildcardAction.NO_FIX:
+                continue
             relative, line = fix.location.rsplit(":", 1)
             path = root / relative
             lines = path.read_text().splitlines(keepends=True)
@@ -152,9 +155,9 @@ def _run(root: Path, code: str) -> tuple[int, str]:
     return done.returncode, done.stdout
 
 
-@pytest.mark.parametrize("name", list(SCENARIOS))
+@pytest.mark.parametrize("name", [*SCENARIOS, *REVIEW_SCENARIOS])
 def test_applying_the_fixes_keeps_the_behavior(make_project: MakeProject, name: str) -> None:
-    files, entry = SCENARIOS[name]
+    files, entry = {**SCENARIOS, **REVIEW_SCENARIOS}[name]
     root = make_project({"app/__init__.py": "", **files})
     before = _run(root, entry)
     assert before[0] == 0
@@ -175,19 +178,19 @@ def test_a_star_whose_names_are_unknown_further_up_warns(make_project: MakeProje
     assert stars == {("mid.py", 2), ("top.py", 1)}
 
 
-def test_a_name_both_modules_import_the_same_way_does_not_keep_the_star(
+def test_a_name_both_modules_import_the_same_way_is_kept_explicitly(
     make_project: MakeProject,
 ) -> None:
     files, _ = SCENARIOS["same_import_before_the_star"]
     root = make_project({"app/__init__.py": "", **files})
     (wildcard,) = _analyzed(root).wildcards
-    assert [fix.action for fix in wildcard.fixes] == [WildcardAction.REMOVE]
+    assert [fix.action for fix in wildcard.fixes] == [WildcardAction.EXPLICIT]
 
 
-def test_a_name_imported_from_the_star_module_itself_does_not_keep_the_star(
+def test_a_name_imported_from_the_star_module_itself_is_kept_explicitly(
     make_project: MakeProject,
 ) -> None:
     files, _ = SCENARIOS["explicit_import_from_the_star_module_first"]
     root = make_project({"app/__init__.py": "", **files})
     (wildcard,) = _analyzed(root).wildcards
-    assert [fix.action for fix in wildcard.fixes] == [WildcardAction.REMOVE]
+    assert [fix.action for fix in wildcard.fixes] == [WildcardAction.EXPLICIT]
