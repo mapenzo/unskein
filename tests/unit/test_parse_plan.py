@@ -64,3 +64,14 @@ def test_plan_names_workspace_members_by_import_name() -> None:
     assert "cookbook.demo" in plan.shared.unpackaged
     assert "core.engine" not in plan.shared.unpackaged
     assert plan.entry_points == ("core.cli",)
+
+
+def test_parse_result_carries_distributions_and_module_distributions() -> None:
+    root = FIXTURES / "distributions_monorepo"
+    result = PythonAdapter(AnalysisConfig()).parse(sorted(root.rglob("*.py")), root)
+    by_module = {m.name: m.distribution for m in result.modules}
+    assert by_module["core.hooks"] == "core"
+    assert by_module["core_plugins"] == "core-plugins"
+    assert by_module["legacy.tool"] is None
+    assert [d.name for d in result.distributions] == ["core", "core-plugins"]
+    assert result.project_root == root.absolute()

@@ -284,3 +284,17 @@ def test_parallel_parse_keeps_layout_warnings_and_packaging(make_project: MakePr
         m.name: m.is_packaged for m in sequential.modules
     }
     assert {m.name: m.is_packaged for m in parallel.modules}["tools.run"] is False
+
+
+def test_parallel_parse_keeps_distributions() -> None:
+    root = Path(__file__).parent.parent / "fixtures" / "distributions_monorepo"
+    files = sorted(root.rglob("*.py"))
+    config = AnalysisConfig(max_workers=2)
+    adapter = PythonAdapter(config)
+    parallel = pipeline._parse_parallel(files, adapter, root, config)
+    sequential = adapter.parse(files, root)
+    assert {m.name: m.distribution for m in parallel.modules} == {
+        m.name: m.distribution for m in sequential.modules
+    }
+    assert parallel.distributions == sequential.distributions
+    assert parallel.project_root == sequential.project_root

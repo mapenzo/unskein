@@ -596,14 +596,26 @@ class PythonAdapter(LanguageAdapter):
 
         Returns:
             One task per file, in the given order, sharing the project index, plus the
-            layout warnings and the entry points its distributions declare.
+            layout warnings, the entry points its distributions declare, the named
+            distributions with the distribution of each module, and the project root.
         """
         layout, warnings = build_layout(root, files, self.config.source_roots)
         named, collisions = name_files(layout, files)
         tasks = [(path, name.name) for path, name in named]
         unpackaged = frozenset(name.name for _, name in named if not name.is_packaged)
         index = ProjectIndex.from_names({name for _, name in tasks}, unpackaged)
-        return ParsePlan(tasks, index, [*warnings, *collisions], layout.script_modules)
+        module_distributions = {
+            name.name: name.distribution for _, name in named if name.distribution is not None
+        }
+        return ParsePlan(
+            tasks,
+            index,
+            [*warnings, *collisions],
+            layout.script_modules,
+            layout.distribution_infos,
+            module_distributions,
+            layout.root,
+        )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:
         """Parse one Python file against the project index.
