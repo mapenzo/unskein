@@ -140,22 +140,22 @@ def collect_read_names(tree: ast.Module) -> tuple[str, ...]:
     Returns:
         The names, sorted.
     """
-    docstrings = {
-        id(node.value)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
-    }
     names: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-            names.add(node.id)
-        elif (
-            isinstance(node, ast.Constant)
-            and isinstance(node.value, str)
-            and id(node) not in docstrings
-            and len(node.value) <= MAX_ANNOTATION_LENGTH
-        ):
-            names.update(IDENTIFIER.findall(node.value))
+    # One pass with an explicit stack: ast.walk twice was the largest cost on big modules.
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Name):
+            if isinstance(node.ctx, ast.Load):
+                names.add(node.id)
+            continue
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            continue  # a docstring or a bare constant: prose, not code
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, str) and len(node.value) <= MAX_ANNOTATION_LENGTH:
+                names.update(IDENTIFIER.findall(node.value))
+            continue
+        stack.extend(ast.iter_child_nodes(node))
     return tuple(sorted(names))
 
 
