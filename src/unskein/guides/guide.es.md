@@ -52,6 +52,18 @@ detección.
   módulos, y los imports dentro de un mismo paquete no cuentan. Bajo la tabla, las mayores
   dependencias entre paquetes con su número de imports. Ambos se muestran, y se pasan a la
   IA, incluso con `[findings] enabled = false`.
+- **Distribuciones**: solo en monorepos con dos o más distribuciones con nombre (o si
+  alguna importa código que ninguna empaqueta). Por distribución: sus módulos, de qué otras
+  importa de verdad y si se puede instalar sola, sin extras, sin que falle ningún import;
+  si no, el `archivo:línea` que lo impide. Cada import entre distribuciones cuenta como
+  *requerido* (al importar), *perezoso* (dentro de una función) o *protegido* (en el cuerpo
+  de un `try` que captura `ImportError`, `ModuleNotFoundError`, `Exception` o un `except:`
+  desnudo, o de `with contextlib.suppress(...)` de esos errores); los protegidos son
+  opcionales por contrato y nunca impiden instalarla. Las dependencias declaradas se leen de
+  `[project] dependencies`, sus extras, `[dependency-groups]` y `setup.cfg`; con
+  `dynamic = ["dependencies"]` o solo `setup.py` son desconocidas. Cada hallazgo entre
+  distribuciones trae un **Arreglo** que se puede copiar (la línea a añadir y el manifiesto
+  donde va). Se calcula también con `[findings] enabled = false`.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto

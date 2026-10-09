@@ -132,6 +132,7 @@ src/unskein/
 │   ├── base.py             # interfaz LanguageAdapter (el "adapter")
 │   ├── discovery.py        # os.walk, excludes, encoding
 │   ├── layout.py           # distribuciones desde manifiestos y nombre de cada archivo
+│   ├── requirements.py     # dependencias declaradas por distribución
 │   ├── indirection.py      # resolución de re-exports
 │   ├── usage.py            # uso de nombres importados: acceso por atributo y evidencia para `untangle`
 │   ├── exports.py          # nombres que un módulo expone a `import *`
@@ -142,6 +143,7 @@ src/unskein/
 │   ├── metrics.py           # Ca, Ce, inestabilidad, ciclos
 │   ├── findings.py          # hallazgos: reglas deterministas sobre el grafo
 │   ├── scripts.py           # scripts (no empaquetados y sin importadores) y consumidores
+│   ├── distributions.py     # uso entre distribuciones, reglas 6-9 e instalabilidad
 │   ├── impact.py            # radio de impacto transitivo (impact_radius)
 │   ├── steps.py             # pasos de refactor y sus costes (choose_step)
 │   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
@@ -165,9 +167,10 @@ para paquetes Python distribuibles).
   y las métricas de acoplamiento se calculan siempre, sin LLM. La IA solo
   interpreta lo que el grafo ya calculó — nunca decide qué es un módulo o un
   import.
-- **Los hallazgos (`graph/findings.py`) son reglas deterministas sobre el grafo**;
-  la IA solo los interpreta y nunca cambian el código de salida.
-  Son cinco reglas; la quinta (violación de capas) solo existe con `[layers]`.
+- **Los hallazgos (`graph/findings.py`, `graph/distributions.py`) son reglas deterministas
+  sobre el grafo**; la IA solo los interpreta y nunca cambian el código de salida.
+  Son nueve reglas; la quinta (violación de capas) solo existe con `[layers]`, y de la
+  sexta a la novena (entre distribuciones) solo con distribuciones con nombre.
 - **`is_external` se calcula comparando el primer segmento del import contra los
   módulos del proyecto**, no contra una lista de stdlib/paquetes conocidos.
 - **Ciclos y marañas = grafo al importar.** Cada `ImportEdge` lleva su `ImportKind`

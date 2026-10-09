@@ -49,6 +49,18 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   one package do not count. Below the table, the largest dependencies between packages with
   their number of imports. Both are shown, and given to the AI, even with
   `[findings] enabled = false`.
+- **Distributions**: only in monorepos with two or more named distributions (or when one
+  imports code no distribution ships). Per distribution: its modules, which others it
+  really imports and whether it can be installed alone, without extras, with no failing
+  import; if not, the `file:line` that prevents it. Each import between distributions counts
+  as *required* (at import time), *lazy* (inside a function) or *guarded* (in the body of a
+  `try` that catches `ImportError`, `ModuleNotFoundError`, `Exception` or a bare `except:`,
+  or of `with contextlib.suppress(...)` for those errors); guarded imports are optional by
+  contract and never prevent installing it. Declared dependencies are read from
+  `[project] dependencies`, its extras, `[dependency-groups]` and `setup.cfg`; with
+  `dynamic = ["dependencies"]` or only `setup.py` they are unknown. Each finding between
+  distributions comes with a **Fix** you can copy (the line to add and the manifest it goes
+  in). It is computed even with `[findings] enabled = false`.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.

@@ -350,6 +350,22 @@ configurada más la raíz del proyecto, cada uno empaqueta todo lo que contiene.
 así que los imports entre miembros del workspace son internos. Los entry points se leen
 de los scripts de todas las distribuciones, no solo de la raíz.
 
+**Dependencias declaradas** (`parsers/requirements.py`, `read_dependencies`). Una
+distribución cuyo manifiesto declara nombre (`[project] name`, `[tool.poetry] name` o
+`[metadata] name` de `setup.cfg`) lleva un `DistributionInfo`: nombre normalizado PEP 503,
+raíz, `requires`, `optional` (por extra y por grupo), versión literal y manifiesto. Gana
+`pyproject.toml` con tabla `[project]` (`dependencies`, `[project.optional-dependencies]`,
+`[dependency-groups]` de PEP 735 con `include-group`); si no, `setup.cfg`
+(`[options] install_requires`, `[options.extras_require]`, `[metadata] version`). De cada
+especificador PEP 508 solo se toma el nombre, con un regex (sin depender de `packaging`).
+`requires = None` (desconocido) con `dynamic = ["dependencies"]`, solo `setup.py` o sin
+declaración legible; `[project]` sin `dependencies` declara un conjunto vacío. Un
+especificador sin nombre, o un `include-group` a un grupo inexistente o en ciclo, da
+`INVALID_REQUIREMENT` y se ignora; los manifiestos ilegibles ya los avisó el layout.
+`ModuleName.distribution` y `ModuleInfo.distribution` dicen qué distribución con nombre
+empaqueta cada módulo; el `ParsePlan` lleva las distribuciones, ese mapa y la raíz del
+proyecto, y `ParseResult.from_file_results` los pasa al resultado (también en paralelo).
+
 ## 3. Parser de Python (`parsers/python_parser.py`)
 
 Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
@@ -393,6 +409,14 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   nombre). Manda el contexto más débil: un import perezoso dentro de un bloque
   `TYPE_CHECKING`, o un bloque `TYPE_CHECKING` dentro de una función, es `TYPE_CHECKING`.
   El `else` de un `if TYPE_CHECKING` y el cuerpo de `if not TYPE_CHECKING` son `MODULE`.
+
+  **Imports protegidos (`ImportEdge.is_guarded`)**: la sentencia está en el **cuerpo** de
+  un `try`/`try*` con algún handler que captura `ImportError`, `ModuleNotFoundError`,
+  `Exception` o `BaseException` (por nombre o atributo, también en tuplas) o un `except:`
+  desnudo, o en el cuerpo de un `with` cuyo gestor es `suppress(...)`/`x.suppress(...)` con
+  alguno de esos nombres. Los handlers, `else` y `finally` no protegen. La protección se
+  hereda hacia los bloques anidados (`block_guarded`, junto a `block_kind` en
+  `iter_statements`). Un import protegido es opcional por contrato.
 - **Detección de re-exports**: solo en `__init__.py`, cada `ImportFrom`
   interno de un *símbolo* (no de un submódulo) genera
   `ReExport(paquete, módulo_origen, asname or name)`. Con alias, la cadena se
@@ -766,6 +790,36 @@ aplicados) y construye el grafo real.
   los módulos que definen cada símbolo. Los usos que no se pueden resolver siguen
   apuntando a la fachada, y ahí sí es un dato real.
 
+### Hallazgos entre distribuciones (`graph/distributions.py`)
+
+`analyze_distributions(result, scripts)` cruza lo que declara cada distribución con nombre
+con cómo usa sus imports; se calcula siempre (la tabla de instalabilidad lo necesita) y sus
+hallazgos solo se añaden a `AnalysisResult.findings` con los hallazgos activados. Sin
+distribuciones con nombre no hace nada.
+
+- **Uso** (`import_use`): `REQUIRED` (nivel de módulo, sin proteger), `LAZY` (en una función,
+  sin proteger), `GUARDED` (`is_guarded`); los `TYPE_CHECKING` se ignoran. Los que rompen
+  instalada sola son `REQUIRED + LAZY`.
+- **Aristas** (`DistributionEdge`): cada import interno de un módulo de A (que no sea script)
+  a un módulo parseado de B ≠ A suma en A → B, con su primera ubicación por uso
+  (`ruta:línea` POSIX relativa a la raíz). Su `DependencyStatus` sale del manifiesto de A:
+  `REQUIRED`, `OPTIONAL` (con los extras o grupos que la declaran), `UNDECLARED` o `UNKNOWN`
+  (`requires = None`). Un import a código no empaquetado (ni script ni nombrado por ruta) se
+  agrupa por su primer segmento (`UnpackagedUse`).
+
+| # | `FindingKind` | Se dispara | `modules` | Arreglo (`fix`) |
+|---|---|---|---|---|
+| 6 | `UNDECLARED_DEPENDENCY` | arista `UNDECLARED` con usos que rompen | `(A, B)` | `add_dependency`: `"B>=versión"` (o `"B"`) en `[project] dependencies` / `[options] install_requires` del manifiesto de A |
+| 7 | `OPTIONAL_REQUIRED` | arista `OPTIONAL` con usos `REQUIRED` | `(A, B)` | `promote_or_guard`: pasarla a requeridas o proteger el import |
+| 8 | `UNPACKAGED_IMPORT` | import de código no empaquetado con usos que rompen | `(A, segmento)` | `package_or_move`: `segmento/` dentro de un paquete de A o entre sus paquetes |
+| 9 | `DISTRIBUTION_CYCLE` | componente fuertemente conexa de ≥ 2 distribuciones (todas las aristas) | miembros ordenados | `cut_edge`: aristas a cortar, la de menos usos que rompen primero, repitiendo hasta que no quede ciclo |
+
+La evidencia es plana (números y cadenas cortas); el detalle de cada arista del ciclo vive
+en `AnalysisResult.distribution_edges`. `AnalysisResult.distributions` lleva un
+`DistributionSummary` por distribución: módulos, distribuciones que usa, `installable`
+(`False` si es origen de un hallazgo 6-8; `None` con dependencias desconocidas y sin hallazgo
+8) y `blocker` (`ruta:línea → destino` del más grave: 8, luego 6, luego 7).
+
 ### Ca interno y consumidores (`graph/scripts.py`)
 
 Ca cuenta dependencias desde dentro del sistema medido (Martin): un consumidor externo
@@ -1093,6 +1147,8 @@ Estructura del reporte:
 ## Métricas generales
 ## Ciclos de dependencia
 ## Paquetes                         (si hay resumen por paquetes)
+## Distribuciones                   (con ≥ 2 distribuciones con nombre o un hallazgo 8:
+                                    módulos, qué usa y ¿instalable sola?)
 ## Scripts                          (solo si hay scripts: por directorio de primer nivel,
                                     con recuento y paquetes que usan)
 ## Módulos con mayor acoplamiento   (tabla, top 15, con nota de truncado; columna

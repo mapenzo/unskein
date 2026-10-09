@@ -72,6 +72,15 @@ Architecture health: fair.
   layers you declare.
 - **Package overview and impact**: coupling measured between packages, and for each
   coupled module how many others depend on it, directly or indirectly.
+- **Monorepo distributions**: with no configuration, each `pyproject.toml` or `setup.cfg`
+  is a distribution, and unskein says whether each one can be installed alone. Imports
+  inside a `try` that catches import errors count as optional, so they are not reported.
+  It also reports dependencies declared only in an extra but imported at load time,
+  imports of code no distribution ships, and cycles between distributions, with the
+  status of each edge. Each finding has a fix you can copy, such as
+  `add "litellm>=1.105.0" to [project] dependencies in enterprise/pyproject.toml`.
+  Against deptry and tach on litellm, this replaces hundreds of per-import lines with one
+  finding per pair of distributions and drops their false positives on guarded imports.
 - **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,
