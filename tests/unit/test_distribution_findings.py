@@ -226,3 +226,18 @@ def test_cycle_of_three_lists_every_cut_needed_to_break_it(make_project: MakePro
     assert finding.modules == ("a", "b", "c")
     assert finding.evidence["cuts"] == "b → c, b → a"
     assert finding.evidence["cut_breaking"] == 1
+
+
+def test_two_manifests_with_the_same_name_give_one_summary(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\ndependencies = []\n',
+            "a/__init__.py": "",
+            "one/pyproject.toml": '[project]\nname = "twin"\nversion = "1"\n',
+            "one/twin/__init__.py": "",
+            "two/pyproject.toml": '[project]\nname = "twin"\nversion = "2"\n',
+            "two/twin/__init__.py": "",
+        }
+    )
+    names = [summary.name for summary in _analyzed(root).distributions]
+    assert names == ["a", "twin"]

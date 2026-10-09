@@ -745,3 +745,22 @@ def test_optional_required_line_and_fix_en(tmp_path: Path) -> None:
         "  - Fix: move `b` from the extras `x` to the required dependencies in `pyproject.toml`, "
         "or guard the import at `a/__init__.py:1` with `try`/`except ImportError`" in report
     )
+
+
+def test_unknown_dependencies_do_not_claim_to_be_dynamic_en(tmp_path: Path) -> None:
+    files = {
+        "pyproject.toml": '[project]\nname = "a"\ndependencies = []\n',
+        "a/__init__.py": "",
+        "poet/pyproject.toml": '[tool.poetry]\nname = "p"\npackages = [{include = "p_pkg"}]\n',
+        "poet/p_pkg/__init__.py": "import a\n",
+    }
+    for relative, content in files.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(content)
+    report = render(tmp_path, analyzed(tmp_path))
+    assert "| `p` | 1 | `a` | unknown (its dependencies cannot be read) |" in report
+
+
+def test_spanish_use_counts_do_not_put_a_plural_after_one() -> None:
+    report = _distributions_report(Lang.ES)
+    assert "requeridos: 2, perezosos: 0, protegidos: 0" in report

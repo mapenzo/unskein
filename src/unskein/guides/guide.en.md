@@ -58,7 +58,9 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   or of `with contextlib.suppress(...)` for those errors); guarded imports are optional by
   contract and never prevent installing it. Declared dependencies are read from
   `[project] dependencies`, its extras, `[dependency-groups]` and `setup.cfg`; with
-  `dynamic = ["dependencies"]` or only `setup.py` they are unknown. Each finding between
+  `dynamic = ["dependencies"]`, only `setup.py` or another format
+  (`[tool.poetry.dependencies]`) they are unknown, and that distribution is never the
+  source of an undeclared dependency. Each finding between
   distributions comes with a **Fix** you can copy (the line to add and the manifest it goes
   in). It is computed even with `[findings] enabled = false`.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).

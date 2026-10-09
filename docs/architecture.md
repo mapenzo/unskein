@@ -358,13 +358,14 @@ raíz, `requires`, `optional` (por extra y por grupo), versión literal y manifi
 `[dependency-groups]` de PEP 735 con `include-group`); si no, `setup.cfg`
 (`[options] install_requires`, `[options.extras_require]`, `[metadata] version`). De cada
 especificador PEP 508 solo se toma el nombre, con un regex (sin depender de `packaging`).
-`requires = None` (desconocido) con `dynamic = ["dependencies"]`, solo `setup.py` o sin
-declaración legible; `[project]` sin `dependencies` declara un conjunto vacío. Un
+`requires = None` (desconocido) con `dynamic = ["dependencies"]`, solo `setup.py` u otro
+formato (`[tool.poetry.dependencies]` no se lee); `[project]` sin `dependencies` declara un conjunto vacío. Un
 especificador sin nombre, o un `include-group` a un grupo inexistente o en ciclo, da
 `INVALID_REQUIREMENT` y se ignora; los manifiestos ilegibles ya los avisó el layout.
 `ModuleName.distribution` y `ModuleInfo.distribution` dicen qué distribución con nombre
 empaqueta cada módulo; el `ParsePlan` lleva las distribuciones, ese mapa y la raíz del
 proyecto, y `ParseResult.from_file_results` los pasa al resultado (también en paralelo).
+Dos manifiestos con el mismo nombre dan una sola `DistributionInfo`: la del menos profundo.
 
 ## 3. Parser de Python (`parsers/python_parser.py`)
 

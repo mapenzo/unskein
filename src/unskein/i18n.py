@@ -289,8 +289,8 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "report.installable.yes": {Lang.ES: "sí", Lang.EN: "yes"},
     "report.installable.no": {Lang.ES: "no: `{blocker}`", Lang.EN: "no: `{blocker}`"},
     "report.installable.unknown": {
-        Lang.ES: "desconocido (dependencias dinámicas)",
-        Lang.EN: "unknown (dynamic dependencies)",
+        Lang.ES: "desconocido (no se pueden leer sus dependencias)",
+        Lang.EN: "unknown (its dependencies cannot be read)",
     },
     "report.summary_distributions": {
         Lang.ES: "{count} distribuciones; {blocked} no se pueden instalar solas.",
@@ -531,7 +531,7 @@ _REPORT: dict[str, dict[Lang, str]] = {
 
 _FINDINGS: dict[str, dict[Lang, str]] = {
     "finding.uses": {
-        Lang.ES: "{required} requeridos, {lazy} perezosos, {guarded} protegidos",
+        Lang.ES: "requeridos: {required}, perezosos: {lazy}, protegidos: {guarded}",
         Lang.EN: "{required} required, {lazy} lazy, {guarded} guarded",
     },
     "finding.first": {Lang.ES: "primero: `{first}`", Lang.EN: "first: `{first}`"},

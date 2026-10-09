@@ -544,10 +544,12 @@ class ProjectLayout:
 
     @property
     def distribution_infos(self) -> tuple[DistributionInfo, ...]:
-        """Return the named distributions, sorted by name."""
-        return tuple(
-            sorted((d.info for d in self.distributions if d.info), key=lambda info: info.name)
-        )
+        """Return the named distributions, sorted by name; of two with one name, the shallower."""
+        by_name: dict[str, DistributionInfo] = {}
+        infos = (d.info for d in self.distributions if d.info)
+        for info in sorted(infos, key=lambda info: (info.name, len(info.root.parts), info.root)):
+            by_name.setdefault(info.name, info)
+        return tuple(by_name.values())
 
 
 def _name_with_depth(layout: ProjectLayout, absolute: Path) -> tuple[ModuleName, int]:
