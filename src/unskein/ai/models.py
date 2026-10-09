@@ -69,14 +69,15 @@ class ModuleCoupling:
     Attributes:
         module: Dotted module name.
         ca: Afferent coupling, modules that depend on it.
-        ce: Efferent coupling, modules it depends on.
-        instability: ``Ce / (Ca + Ce)``, rounded.
+        ce: Efferent coupling, modules it depends on; None when unknown (compiled code
+            or a stub only).
+        instability: ``Ce / (Ca + Ce)``, rounded; None when Ce is unknown.
     """
 
     module: str
     ca: int
-    ce: int
-    instability: float
+    ce: int | None
+    instability: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,8 +181,9 @@ class AIContext:
         total_hidden_tangles: Hidden tangles before truncation.
         namespaces: Namespace packages among the top coupled modules: packages without an
             ``__init__.py``, with no code of their own.
-        native: Compiled extensions and stub-only modules: their code cannot be read, so
-            their ce is unknown.
+        native: Compiled extensions and stub-only modules, truncated: their code cannot be
+            read, so their ce is unknown.
+        total_native: Compiled extensions and stub-only modules before truncation.
     """
 
     total_modules: int
@@ -201,6 +203,7 @@ class AIContext:
     total_hidden_tangles: int = 0
     namespaces: list[str] = field(default_factory=list)
     native: list[NativeSummary] = field(default_factory=list)
+    total_native: int = 0
 
 
 class AIFailure(StrEnum):
