@@ -127,6 +127,34 @@ def render_report(context: ReportContext, lang: Lang) -> str:
     return "\n\n".join("\n".join(lines) for lines in sections) + "\n"
 
 
+def _module_count(result: AnalysisResult) -> int:
+    """Return how many modules the graph has; namespace packages are not modules.
+
+    Args:
+        result: The deterministic analysis.
+
+    Returns:
+        Nodes of the graph that are files.
+    """
+    return result.graph.number_of_nodes() - len(result.namespaces)
+
+
+def _module_name(name: str, result: AnalysisResult, lang: Lang) -> str:
+    """Render a module name, marked when it is a namespace package with no file.
+
+    Args:
+        name: Dotted module name.
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        The name in backticks, followed by the namespace marker when it applies.
+    """
+    if name in result.namespaces:
+        return f"`{name}` {t('report.namespace_marker', lang)}"
+    return f"`{name}`"
+
+
 def _cycle_count(result: AnalysisResult) -> str:
     """Return the number of cycles, marked with ``+`` when the search was truncated.
 
@@ -150,6 +178,10 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         Markdown lines of the section.
     """
     result = context.result
+    namespaces = ""
+    if result.namespaces:
+        key = "one" if len(result.namespaces) == 1 else "other"
+        namespaces = t(f"report.summary_namespaces.{key}", lang, count=len(result.namespaces))
     scripts = ""
     if result.scripts:
         key = "one" if len(result.scripts) == 1 else "other"
@@ -157,8 +189,8 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     counts = t(
         "report.summary_counts",
         lang,
-        modules=result.graph.number_of_nodes(),
-        scripts=scripts,
+        modules=_module_count(result),
+        scripts=f"{namespaces}{scripts}",
         dependencies=result.graph.number_of_edges(),
         cycles=_cycle_count(result),
     )
@@ -166,7 +198,11 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
     if result.high_coupling_modules:
         top = result.coupling_metrics[result.high_coupling_modules[0]]
         top_line = t(
-            "report.summary_top_module", lang, module=top.module, ca=top.afferent, ce=top.efferent
+            "report.summary_top_module",
+            lang,
+            module=_module_name(top.module, result, lang),
+            ca=top.afferent,
+            ce=top.efferent,
         )
         lines.append(top_line)
     if result.tangles:
@@ -220,7 +256,9 @@ def _metrics(result: AnalysisResult, lang: Lang) -> list[str]:
     Returns:
         Markdown lines of the section.
     """
-    rows = [("report.metric.modules", result.graph.number_of_nodes())]
+    rows = [("report.metric.modules", _module_count(result))]
+    if result.namespaces:
+        rows.append(("report.metric.namespaces", len(result.namespaces)))
     if result.scripts:
         rows.append(("report.metric.scripts", len(result.scripts)))
     rows += [
@@ -391,7 +429,8 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
         m = result.coupling_metrics[name]
         consumers = f" | {m.consumers}" if has_consumers else ""
         lines.append(
-            f"| `{name}` | {m.afferent} | {m.efferent} | {m.instability:.2f} "
+            f"| {_module_name(name, result, lang)} | {m.afferent} | {m.efferent} "
+            f"| {m.instability:.2f} "
             f"| {result.impact.get(name, NOT_MEASURED)}{consumers} |"
         )
     if len(modules) > MAX_MODULES_IN_TABLE:
@@ -653,7 +692,7 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
             layer_from=evidence["layer_from"],
             layer_to=evidence["layer_to"],
         )
-        return f"- `{source}` → `{target}` ({layers})"
+        return f"- `{source}` → {_module_name(target, result, lang)} ({layers})"
     (module,) = finding.modules
     if finding.kind is FindingKind.ORPHAN:
         return f"- `{module}`"

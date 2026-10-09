@@ -158,6 +158,8 @@ class AIContext:
         hidden_tangles: Largest groups coupled only through lazy or type-only imports,
             truncated.
         total_hidden_tangles: Hidden tangles before truncation.
+        namespaces: Namespace packages among the top coupled modules: packages without an
+            ``__init__.py``, with no code of their own.
     """
 
     total_modules: int
@@ -175,6 +177,7 @@ class AIContext:
     total_package_edges: int = 0
     hidden_tangles: list[TangleSummary] = field(default_factory=list)
     total_hidden_tangles: int = 0
+    namespaces: list[str] = field(default_factory=list)
 
 
 class AIFailure(StrEnum):

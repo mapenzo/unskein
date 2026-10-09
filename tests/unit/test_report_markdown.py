@@ -801,3 +801,29 @@ def test_undeclared_dependency_listed_only_in_a_group_says_so_en(tmp_path: Path)
         "- `a` → `b` (1 required, 0 lazy, 0 guarded; first: `a/__init__.py:1`; "
         "only in group `dev`, never installed with the package)" in report
     )
+
+
+NAMESPACE_ROOT = Path(__file__).parent.parent / "fixtures" / "namespace_project"
+
+
+def test_summary_counts_namespaces_apart_en() -> None:
+    report = render(NAMESPACE_ROOT, analyzed(NAMESPACE_ROOT))
+    assert "6 modules + 1 namespace package, " in report
+    assert "| Namespace packages | 1 |" in report
+
+
+def test_namespace_names_are_marked_es(tmp_path: Path) -> None:
+    files = {"app/__init__.py": "", "app/types/models.py": ""}
+    for user in ("a", "b", "c"):
+        files[f"app/{user}.py"] = "import app.types\ndef f(x):\n    return x(app.types)\n"
+    for relative, content in files.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(content)
+    report = render(tmp_path, analyzed(tmp_path), Lang.ES)
+    assert "| `app.types` *(espacio de nombres)* | 3 | 0 |" in report
+    assert "Módulo más acoplado: `app.types` *(espacio de nombres)* (Ca 3, Ce 0)." in report
+
+
+def test_projects_without_namespaces_do_not_mention_them(simple_project: Path) -> None:
+    plain = render(simple_project, analyzed(simple_project))
+    assert "namespace" not in plain.lower()

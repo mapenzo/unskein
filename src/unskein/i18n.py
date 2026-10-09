@@ -169,6 +169,22 @@ _REPORT: dict[str, dict[Lang, str]] = {
     "report.summary_scripts.one": {Lang.ES: " + {count} script", Lang.EN: " + {count} script"},
     "report.summary_scripts.other": {Lang.ES: " + {count} scripts", Lang.EN: " + {count} scripts"},
     "report.metric.scripts": {Lang.ES: "Scripts", Lang.EN: "Scripts"},
+    "report.summary_namespaces.one": {
+        Lang.ES: " + {count} espacio de nombres",
+        Lang.EN: " + {count} namespace package",
+    },
+    "report.summary_namespaces.other": {
+        Lang.ES: " + {count} espacios de nombres",
+        Lang.EN: " + {count} namespace packages",
+    },
+    "report.metric.namespaces": {
+        Lang.ES: "Espacios de nombres",
+        Lang.EN: "Namespace packages",
+    },
+    "report.namespace_marker": {
+        Lang.ES: "*(espacio de nombres)*",
+        Lang.EN: "*(namespace package)*",
+    },
     "report.consumers": {Lang.ES: "Consumidores", Lang.EN: "Consumers"},
     "report.coupled_consumers_note": {
         Lang.ES: "Consumidores: scripts, ejemplos o CI del repositorio que importan el "
@@ -194,8 +210,8 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.EN: "- `{directory}/` ({count} scripts) → {uses}",
     },
     "report.summary_top_module": {
-        Lang.ES: "Módulo más acoplado: `{module}` (Ca {ca}, Ce {ce}).",
-        Lang.EN: "Most coupled module: `{module}` (Ca {ca}, Ce {ce}).",
+        Lang.ES: "Módulo más acoplado: {module} (Ca {ca}, Ce {ce}).",
+        Lang.EN: "Most coupled module: {module} (Ca {ca}, Ce {ce}).",
     },
     "report.health": {
         Lang.ES: "Salud de la arquitectura (IA): {health}.",

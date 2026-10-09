@@ -665,3 +665,14 @@ def test_system_prompt_explains_distribution_findings() -> None:
     prompt = SYSTEM_PROMPT
     assert "undeclared_dependency" in prompt
     assert "distribution names" in prompt
+
+
+def test_context_lists_namespaces_and_excludes_them_from_module_count() -> None:
+    root = Path(__file__).parent.parent / "fixtures" / "namespace_project"
+    context = build_context(analyze_fixture(root))
+    assert context.namespaces == ["app.types"]
+    assert context.total_modules == 6
+
+
+def test_system_prompt_explains_namespaces() -> None:
+    assert "namespaces" in SYSTEM_PROMPT
