@@ -878,14 +878,14 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "extension is required.",
     },
     "finding.wildcard_import.title": {
-        Lang.ES: "Import con estrella",
+        Lang.ES: "Import con asterisco",
         Lang.EN: "Wildcard import",
     },
     "finding.wildcard_import.explanation": {
         Lang.ES: "`from módulo import *` trae todos los nombres públicos del módulo, pero el "
         "código solo usa algunos. unskein calcula, con el proyecto entero, los nombres que "
         "necesita cada sentencia: los que el módulo lee, los que otros módulos importan desde "
-        "él y los que pasan a quienes lo importan con estrella.",
+        "él y los que pasan a quienes lo importan con asterisco.",
         Lang.EN: "`from module import *` brings every public name of the module, but the code "
         "uses only some of them. unskein computes, with the whole project, the names each "
         "statement needs: those the module reads, those other modules import from it and "
@@ -896,6 +896,66 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "si no usa nada.",
         Lang.EN: "Replace each statement with the explicit import shown, or remove it when it "
         "uses nothing.",
+    },
+    "finding.wildcard.importers.one": {Lang.ES: "{count} módulo", Lang.EN: "{count} module"},
+    "finding.wildcard.importers.other": {Lang.ES: "{count} módulos", Lang.EN: "{count} modules"},
+    "finding.wildcard.statements.one": {
+        Lang.ES: "{count} sentencia",
+        Lang.EN: "{count} statement",
+    },
+    "finding.wildcard.statements.other": {
+        Lang.ES: "{count} sentencias",
+        Lang.EN: "{count} statements",
+    },
+    "finding.wildcard.used.one": {
+        Lang.ES: "usa {used_max} de {names} nombres",
+        Lang.EN: "it uses {used_max} of {names} names",
+    },
+    "finding.wildcard.used.other": {
+        Lang.ES: "usan de {used_min} a {used_max} de {names} nombres",
+        Lang.EN: "they use {used_min} to {used_max} of {names} names",
+    },
+    "finding.wildcard.unused.one": {
+        Lang.ES: "{count} no usa nada",
+        Lang.EN: "{count} uses nothing",
+    },
+    "finding.wildcard.unused.other": {
+        Lang.ES: "{count} no usan nada",
+        Lang.EN: "{count} use nothing",
+    },
+    "finding.wildcard.reexported.one": {
+        Lang.ES: "{count} nombre se conserva porque otros lo importan desde aquí",
+        Lang.EN: "{count} name kept because other modules import it from here",
+    },
+    "finding.wildcard.reexported.other": {
+        Lang.ES: "{count} nombres se conservan porque otros los importan desde aquí",
+        Lang.EN: "{count} names kept because other modules import them from here",
+    },
+    "finding.wildcard.self": {
+        Lang.ES: "{count} `from . import *` sin efecto",
+        Lang.EN: "{count} `from . import *` with no effect",
+    },
+    "finding.wildcard.fix.remove": {
+        Lang.ES: "eliminar (no usa nada; la línea carga `{module}` al importar, así que "
+        "borrarla también quita sus efectos al cargar)",
+        Lang.EN: "remove (it uses nothing; the line loads `{module}` when imported, so "
+        "removing it also drops its load-time effects)",
+    },
+    "finding.wildcard.fix.remove_self": {
+        Lang.ES: "eliminar (se importa a sí mismo y, sin `__all__`, no hace nada)",
+        Lang.EN: "remove (it imports itself and, without `__all__`, does nothing)",
+    },
+    "finding.wildcard.note.kept": {
+        Lang.ES: "se conservan para `{importer}`: {names}",
+        Lang.EN: "kept for `{importer}`: {names}",
+    },
+    "finding.wildcard.note.elsewhere": {
+        Lang.ES: "los define `{origin}`: {names}",
+        Lang.EN: "defined in `{origin}`: {names}",
+    },
+    "finding.wildcard.note.external": {
+        Lang.ES: "vienen de un import externo: {names}",
+        Lang.EN: "from a third-party import: {names}",
     },
     "finding.fix.import_from": {Lang.ES: "importa {items}", Lang.EN: "import {items}"},
     "finding.fix.import_from.item": {

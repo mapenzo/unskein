@@ -965,3 +965,63 @@ def test_native_boundary_table_is_capped(make_project) -> None:
     assert "| `app._n14` |" in report
     assert "| `app._n15` |" not in report
     assert "…and 2 more" in report
+
+
+STAR_ROOT = Path(__file__).parent.parent / "fixtures" / "star_project"
+
+
+def test_wildcard_findings_en() -> None:
+    report = render(STAR_ROOT, analyzed(STAR_ROOT))
+    assert "### Wildcard import (5)" in report
+    assert (
+        "- `app.types` (5 modules, 5 statements; they use 0 to 2 of 4 names; 2 use nothing; "
+        "1 name kept because other modules import it from here)\n"
+        "  - `app/annot.py:1`: `from app.types import D`\n"
+        "  - `app/api.py:1`: `from app.types import A, B`\n"
+        "  - `app/both.py:1`: remove (it uses nothing; the line loads `app.types` when "
+        "imported, so removing it also drops its load-time effects)\n"
+        "  - `app/chain_mid.py:1`: `from app.types import C` (kept for `app.chain_top`: `C`)\n"
+        "  - `app/dead.py:1`: remove (it uses nothing; the line loads `app.types` when "
+        "imported, so removing it also drops its load-time effects)"
+    ) in report
+    assert (
+        "- `app.models` (2 modules, 2 statements; they use 1 to 3 of 3 names; 1 name kept "
+        "because other modules import it from here)\n"
+        "  - `app/both.py:2`: `from app.models import A, Model, json` (defined in "
+        "`app.types`: `A`; from a third-party import: `json`)\n"
+        "  - `app/relay.py:1`: `from app.models import Model` (kept for `app.consumer`: "
+        "`Model`)"
+    ) in report
+    assert "- `app.listed` (1 module, 1 statement; it uses 1 of 1 names)" in report
+    assert (
+        "- `app.sub` (1 `from . import *` with no effect)\n"
+        "  - `app/sub/__init__.py:1`: remove (it imports itself and, without `__all__`, does "
+        "nothing)"
+    ) in report
+
+
+def test_wildcard_findings_es() -> None:
+    report = render(STAR_ROOT, analyzed(STAR_ROOT), Lang.ES)
+    assert "### Import con asterisco (5)" in report
+    assert (
+        "- `app.types` (5 módulos, 5 sentencias; usan de 0 a 2 de 4 nombres; 2 no usan nada; "
+        "1 nombre se conserva porque otros lo importan desde aquí)"
+    ) in report
+    assert "eliminar (no usa nada; la línea carga `app.types` al importar" in report
+    assert "(se conservan para `app.chain_top`: `C`)" in report
+    assert "(1 `from . import *` sin efecto)" in report
+
+
+def test_wildcard_fixes_and_names_are_capped(make_project) -> None:
+    names = [f"N{number:02d}" for number in range(25)]
+    files = {
+        "app/__init__.py": "",
+        "app/types.py": "".join(f"{name} = 1\n" for name in names),
+    }
+    reader = "def f():\n    return " + ", ".join(names) + "\n"
+    for number in range(7):
+        files[f"app/m{number}.py"] = "from app.types import *\n\n\n" + reader
+    root = make_project(files)
+    report = render(root, analyzed(root))
+    assert "N19, +5`" in report
+    assert "…and 2 more" in report

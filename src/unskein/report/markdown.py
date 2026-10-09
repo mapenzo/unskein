@@ -11,6 +11,12 @@ from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.graph.native import NativeModule
+from unskein.graph.stars import (
+    MAX_FIXES_SHOWN,
+    MAX_NAMES_SHOWN,
+    WildcardAction,
+    WildcardFix,
+)
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, VirtualKind, WarningCode
 
@@ -42,6 +48,7 @@ VIRTUAL_COUNT_KEYS = (
 MIN_DISTRIBUTIONS_SHOWN = 2
 CYCLE_SEPARATOR = " ↔ "
 DETAIL_SEPARATOR = "; "
+PART_SEPARATOR = ", "
 # Kinds whose line shows the uses behind an edge between a distribution and its target.
 EDGE_FINDINGS = (
     FindingKind.UNDECLARED_DEPENDENCY,
@@ -919,6 +926,118 @@ def _native_finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -
     )
 
 
+def _capped_names(names: tuple[str, ...]) -> str:
+    """Join names for an explicit import, capped at ``MAX_NAMES_SHOWN``.
+
+    Args:
+        names: Names, sorted.
+
+    Returns:
+        ``A, B, +3`` style text.
+    """
+    shown = list(names[:MAX_NAMES_SHOWN])
+    if len(names) > MAX_NAMES_SHOWN:
+        shown.append(f"+{len(names) - MAX_NAMES_SHOWN}")
+    return LIST_SEPARATOR.join(shown)
+
+
+def _wildcard_fix_line(fix: WildcardFix, module: str, lang: Lang) -> str:
+    """Render the fix of one star import statement, with its notes.
+
+    Args:
+        fix: The fix.
+        module: The star-imported module.
+        lang: Report language.
+
+    Returns:
+        One Markdown sub-item.
+    """
+    if fix.action is WildcardAction.REMOVE:
+        text = t("finding.wildcard.fix.remove", lang, module=module)
+    elif fix.action is WildcardAction.REMOVE_SELF:
+        text = t("finding.wildcard.fix.remove_self", lang)
+    else:
+        text = f"`from {module} import {_capped_names(fix.names)}`"
+        notes = []
+        if fix.kept:
+            notes.append(
+                t(
+                    "finding.wildcard.note.kept",
+                    lang,
+                    importer=fix.kept_for,
+                    names=_backticked(fix.kept),
+                )
+            )
+        origins: dict[str, list[str]] = {}
+        for origin, name in fix.defined_elsewhere:
+            origins.setdefault(origin, []).append(name)
+        notes += [
+            t("finding.wildcard.note.elsewhere", lang, origin=origin, names=_backticked(names))
+            for origin, names in origins.items()
+        ]
+        if fix.external:
+            notes.append(t("finding.wildcard.note.external", lang, names=_backticked(fix.external)))
+        if notes:
+            text += f" ({DETAIL_SEPARATOR.join(notes)})"
+    return f"  - `{fix.location}`: {text}"
+
+
+def _wildcard_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
+    """Render a finding of rule 12: the summary, then the fix of each statement.
+
+    Args:
+        finding: A ``WILDCARD_IMPORT`` finding.
+        result: The deterministic analysis, with the fixes.
+        lang: Report language.
+
+    Returns:
+        A multi-line Markdown list item.
+    """
+    (module,) = finding.modules
+    wildcard = next(w for w in result.wildcards if w.name == module)
+    statements = len(wildcard.fixes)
+    if wildcard.is_self:
+        summary = t("finding.wildcard.self", lang, count=statements)
+    else:
+        parts = [
+            t(
+                f"finding.wildcard.importers.{_plural_key(wildcard.importers)}",
+                lang,
+                count=wildcard.importers,
+            ),
+            t(f"finding.wildcard.statements.{_plural_key(statements)}", lang, count=statements),
+        ]
+        summary = (
+            PART_SEPARATOR.join(parts)
+            + DETAIL_SEPARATOR
+            + t(
+                f"finding.wildcard.used.{_plural_key(statements)}",
+                lang,
+                used_min=wildcard.used_min,
+                used_max=wildcard.used_max,
+                names=wildcard.names,
+            )
+        )
+        if wildcard.unused:
+            summary += DETAIL_SEPARATOR + t(
+                f"finding.wildcard.unused.{_plural_key(wildcard.unused)}",
+                lang,
+                count=wildcard.unused,
+            )
+        if wildcard.reexported:
+            summary += DETAIL_SEPARATOR + t(
+                f"finding.wildcard.reexported.{_plural_key(wildcard.reexported)}",
+                lang,
+                count=wildcard.reexported,
+            )
+    lines = [f"- `{module}` ({summary})"]
+    lines += [_wildcard_fix_line(fix, module, lang) for fix in wildcard.fixes[:MAX_FIXES_SHOWN]]
+    hidden = statements - MAX_FIXES_SHOWN
+    if hidden > 0:
+        lines.append(f"  - {t('report.more', lang, count=hidden)}")
+    return "\n".join(lines)
+
+
 def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
@@ -939,6 +1058,8 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
         return _missing_module_line(finding, result, lang)
     if finding.kind is FindingKind.OPTIONAL_NATIVE_REQUIRED:
         return _native_finding_line(finding, result, lang)
+    if finding.kind is FindingKind.WILDCARD_IMPORT:
+        return _wildcard_line(finding, result, lang)
     if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
         source, target = finding.modules
         return (
