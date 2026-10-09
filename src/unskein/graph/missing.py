@@ -123,8 +123,11 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> dict[str, _Missin
         when some statement breaks (packaged source, not a script, required or lazy).
     """
     missing: defaultdict[str, _Missing] = defaultdict(_Missing)
+    # Only modules with a broken import: relative paths are slow on thousands of files.
     sources = sorted(
-        (relative_path(module.file_path, result.project_root), module) for module in result.modules
+        (relative_path(module.file_path, result.project_root), module)
+        for module in result.modules
+        if any(edge.requested is not None for edge in module.imports)
     )
     for relative, module in sources:
         can_break = module.is_packaged and module.name not in scripts

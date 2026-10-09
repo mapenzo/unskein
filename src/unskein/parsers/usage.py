@@ -40,70 +40,52 @@ def _mentions(text: str, name: str) -> bool:
     return text == name or re.search(rf"(?<![\w.]){re.escape(name)}\.", text) is not None
 
 
-# NodeVisitor dispatches on ``visit_<NodeClass>`` names, so pylint's snake_case rule does not apply.
-# pylint: disable=invalid-name
-class _UsageCollector(ast.NodeVisitor):
-    """Walk a module recording, for fixed names, the attribute chains read through them.
+def _record_chain(node: ast.Attribute, usages: dict[str, NameUsage]) -> bool:
+    """Record a whole attribute chain rooted at a tracked name.
 
     Args:
-        names: Names to track.
+        node: Outermost attribute of a chain such as ``p.a.b``.
+        usages: Usage of each tracked name, updated in place.
+
+    Returns:
+        True when the chain is rooted at a tracked name (its parts need no visit).
     """
-
-    def __init__(self, names: Collection[str]):
-        self.usages = {name: NameUsage() for name in names}
-
-    def visit_Attribute(self, node: ast.Attribute) -> None:
-        """Record a whole attribute chain rooted at a tracked name; recurse otherwise.
-
-        Args:
-            node: Outermost attribute of a chain such as ``p.a.b``.
-        """
-        chain: list[str] = []
-        base: ast.expr = node
-        while isinstance(base, ast.Attribute):
-            chain.append(base.attr)
-            base = base.value
-        if isinstance(base, ast.Name) and base.id in self.usages:
-            usage = self.usages[base.id]
-            if isinstance(node.ctx, ast.Load):
-                usage.chains.add(".".join(reversed(chain)))
-            else:
-                usage.escapes = True
-        else:
-            self.generic_visit(node)
-
-    def visit_Constant(self, node: ast.Constant) -> None:
-        """Follow a string that references a tracked name, such as a quoted annotation.
-
-        Args:
-            node: A constant; only strings are inspected.
-        """
-        if not isinstance(node.value, str):
-            return
-        mentioned = [name for name in self.usages if _mentions(node.value, name)]
-        if not mentioned:
-            return
-        try:
-            expression = ast.parse(node.value, mode="eval")
-        except (SyntaxError, ValueError):
-            for name in mentioned:
-                self.usages[name].escapes = True
-            return
-        self.visit(expression)
-
-    def visit_Name(self, node: ast.Name) -> None:
-        """Mark a tracked name that is used by itself.
-
-        Names that start an attribute chain never get here: ``visit_Attribute`` consumes them.
-
-        Args:
-            node: A name load, store or delete.
-        """
-        if node.id in self.usages:
-            self.usages[node.id].escapes = True
+    chain: list[str] = []
+    base: ast.expr = node
+    while isinstance(base, ast.Attribute):
+        chain.append(base.attr)
+        base = base.value
+    if not (isinstance(base, ast.Name) and base.id in usages):
+        return False
+    usage = usages[base.id]
+    if isinstance(node.ctx, ast.Load):
+        usage.chains.add(".".join(reversed(chain)))
+    else:
+        usage.escapes = True
+    return True
 
 
-# pylint: enable=invalid-name
+def _string_expression(node: ast.Constant, usages: dict[str, NameUsage]) -> ast.AST | None:
+    """Parse a string that references a tracked name, such as a quoted annotation.
+
+    Args:
+        node: A constant; only strings are inspected.
+        usages: Usage of each tracked name; names in an unparsable string escape.
+
+    Returns:
+        The parsed expression to visit, or None when there is nothing to follow.
+    """
+    if not isinstance(node.value, str):
+        return None
+    mentioned = [name for name in usages if _mentions(node.value, name)]
+    if not mentioned:
+        return None
+    try:
+        return ast.parse(node.value, mode="eval")
+    except (SyntaxError, ValueError):
+        for name in mentioned:
+            usages[name].escapes = True
+        return None
 
 
 def collect_name_usage(tree: ast.Module, names: Collection[str]) -> dict[str, NameUsage]:
@@ -119,9 +101,26 @@ def collect_name_usage(tree: ast.Module, names: Collection[str]) -> dict[str, Na
     Returns:
         The usage of each name, including those never used.
     """
-    collector = _UsageCollector(names)
-    collector.visit(tree)
-    return collector.usages
+    usages = {name: NameUsage() for name in names}
+    # An explicit stack instead of ast.NodeVisitor: method dispatch on every node was the
+    # largest cost of parsing big modules.
+    stack: list[ast.AST] = [tree]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Attribute):
+            if _record_chain(node, usages):
+                continue
+        elif isinstance(node, ast.Name):
+            if node.id in usages:
+                usages[node.id].escapes = True
+            continue
+        elif isinstance(node, ast.Constant):
+            expression = _string_expression(node, usages)
+            if expression is not None:
+                stack.append(expression)
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+    return usages
 
 
 class UseContext(StrEnum):
