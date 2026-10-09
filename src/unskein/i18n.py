@@ -49,6 +49,14 @@ _ERRORS: dict[str, dict[Lang, str]] = {
 }
 
 _WARNINGS: dict[str, dict[Lang, str]] = {
+    "warning.invalid_requirement": {
+        Lang.ES: "Dependencia declarada sin nombre válido, se ignora: {detail}",
+        Lang.EN: "Declared dependency without a valid name, ignored: {detail}",
+    },
+    "warning_title.invalid_requirement": {
+        Lang.ES: "Dependencias declaradas no válidas",
+        Lang.EN: "Invalid declared dependencies",
+    },
     "warning.star_import": {
         Lang.ES: "Import con asterisco desde {detail}: no se siguen los nombres que trae",
         Lang.EN: "Star import from {detail}: the names it brings in are not followed",

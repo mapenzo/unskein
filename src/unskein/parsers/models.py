@@ -25,6 +25,8 @@ class WarningCode(StrEnum):
         DECLARED_PACKAGE_MISSING: A manifest declares a package that does not exist on disk.
         MODULE_NAME_COLLISION: Two files would take the same module name; the one in the
             shallower distribution is named by its path.
+        INVALID_REQUIREMENT: A declared dependency (or an included dependency group) has
+            no usable name; it is ignored.
     """
 
     STAR_IMPORT = "star_import"
@@ -38,6 +40,7 @@ class WarningCode(StrEnum):
     MANIFEST_UNREADABLE = "manifest_unreadable"
     DECLARED_PACKAGE_MISSING = "declared_package_missing"
     MODULE_NAME_COLLISION = "module_name_collision"
+    INVALID_REQUIREMENT = "invalid_requirement"
 
 
 @dataclass(frozen=True, slots=True)
