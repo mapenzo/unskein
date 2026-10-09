@@ -530,7 +530,7 @@ class _ImportCollector:
                     self.warn(WarningCode.STAR_IMPORT, node.lineno, base)
                 self.add(base, None, node.lineno, kind=kind, is_guarded=is_guarded)
                 if is_star_reexport:
-                    self.re_exports.append(ReExport(self.source, base, STAR_EXPORT))
+                    self.re_exports.append(ReExport(self.source, base, STAR_EXPORT, is_guarded))
                 continue
             binding = Binding(alias.asname or alias.name, "", f"{FROM_OBJECT}{base}.{alias.name}")
             submodule = f"{base}.{alias.name}"
@@ -545,7 +545,7 @@ class _ImportCollector:
             )
             if self.is_package and target is not None and target != self.source:
                 exported = alias.asname or alias.name
-                self.re_exports.append(ReExport(self.source, target, exported))
+                self.re_exports.append(ReExport(self.source, target, exported, is_guarded))
 
     def attach_usage(self, tree: ast.Module) -> None:
         """Record on each package import how the module uses the name it binds.

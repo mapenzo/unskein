@@ -137,3 +137,25 @@ def test_unguarded_locations_are_capped_in_the_evidence(make_project: MakeProjec
     assert finding.evidence["unguarded"] == (
         "app/m0.py:2, app/m1.py:2, app/m2.py:2, app/m3.py:2, app/m4.py:2"
     )
+
+
+def test_a_guarded_fallback_in_the_facade_keeps_its_users_guarded(
+    make_project: MakeProject,
+) -> None:
+    root = make_project(
+        {
+            "pkg/__init__.py": (
+                "try:\n    from pkg._speedups import escape\n"
+                "except ImportError:\n    from pkg._pure import escape\n"
+            ),
+            "pkg/_speedups.cpython-312-x86_64-linux-gnu.so": "",
+            "pkg/_pure.py": "def escape(text):\n    return text\n",
+            "pkg/api.py": "from pkg import escape\n",
+            "pkg/api2.py": "import pkg\n\n\ndef f():\n    return pkg.escape('x')\n",
+        }
+    )
+    result = _analyzed(root)
+    (native,) = result.native
+    assert (native.name, native.guarded, native.unguarded) == ("pkg._speedups", 3, ())
+    assert native.works_without
+    assert _rule_11(result) == []

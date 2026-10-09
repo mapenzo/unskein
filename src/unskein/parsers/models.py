@@ -272,11 +272,14 @@ class ReExport:
         exporting_module: Module that re-exports the symbol (the facade).
         original_module: Module the facade imports the symbol from.
         symbol_name: Name under which the facade exposes the symbol.
+        is_guarded: Whether the facade's import sits in a ``try`` or ``suppress`` for
+            import errors: without its module the facade falls back, it does not fail.
     """
 
     exporting_module: str
     original_module: str
     symbol_name: str
+    is_guarded: bool = False
 
 
 @dataclass(slots=True)
