@@ -94,7 +94,10 @@ Architecture health: fair.
   unknown Ce, since what compiled code imports cannot be read. A section lists, for each
   one, what proves it exists, how packaged code uses it and whether it works without it,
   and a finding flags an extension the code guards in one place (expecting it can be
-  missing) but imports unguarded elsewhere.
+  missing) but imports unguarded elsewhere. On litellm, grimp and pydeps do not see its
+  Rust extension at all; tach sees it only once it is named in its configuration, and
+  neither tach nor mypy tells the guarded import apart from the five that would raise
+  `ImportError` without the extension.
 - **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,
