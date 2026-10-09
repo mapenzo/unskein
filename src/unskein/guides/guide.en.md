@@ -114,6 +114,11 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     a function and unguarded, a project module that does not exist; it raises `ImportError`
     when it runs. `TYPE_CHECKING`, guarded and test imports stay warnings. The fix names the
     module that defines the symbol, or says that none does.
+  - **Optional extension used as required**: the code guards the import of a compiled (or
+    stub-only) module in one place, because it expects it can be missing, and imports it
+    unguarded elsewhere, where it raises `ImportError` when it is missing. It lists every
+    unguarded `path:line`; the fix is to guard them the same way or to drop the fallback.
+    It does not follow control flow: an earlier check (`if available():`) is not seen.
   - **Cycle between distributions**: distributions that import each other; it says which
     edge to cut.
 

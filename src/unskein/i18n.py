@@ -604,6 +604,53 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.EN: "only in group {groups}, never installed with the package",
     },
     "finding.fix": {Lang.ES: "Arreglo", Lang.EN: "Fix"},
+    "report.native": {Lang.ES: "Frontera nativa", Lang.EN: "Native boundary"},
+    "report.native_intro": {
+        Lang.ES: "Módulos sin código Python legible: extensiones compiladas y módulos que solo "
+        "tienen stub `.pyi`. Los usos cuentan solo el código empaquetado (sin tests ni "
+        "scripts): requeridos / perezosos / protegidos / solo tipos.",
+        Lang.EN: "Modules with no readable Python code: compiled extensions and modules that "
+        "only have a `.pyi` stub. Uses count only packaged code (no tests or scripts): "
+        "required / lazy / guarded / type-only.",
+    },
+    "report.native_note": {
+        Lang.ES: "Lo que importa el código compilado no se ve: su Ce es desconocido, y los "
+        "ciclos que pasen por él tampoco se ven.",
+        Lang.EN: "What compiled code imports cannot be seen: its Ce is unknown, and cycles "
+        "that go through them cannot be seen either.",
+    },
+    "report.native_kind": {Lang.ES: "Tipo", Lang.EN: "Kind"},
+    "report.native_kind.compiled": {Lang.ES: "extensión compilada", Lang.EN: "compiled extension"},
+    "report.native_kind.stub": {Lang.ES: "solo stub", Lang.EN: "stub only"},
+    "report.native_evidence": {Lang.ES: "Prueba", Lang.EN: "Evidence"},
+    "report.native_uses": {
+        Lang.ES: "Usos (req / perez / prot / tipos)",
+        Lang.EN: "Uses (req / lazy / guard / types)",
+    },
+    "report.native_works": {Lang.ES: "¿Funciona sin él?", Lang.EN: "Works without it?"},
+    "report.native_works.yes": {Lang.ES: "sí", Lang.EN: "yes"},
+    "report.native_works.no.one": {
+        Lang.ES: "no: {count} uso sin protección (`{first}`)",
+        Lang.EN: "no: {count} unguarded use (`{first}`)",
+    },
+    "report.native_works.no.other": {
+        Lang.ES: "no: {count} usos sin protección (`{first}`)",
+        Lang.EN: "no: {count} unguarded uses (`{first}`)",
+    },
+    "report.native_out": {Lang.ES: "Salida", Lang.EN: "Outgoing"},
+    "report.native_out.compiled": {
+        Lang.ES: "desconocida (código compilado)",
+        Lang.EN: "unknown (compiled code)",
+    },
+    "report.native_out.stub": {Lang.ES: "desconocida (solo stub)", Lang.EN: "unknown (stub only)"},
+    "finding.native_guarded": {Lang.ES: "protegido en `{first}`", Lang.EN: "guarded at `{first}`"},
+    "finding.native_unguarded": {Lang.ES: "Sin protección", Lang.EN: "Unguarded"},
+    "finding.fix.guard_or_drop_fallback": {
+        Lang.ES: "protege esos imports como hace `{first_guarded}`, o quita ese respaldo si "
+        "`{module}` es obligatorio.",
+        Lang.EN: "guard those imports like `{first_guarded}` does, or drop that fallback if "
+        "`{module}` is required.",
+    },
     "finding.status.required": {Lang.ES: "requerida", Lang.EN: "required"},
     "finding.status.optional": {
         Lang.ES: "opcional (extra {extras})",
@@ -789,6 +836,28 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "eliminar el import.",
         Lang.EN: "Restore the module, import the name from the module that defines it, or "
         "remove the import.",
+    },
+    "finding.optional_native_required.title": {
+        Lang.ES: "Extensión opcional usada como obligatoria",
+        Lang.EN: "Optional extension used as required",
+    },
+    "finding.optional_native_required.explanation": {
+        Lang.ES: "El código protege el import de este módulo compilado en un sitio: cuenta con "
+        "que puede faltar (PyPy, una plataforma sin wheel, una instalación sin compilador). En "
+        "otros sitios lo importa sin protección, y ahí lanza ImportError si falta. unskein no "
+        "sigue el flujo de control: comprueba cada línea por si una comprobación previa "
+        "(`if disponible():`) ya la protege.",
+        Lang.EN: "The code guards the import of this compiled module in one place: it expects "
+        "that it can be missing (PyPy, a platform without a wheel, an install without a "
+        "compiler). Elsewhere it imports it unguarded, and there it raises ImportError when it "
+        "is missing. unskein does not follow control flow: check each line in case an earlier "
+        "check (`if available():`) already guards it.",
+    },
+    "finding.optional_native_required.recommendation": {
+        Lang.ES: "Proteger esos usos con el mismo respaldo, o quitar el respaldo si la extensión "
+        "es obligatoria.",
+        Lang.EN: "Guard those uses with the same fallback, or drop the fallback if the "
+        "extension is required.",
     },
     "finding.fix.import_from": {Lang.ES: "importa {items}", Lang.EN: "import {items}"},
     "finding.fix.import_from.item": {

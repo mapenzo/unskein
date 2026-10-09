@@ -10,6 +10,7 @@ from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, Distribution
 from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
+from unskein.graph.native import NativeModule
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, VirtualKind, WarningCode
 
@@ -132,6 +133,8 @@ def render_report(context: ReportContext, lang: Lang) -> str:
         sections.append(_distributions(context.result, lang))
     if context.result.scripts:
         sections.append(_scripts(context.result, lang))
+    if context.result.native:
+        sections.append(_native_boundary(context.result, lang))
     sections.append(_coupled(context.result, lang))
     if context.result.findings_enabled:
         sections.append(_findings(context.result, lang))
@@ -798,6 +801,89 @@ def _missing_module_line(finding: Finding, result: AnalysisResult, lang: Lang) -
     return f"- `{module}` ({_uses(evidence, lang)}{DETAIL_SEPARATOR}{first})\n{fix}"
 
 
+def _native_works(native: NativeModule, lang: Lang) -> str:
+    """Render whether packaged code runs without a native module.
+
+    Args:
+        native: One row of the native boundary.
+        lang: Report language.
+
+    Returns:
+        "yes", or "no" with the number of unguarded uses and the first one.
+    """
+    if native.works_without:
+        return t("report.native_works.yes", lang)
+    key = "one" if len(native.unguarded) == 1 else "other"
+    return t(
+        f"report.native_works.no.{key}",
+        lang,
+        count=len(native.unguarded),
+        first=native.unguarded[0],
+    )
+
+
+def _native_boundary(result: AnalysisResult, lang: Lang) -> list[str]:
+    """Build the native boundary: each compiled or stub-only module and how it is used.
+
+    Args:
+        result: The deterministic analysis.
+        lang: Report language.
+
+    Returns:
+        Markdown lines of the section.
+    """
+    lines = [
+        f"## {t('report.native', lang)}",
+        "",
+        t("report.native_intro", lang),
+        "",
+        f"| {t('report.module', lang)} | {t('report.native_kind', lang)} "
+        f"| {t('report.native_evidence', lang)} | Ca | {t('report.native_uses', lang)} "
+        f"| {t('report.native_works', lang)} | {t('report.native_out', lang)} |",
+        "|---|---|---|---:|---|---|---|",
+    ]
+    for native in result.native:
+        uses = f"{native.required} / {native.lazy} / {native.guarded} / {native.type_only}"
+        lines.append(
+            f"| `{native.name}` | {t(f'report.native_kind.{native.kind}', lang)} "
+            f"| {_backticked(native.evidence)} | {native.afferent} | {uses} "
+            f"| {_native_works(native, lang)} | {t(f'report.native_out.{native.kind}', lang)} |"
+        )
+    return [*lines, "", t("report.native_note", lang)]
+
+
+def _native_finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
+    """Render a finding of rule 11: its uses, the unguarded locations, then the fix.
+
+    Args:
+        finding: An ``OPTIONAL_NATIVE_REQUIRED`` finding.
+        result: The deterministic analysis, to mark the module with its kind.
+        lang: Report language.
+
+    Returns:
+        A multi-line Markdown list item.
+    """
+    evidence = finding.evidence
+    (module,) = finding.modules
+    guarded = t("finding.native_guarded", lang, first=evidence["first_guarded"])
+    shown = str(evidence["unguarded"]).split(LIST_SEPARATOR)
+    locations = _backticked(shown)
+    hidden = int(evidence["unguarded_total"]) - len(shown)
+    if hidden > 0:
+        locations += f" ({t('report.more', lang, count=hidden)})"
+    fix = t(
+        "finding.fix.guard_or_drop_fallback",
+        lang,
+        first_guarded=evidence["first_guarded"],
+        module=module,
+    )
+    return (
+        f"- {_module_name(module, result, lang)} ({_uses(evidence, lang)}{DETAIL_SEPARATOR}"
+        f"{guarded})\n  - {t('finding.native_unguarded', lang)}: {locations}\n"
+        f"  - {t('finding.fix', lang)}: {fix}"
+    )
+
+
 def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
@@ -816,6 +902,8 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
         return _distribution_finding_line(finding, result, lang)
     if finding.kind is FindingKind.MISSING_MODULE:
         return _missing_module_line(finding, result, lang)
+    if finding.kind is FindingKind.OPTIONAL_NATIVE_REQUIRED:
+        return _native_finding_line(finding, result, lang)
     if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
         source, target = finding.modules
         return (

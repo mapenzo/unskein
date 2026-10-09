@@ -887,3 +887,54 @@ def test_projects_without_native_modules_do_not_mention_them(simple_project: Pat
     report = render(simple_project, analyzed(simple_project))
     assert "compiled" not in report.lower()
     assert "stub" not in report.lower()
+
+
+def test_native_boundary_section_en() -> None:
+    report = render(NATIVE_ROOT, analyzed(NATIVE_ROOT))
+    assert "## Native boundary" in report
+    assert (
+        "| `pkg._native` | compiled extension | `pkg/_native.pyi`, `pyproject.toml:10` | 3 "
+        "| 0 / 1 / 1 / 1 | no: 1 unguarded use (`pkg/api.py:8`) | unknown (compiled code) |"
+    ) in report
+    assert (
+        "| `pkg.stubonly` | stub only | `pkg/stubonly.pyi` | 1 | 1 / 0 / 0 / 0 "
+        "| no: 1 unguarded use (`pkg/api.py:2`) | unknown (stub only) |"
+    ) in report
+    assert "cycles that go through them cannot be seen either" in report
+
+
+def test_native_boundary_section_es() -> None:
+    report = render(NATIVE_ROOT, analyzed(NATIVE_ROOT), Lang.ES)
+    assert "## Frontera nativa" in report
+    assert (
+        "| no: 1 uso sin protección (`pkg/api.py:8`) | desconocida (código compilado) |" in report
+    )
+
+
+def test_native_boundary_says_yes_when_every_use_is_guarded(make_project) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/_native.pyi": "",
+            "app/loader.py": (
+                "try:\n    from app import _native\nexcept ImportError:\n    _native = None\n"
+            ),
+        }
+    )
+    assert "| 0 / 0 / 1 / 0 | yes |" in render(root, analyzed(root))
+
+
+def test_rule_11_line_lists_the_unguarded_uses_and_the_fix() -> None:
+    report = render(NATIVE_ROOT, analyzed(NATIVE_ROOT))
+    assert "### Optional extension used as required (1)" in report
+    assert (
+        "- `pkg._native` *(compiled extension)* (0 required, 1 lazy, 1 guarded; "
+        "guarded at `pkg/loader.py:3`)\n"
+        "  - Unguarded: `pkg/api.py:8`\n"
+        "  - Fix: guard those imports like `pkg/loader.py:3` does, or drop that fallback if "
+        "`pkg._native` is required."
+    ) in report
+
+
+def test_projects_without_native_modules_have_no_boundary(simple_project: Path) -> None:
+    assert "## Native boundary" not in render(simple_project, analyzed(simple_project))

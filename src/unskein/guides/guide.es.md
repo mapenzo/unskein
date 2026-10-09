@@ -120,6 +120,11 @@ detección.
     función y sin protegerlo, un módulo del proyecto que no existe; al ejecutarse lanza
     `ImportError`. Los de `TYPE_CHECKING`, los protegidos y los de tests quedan como aviso.
     El arreglo nombra el módulo que define el símbolo, o dice que ninguno lo define.
+  - **Extensión opcional usada como obligatoria**: el código protege el import de un
+    módulo compilado (o solo stub) en un sitio, porque cuenta con que puede faltar, y lo
+    importa sin protección en otros, donde lanza `ImportError` si falta. Lista cada
+    `ruta:línea` sin protección; el arreglo es protegerlas igual o quitar el respaldo. No
+    sigue el flujo de control: una comprobación previa (`if disponible():`) no se ve.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 

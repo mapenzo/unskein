@@ -33,6 +33,8 @@ class FindingKind(StrEnum):
         DISTRIBUTION_CYCLE: Distributions that depend on each other.
         MISSING_MODULE: An internal import of a module that does not exist, which breaks
             when it runs.
+        OPTIONAL_NATIVE_REQUIRED: The code guards the import of a compiled extension in one
+            place and imports it unguarded elsewhere.
     """
 
     UNSTABLE_DEPENDENCY = "unstable_dependency"
@@ -45,6 +47,7 @@ class FindingKind(StrEnum):
     UNPACKAGED_IMPORT = "unpackaged_import"
     DISTRIBUTION_CYCLE = "distribution_cycle"
     MISSING_MODULE = "missing_module"
+    OPTIONAL_NATIVE_REQUIRED = "optional_native_required"
 
 
 @dataclass(frozen=True, slots=True)

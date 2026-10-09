@@ -5,6 +5,7 @@ import pathspec
 
 from unskein import pipeline
 from unskein.config import AnalysisConfig
+from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import analyze
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import VirtualKind, VirtualModule, WarningCode
@@ -152,7 +153,13 @@ def test_native_nodes_are_marked_and_left_out_of_module_findings() -> None:
     }
     assert result.coupling_metrics["pkg._native"].afferent == 3
     natives = set(result.virtual)
-    assert all(not natives & set(f.modules) for f in result.findings)
+    module_rules = {
+        FindingKind.UNSTABLE_DEPENDENCY,
+        FindingKind.BOTTLENECK,
+        FindingKind.ORCHESTRATOR,
+        FindingKind.ORPHAN,
+    }
+    assert all(not natives & set(f.modules) for f in result.findings if f.kind in module_rules)
 
 
 def test_native_modules_count_in_their_parent_package(make_project: MakeProject) -> None:

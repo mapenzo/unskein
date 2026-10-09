@@ -16,6 +16,7 @@ from unskein.graph.distributions import (
 from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
 from unskein.graph.missing import find_missing_modules
+from unskein.graph.native import NativeModule, find_optional_native_required, summarize_native
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
 from unskein.graph.scripts import ScriptGroup, count_consumers, find_scripts, group_scripts
@@ -56,6 +57,7 @@ class AnalysisResult:
         distribution_edges: Imports between distributions with what each declares.
         virtual: Graph nodes with no parsed file (namespace packages, compiled extensions,
             stubs), with their kind, sorted.
+        native: How packaged code uses each compiled extension and stub-only module, by name.
     """
 
     graph: nx.DiGraph
@@ -76,6 +78,7 @@ class AnalysisResult:
     distributions: list[DistributionSummary] = field(default_factory=list)
     distribution_edges: list[DistributionEdge] = field(default_factory=list)
     virtual: dict[str, VirtualKind] = field(default_factory=dict)
+    native: list[NativeModule] = field(default_factory=list)
 
     @property
     def namespaces(self) -> frozenset[str]:
@@ -288,10 +291,16 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         virtual=frozenset(virtual),
     )
     distribution_analysis = analyze_distributions(result, scripts)
+    native = summarize_native(result, graph, scripts)
     impact_targets = _impact_targets(high_coupling, findings)
     if findings_config.enabled:
         missing = find_missing_modules(result, scripts)
-        findings = [*findings, *distribution_analysis.findings, *missing]
+        findings = [
+            *findings,
+            *distribution_analysis.findings,
+            *missing,
+            *find_optional_native_required(native),
+        ]
     package_metrics, package_edges = summarize_project_packages(
         graph, findings_config.package_depth, facades=facades, virtual=namespaces
     )
@@ -314,4 +323,5 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         distributions=distribution_analysis.summaries,
         distribution_edges=distribution_analysis.edges,
         virtual=virtual,
+        native=native,
     )
