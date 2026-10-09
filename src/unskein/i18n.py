@@ -194,6 +194,35 @@ _REPORT: dict[str, dict[Lang, str]] = {
         Lang.ES: "*(espacio de nombres)*",
         Lang.EN: "*(namespace package)*",
     },
+    "report.summary_compiled.one": {
+        Lang.ES: " + {count} extensión compilada",
+        Lang.EN: " + {count} compiled extension",
+    },
+    "report.summary_compiled.other": {
+        Lang.ES: " + {count} extensiones compiladas",
+        Lang.EN: " + {count} compiled extensions",
+    },
+    "report.summary_stubs.one": {
+        Lang.ES: " + {count} módulo solo stub",
+        Lang.EN: " + {count} stub-only module",
+    },
+    "report.summary_stubs.other": {
+        Lang.ES: " + {count} módulos solo stub",
+        Lang.EN: " + {count} stub-only modules",
+    },
+    "report.metric.compiled": {Lang.ES: "Extensiones compiladas", Lang.EN: "Compiled extensions"},
+    "report.metric.stubs": {Lang.ES: "Módulos solo stub", Lang.EN: "Stub-only modules"},
+    "report.compiled_marker": {
+        Lang.ES: "*(extensión compilada)*",
+        Lang.EN: "*(compiled extension)*",
+    },
+    "report.stub_marker": {Lang.ES: "*(solo stub)*", Lang.EN: "*(stub only)*"},
+    "report.packages_native_note": {
+        Lang.ES: "Las extensiones compiladas y los stubs cuentan como módulos de su paquete, "
+        "sin aportar Ce: lo que importan no se ve.",
+        Lang.EN: "Compiled extensions and stubs count as modules of their package, without "
+        "adding Ce: what they import cannot be seen.",
+    },
     "report.consumers": {Lang.ES: "Consumidores", Lang.EN: "Consumers"},
     "report.coupled_consumers_note": {
         Lang.ES: "Consumidores: scripts, ejemplos o CI del repositorio que importan el "

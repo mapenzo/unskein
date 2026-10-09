@@ -11,7 +11,7 @@ from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.i18n import Lang, t, translate_warning
-from unskein.parsers.models import ParseWarning, WarningCode
+from unskein.parsers.models import ParseWarning, VirtualKind, WarningCode
 
 SEVERITY_ORDER: dict[Severity, int] = {"low": 0, "medium": 1, "high": 2}
 MAX_MODULES_IN_TABLE = 15
@@ -24,6 +24,19 @@ MAX_PACKAGES_IN_TABLE = 15
 MAX_PACKAGE_EDGES_SHOWN = 10
 MIN_PACKAGES_SHOWN = 2
 NOT_MEASURED = "—"
+# Ce of compiled code: its imports cannot be read.
+UNKNOWN_VALUE = "?"
+MARKER_KEYS = {
+    VirtualKind.NAMESPACE: "report.namespace_marker",
+    VirtualKind.COMPILED: "report.compiled_marker",
+    VirtualKind.STUB: "report.stub_marker",
+}
+# Order of the virtual counts in the summary and the general metrics.
+VIRTUAL_COUNT_KEYS = (
+    (VirtualKind.NAMESPACE, "report.summary_namespaces", "report.metric.namespaces"),
+    (VirtualKind.COMPILED, "report.summary_compiled", "report.metric.compiled"),
+    (VirtualKind.STUB, "report.summary_stubs", "report.metric.stubs"),
+)
 MIN_DISTRIBUTIONS_SHOWN = 2
 CYCLE_SEPARATOR = " ↔ "
 DETAIL_SEPARATOR = "; "
@@ -129,19 +142,32 @@ def render_report(context: ReportContext, lang: Lang) -> str:
 
 
 def _module_count(result: AnalysisResult) -> int:
-    """Return how many modules the graph has; namespace packages are not modules.
+    """Return how many ``.py`` modules the graph has; virtual modules are counted apart.
 
     Args:
         result: The deterministic analysis.
 
     Returns:
-        Nodes of the graph that are files.
+        Nodes of the graph that are parsed files.
     """
-    return result.graph.number_of_nodes() - len(result.namespaces)
+    return result.graph.number_of_nodes() - len(result.virtual)
+
+
+def _virtual_count(result: AnalysisResult, kind: VirtualKind) -> int:
+    """Return how many graph nodes are virtual modules of one kind.
+
+    Args:
+        result: The deterministic analysis.
+        kind: Kind to count.
+
+    Returns:
+        The count.
+    """
+    return sum(1 for found in result.virtual.values() if found is kind)
 
 
 def _module_name(name: str, result: AnalysisResult, lang: Lang) -> str:
-    """Render a module name, marked when it is a namespace package with no file.
+    """Render a module name, marked when it has no parsed file.
 
     Args:
         name: Dotted module name.
@@ -149,11 +175,44 @@ def _module_name(name: str, result: AnalysisResult, lang: Lang) -> str:
         lang: Report language.
 
     Returns:
-        The name in backticks, followed by the namespace marker when it applies.
+        The name in backticks, followed by the marker of its kind when it is virtual.
     """
-    if name in result.namespaces:
-        return f"`{name}` {t('report.namespace_marker', lang)}"
+    kind = result.virtual.get(name)
+    if kind is not None:
+        return f"`{name}` {t(MARKER_KEYS[kind], lang)}"
     return f"`{name}`"
+
+
+def _efferent(name: str, result: AnalysisResult) -> str:
+    """Render the Ce of a module; unknown for compiled code and stubs.
+
+    Args:
+        name: Dotted module name.
+        result: The deterministic analysis.
+
+    Returns:
+        The count, or ``UNKNOWN_VALUE``.
+    """
+    kind = result.virtual.get(name)
+    if kind is not None and kind.is_native:
+        return UNKNOWN_VALUE
+    return str(result.coupling_metrics[name].efferent)
+
+
+def _instability(name: str, result: AnalysisResult) -> str:
+    """Render the instability of a module; not measured when its Ce is unknown.
+
+    Args:
+        name: Dotted module name.
+        result: The deterministic analysis.
+
+    Returns:
+        Two decimals, or ``NOT_MEASURED``.
+    """
+    kind = result.virtual.get(name)
+    if kind is not None and kind.is_native:
+        return NOT_MEASURED
+    return f"{result.coupling_metrics[name].instability:.2f}"
 
 
 def _cycle_count(result: AnalysisResult) -> str:
@@ -179,10 +238,12 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         Markdown lines of the section.
     """
     result = context.result
-    namespaces = ""
-    if result.namespaces:
-        key = "one" if len(result.namespaces) == 1 else "other"
-        namespaces = t(f"report.summary_namespaces.{key}", lang, count=len(result.namespaces))
+    virtual = ""
+    for kind, key_prefix, _ in VIRTUAL_COUNT_KEYS:
+        count = _virtual_count(result, kind)
+        if count:
+            key = "one" if count == 1 else "other"
+            virtual += t(f"{key_prefix}.{key}", lang, count=count)
     scripts = ""
     if result.scripts:
         key = "one" if len(result.scripts) == 1 else "other"
@@ -191,7 +252,7 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
         "report.summary_counts",
         lang,
         modules=_module_count(result),
-        scripts=f"{namespaces}{scripts}",
+        scripts=f"{virtual}{scripts}",
         dependencies=result.graph.number_of_edges(),
         cycles=_cycle_count(result),
     )
@@ -203,7 +264,7 @@ def _summary(context: ReportContext, lang: Lang) -> list[str]:
             lang,
             module=_module_name(top.module, result, lang),
             ca=top.afferent,
-            ce=top.efferent,
+            ce=_efferent(top.module, result),
         )
         lines.append(top_line)
     if result.tangles:
@@ -258,8 +319,10 @@ def _metrics(result: AnalysisResult, lang: Lang) -> list[str]:
         Markdown lines of the section.
     """
     rows = [("report.metric.modules", _module_count(result))]
-    if result.namespaces:
-        rows.append(("report.metric.namespaces", len(result.namespaces)))
+    for kind, _, metric_key in VIRTUAL_COUNT_KEYS:
+        count = _virtual_count(result, kind)
+        if count:
+            rows.append((metric_key, count))
     if result.scripts:
         rows.append(("report.metric.scripts", len(result.scripts)))
     rows += [
@@ -377,6 +440,8 @@ def _packages(result: AnalysisResult, lang: Lang) -> list[str]:
             f"| `{package.name}` | {package.modules} | {package.afferent} "
             f"| {package.efferent} | {package.instability:.2f} |"
         )
+    if any(kind.is_native for kind in result.virtual.values()):
+        lines += ["", t("report.packages_native_note", lang)]
     if len(result.packages) > MAX_PACKAGES_IN_TABLE:
         lines += [
             "",
@@ -430,8 +495,8 @@ def _coupled(result: AnalysisResult, lang: Lang) -> list[str]:
         m = result.coupling_metrics[name]
         consumers = f" | {m.consumers}" if has_consumers else ""
         lines.append(
-            f"| {_module_name(name, result, lang)} | {m.afferent} | {m.efferent} "
-            f"| {m.instability:.2f} "
+            f"| {_module_name(name, result, lang)} | {m.afferent} | {_efferent(name, result)} "
+            f"| {_instability(name, result)} "
             f"| {result.impact.get(name, NOT_MEASURED)}{consumers} |"
         )
     if len(modules) > MAX_MODULES_IN_TABLE:
