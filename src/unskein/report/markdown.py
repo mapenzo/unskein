@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from unskein.ai.models import AIFailure, AIReport, Problem, Severity
-from unskein.graph.distributions import LIST_SEPARATOR, DistributionSummary
+from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, DistributionSummary
 from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.i18n import Lang, t, translate_warning
@@ -566,11 +566,16 @@ def _fix_text(finding: Finding, lang: Lang) -> str:
     """
     evidence = finding.evidence
     extras = str(evidence.get("extras", ""))
+    cuts = str(evidence.get("cuts", ""))
     values = {
         **evidence,
         "source": finding.modules[0],
         "target": finding.modules[-1],
         "extras": _backticked(extras.split(LIST_SEPARATOR)) if extras else NOT_MEASURED,
+        "cuts": LIST_SEPARATOR.join(
+            " → ".join(f"`{end}`" for end in cut.split(EDGE_ARROW))
+            for cut in cuts.split(LIST_SEPARATOR)
+        ),
     }
     return t(f"finding.fix.{evidence['fix']}", lang, **values)
 

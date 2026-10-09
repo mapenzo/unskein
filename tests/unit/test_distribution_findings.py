@@ -63,7 +63,8 @@ def test_cycle_between_distributions_with_cut_edge() -> None:
     result = _analyzed(FIXTURE)
     (finding,) = _by_kind(result)[FindingKind.DISTRIBUTION_CYCLE]
     assert finding.modules == ("core", "core-plugins")
-    assert (finding.evidence["cut_from"], finding.evidence["cut_to"]) == ("core", "core-plugins")
+    assert finding.evidence["cuts"] == "core → core-plugins"
+    assert finding.evidence["cut_breaking"] == 0
     edges = {(e.source, e.target): e for e in result.distribution_edges}
     assert edges["core", "core-plugins"].status is DependencyStatus.OPTIONAL
     assert edges["core", "core-plugins"].extras == ("plugins",)
@@ -201,3 +202,27 @@ def test_analysis_is_deterministic() -> None:
     second = _analyzed(FIXTURE)
     assert first.findings == second.findings
     assert first.distribution_edges == second.distribution_edges
+
+
+def test_cycle_of_three_lists_every_cut_needed_to_break_it(make_project: MakeProject) -> None:
+    uv_member = (
+        '[project]\nname = "{name}"\ndependencies = []\n'
+        '[tool.uv.build-backend]\nmodule-root = ""\nmodule-name = "{module}"\n'
+    )
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\ndependencies = []\n',
+            "a/__init__.py": "import b_pkg\nimport b_pkg.x\n",
+            "bdist/pyproject.toml": uv_member.format(name="b", module="b_pkg"),
+            "bdist/b_pkg/__init__.py": (
+                "import a\ntry:\n    import c_pkg\nexcept ImportError:\n    pass\n"
+            ),
+            "bdist/b_pkg/x.py": "",
+            "cdist/pyproject.toml": uv_member.format(name="c", module="c_pkg"),
+            "cdist/c_pkg/__init__.py": "import b_pkg\nimport b_pkg.x\nimport b_pkg\n",
+        }
+    )
+    (finding,) = _by_kind(_analyzed(root))[FindingKind.DISTRIBUTION_CYCLE]
+    assert finding.modules == ("a", "b", "c")
+    assert finding.evidence["cuts"] == "b → c, b → a"
+    assert finding.evidence["cut_breaking"] == 1

@@ -23,6 +23,8 @@ FIX_PROMOTE = "promote_or_guard"
 FIX_PACKAGE = "package_or_move"
 FIX_CUT = "cut_edge"
 BLOCKER_ARROW = "→"
+# Separates the two ends of an edge to cut in the evidence: "a → b".
+EDGE_ARROW = " → "
 MIN_CYCLE_SIZE = 2
 # Severity for the "installable alone?" blocker: unpackaged code, then undeclared, then optional.
 BLOCKER_ORDER = (
@@ -482,8 +484,33 @@ def _cut_key(edge: DistributionEdge) -> tuple[int, int, str, str]:
     return (counts.breaking, counts.breaking + counts.guarded, edge.source, edge.target)
 
 
+def _cuts(inside: list[DistributionEdge]) -> list[DistributionEdge]:
+    """Pick edges to cut until a group of distributions has no cycle left, cheapest first.
+
+    Cutting one edge of a group of three or more distributions may leave a smaller cycle,
+    so the cheapest edge of each remaining group is cut until none is left.
+
+    Args:
+        inside: Edges between the members of one group, sorted.
+
+    Returns:
+        The edges to cut, in the order they were picked.
+    """
+    remaining = list(inside)
+    cuts: list[DistributionEdge] = []
+    while True:
+        graph = nx.DiGraph((edge.source, edge.target) for edge in remaining)
+        cyclic = [g for g in nx.strongly_connected_components(graph) if len(g) >= MIN_CYCLE_SIZE]
+        if not cyclic:
+            return cuts
+        candidates = [e for e in remaining if any(e.source in g and e.target in g for g in cyclic)]
+        cut = min(candidates, key=_cut_key)
+        cuts.append(cut)
+        remaining.remove(cut)
+
+
 def _cycles(edges: list[DistributionEdge]) -> list[Finding]:
-    """Apply rule 9: distributions that depend on each other, with the edge to cut.
+    """Apply rule 9: distributions that depend on each other, with the edges to cut.
 
     Args:
         edges: Edges between distributions, sorted.
@@ -497,16 +524,13 @@ def _cycles(edges: list[DistributionEdge]) -> list[Finding]:
     for members in groups:
         if len(members) < MIN_CYCLE_SIZE:
             continue
-        inside = [e for e in edges if e.source in members and e.target in members]
-        cut = min(inside, key=_cut_key)
+        cuts = _cuts([e for e in edges if e.source in members and e.target in members])
         evidence: Evidence = {
             "fix": FIX_CUT,
-            "cut_from": cut.source,
-            "cut_to": cut.target,
-            "cut_required": cut.counts.required,
-            "cut_lazy": cut.counts.lazy,
-            "cut_guarded": cut.counts.guarded,
-            "cut_first": _first_any(cut.counts),
+            "cuts": LIST_SEPARATOR.join(f"{e.source}{EDGE_ARROW}{e.target}" for e in cuts),
+            "cut_breaking": sum(e.counts.breaking for e in cuts),
+            "cut_guarded": sum(e.counts.guarded for e in cuts),
+            "cut_first": _first_any(cuts[0].counts),
         }
         findings.append(Finding(FindingKind.DISTRIBUTION_CYCLE, members, evidence))
     return findings

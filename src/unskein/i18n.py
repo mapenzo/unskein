@@ -560,8 +560,9 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "`{source}` or declare it among its packages",
     },
     "finding.fix.cut_edge": {
-        Lang.ES: "corta `{cut_from}` → `{cut_to}` (la arista con menos usos que rompen)",
-        Lang.EN: "cut `{cut_from}` → `{cut_to}` (the edge with the fewest breaking uses)",
+        Lang.ES: "corta {cuts}: las aristas con menos usos que rompen, hasta que no quede "
+        "ningún ciclo",
+        Lang.EN: "cut {cuts}: the edges with the fewest breaking uses, until no cycle is left",
     },
     "finding.impact": {Lang.ES: "impacto {impact}", Lang.EN: "impact {impact}"},
     "finding.unstable_dependency.title": {
