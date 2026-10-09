@@ -72,6 +72,9 @@ A layer_violation finding names, in layer_from and layer_to, two layers the user
 the importing module sits in the lower layer.
 namespaces lists namespace packages (directories without __init__.py): they have no code,
 so their ca says how many modules import them, not that the node needs refactoring.
+A missing_module finding is an import of a project module that does not exist and raises
+ImportError when it runs; its fix (import_from with defined_in, or restore_or_remove) is
+already computed from the code: repeat it, do not guess another module.
 The findings undeclared_dependency, optional_required, unpackaged_import and
 distribution_cycle are about the installable distributions of a monorepo: their modules are
 distribution names (or, for unpackaged_import, a top-level directory), not modules. required,

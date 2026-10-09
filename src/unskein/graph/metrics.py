@@ -15,6 +15,7 @@ from unskein.graph.distributions import (
 )
 from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
+from unskein.graph.missing import find_missing_modules
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
 from unskein.graph.scripts import ScriptGroup, count_consumers, find_scripts, group_scripts
@@ -271,7 +272,8 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     distribution_analysis = analyze_distributions(result, scripts)
     impact_targets = _impact_targets(high_coupling, findings)
     if findings_config.enabled:
-        findings = [*findings, *distribution_analysis.findings]
+        missing = find_missing_modules(result, scripts)
+        findings = [*findings, *distribution_analysis.findings, *missing]
     package_metrics, package_edges = summarize_project_packages(
         graph, findings_config.package_depth, facades=facades, virtual=namespaces
     )

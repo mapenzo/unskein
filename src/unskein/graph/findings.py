@@ -31,6 +31,8 @@ class FindingKind(StrEnum):
         OPTIONAL_REQUIRED: A distribution imports at load time one it only declares in an extra.
         UNPACKAGED_IMPORT: A distribution imports code that no distribution ships.
         DISTRIBUTION_CYCLE: Distributions that depend on each other.
+        MISSING_MODULE: An internal import of a module that does not exist, which breaks
+            when it runs.
     """
 
     UNSTABLE_DEPENDENCY = "unstable_dependency"
@@ -42,6 +44,7 @@ class FindingKind(StrEnum):
     OPTIONAL_REQUIRED = "optional_required"
     UNPACKAGED_IMPORT = "unpackaged_import"
     DISTRIBUTION_CYCLE = "distribution_cycle"
+    MISSING_MODULE = "missing_module"
 
 
 @dataclass(frozen=True, slots=True)

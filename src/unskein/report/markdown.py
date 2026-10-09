@@ -9,6 +9,7 @@ from unskein.ai.models import AIFailure, AIReport, Problem, Severity
 from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, DistributionSummary
 from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
+from unskein.graph.missing import FIX_IMPORT_FROM
 from unskein.i18n import Lang, t, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
 
@@ -662,6 +663,41 @@ def _distribution_finding_line(finding: Finding, result: AnalysisResult, lang: L
     return "\n".join([*lines, fix])
 
 
+def _missing_module_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
+    """Render a finding of rule 10: the missing module, its uses, then its fix.
+
+    Args:
+        finding: A ``MISSING_MODULE`` finding.
+        result: The deterministic analysis, to mark a namespace package as the closest.
+        lang: Report language.
+
+    Returns:
+        A multi-line Markdown list item.
+    """
+    evidence = finding.evidence
+    (module,) = finding.modules
+    first = t("finding.first", lang, first=evidence["first"])
+    symbols = str(evidence["symbols"])
+    names = _backticked(symbols.split(LIST_SEPARATOR)) if symbols else ""
+    if evidence["fix"] == FIX_IMPORT_FROM:
+        others = int(evidence["also_defined"])
+        extra = t("finding.also_defined", lang, count=others) if others else ""
+        text = t(
+            "finding.fix.import_from",
+            lang,
+            symbols=names,
+            defined_in=evidence["defined_in"],
+            others=extra,
+        )
+    elif names:
+        text = t("finding.fix.restore_or_remove", lang, module=module, symbols=names)
+    else:
+        closest = _module_name(str(evidence["closest"]), result, lang)
+        text = t("finding.fix.restore_or_remove.module", lang, module=module, closest=closest)
+    fix = f"  - {t('finding.fix', lang)}: {text}"
+    return f"- `{module}` ({_uses(evidence, lang)}{DETAIL_SEPARATOR}{first})\n{fix}"
+
+
 def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
@@ -678,6 +714,8 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     impact = result.impact
     if finding.kind in (*EDGE_FINDINGS, FindingKind.DISTRIBUTION_CYCLE):
         return _distribution_finding_line(finding, result, lang)
+    if finding.kind is FindingKind.MISSING_MODULE:
+        return _missing_module_line(finding, result, lang)
     if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
         source, target = finding.modules
         return (

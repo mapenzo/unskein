@@ -108,6 +108,10 @@ detección.
     importa al cargarse y sin `try`/`except ImportError`.
   - **Import de código no empaquetado**: importa código que ninguna distribución
     empaqueta (solo existe en el repositorio).
+  - **Import de un módulo inexistente**: código empaquetado importa, al cargarse o en una
+    función y sin protegerlo, un módulo del proyecto que no existe; al ejecutarse lanza
+    `ImportError`. Los de `TYPE_CHECKING`, los protegidos y los de tests quedan como aviso.
+    El arreglo nombra el módulo que define el símbolo, o dice que ninguno lo define.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 

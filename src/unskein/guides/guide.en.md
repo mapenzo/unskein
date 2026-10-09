@@ -102,6 +102,10 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     load time without `try`/`except ImportError`.
   - **Import of unpackaged code**: imports code that no distribution ships (it only exists
     in the repository).
+  - **Import of a module that does not exist**: packaged code imports, at load time or in
+    a function and unguarded, a project module that does not exist; it raises `ImportError`
+    when it runs. `TYPE_CHECKING`, guarded and test imports stay warnings. The fix names the
+    module that defines the symbol, or says that none does.
   - **Cycle between distributions**: distributions that import each other; it says which
     edge to cut.
 

@@ -676,3 +676,7 @@ def test_context_lists_namespaces_and_excludes_them_from_module_count() -> None:
 
 def test_system_prompt_explains_namespaces() -> None:
     assert "namespaces" in SYSTEM_PROMPT
+
+
+def test_system_prompt_explains_missing_module_findings() -> None:
+    assert "missing_module" in SYSTEM_PROMPT

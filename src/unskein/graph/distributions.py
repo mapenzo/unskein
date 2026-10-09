@@ -263,7 +263,7 @@ def import_use(edge: ImportEdge) -> ImportUse | None:
     return ImportUse.REQUIRED if edge.kind is ImportKind.MODULE else ImportUse.LAZY
 
 
-def _relative(path: Path, root: Path | None) -> str:
+def relative_path(path: Path, root: Path | None) -> str:
     """Return a path as POSIX, relative to the project root when it lies under it.
 
     Args:
@@ -318,7 +318,7 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     # Sorted by relative POSIX path, so "first" is the same on every platform; computed
     # once per module (Path.relative_to is slow on tens of thousands of imports).
     sources = sorted(
-        (_relative(module.file_path, result.project_root), module)
+        (relative_path(module.file_path, result.project_root), module)
         for module in result.modules
         if module.distribution is not None and module.name not in scripts
     )
@@ -372,14 +372,14 @@ def _common_directory(paths: list[Path], root: Path | None) -> str:
         The directory with a trailing ``/``; the file itself when it sits at the root.
     """
     # Compared part by part, not with os.path.commonpath, which joins with "\\" on Windows.
-    parents = [PurePosixPath(_relative(path, root)).parent.parts for path in paths]
+    parents = [PurePosixPath(relative_path(path, root)).parent.parts for path in paths]
     common: list[str] = []
     for parts in zip(*parents, strict=False):
         if len(set(parts)) > 1:
             break
         common.append(parts[0])
     if not common:
-        return _relative(paths[0], root)
+        return relative_path(paths[0], root)
     return f"{PATH_SEPARATOR.join(common)}{PATH_SEPARATOR}"
 
 
@@ -437,7 +437,7 @@ def _manifest(info: DistributionInfo, root: Path | None) -> str:
     Returns:
         Its manifest path; empty when it has none.
     """
-    return "" if info.manifest is None else _relative(info.manifest, root)
+    return "" if info.manifest is None else relative_path(info.manifest, root)
 
 
 def _first_any(counts: UseCounts) -> str:

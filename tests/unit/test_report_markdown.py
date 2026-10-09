@@ -827,3 +827,13 @@ def test_namespace_names_are_marked_es(tmp_path: Path) -> None:
 def test_projects_without_namespaces_do_not_mention_them(simple_project: Path) -> None:
     plain = render(simple_project, analyzed(simple_project))
     assert "namespace" not in plain.lower()
+
+
+def test_missing_module_line_and_fix_en() -> None:
+    report = render(NAMESPACE_ROOT, analyzed(NAMESPACE_ROOT))
+    assert "### Import of a module that does not exist (1)" in report
+    assert "- `app.helpers.gone` (0 required, 1 lazy, 0 guarded; first: `app/core.py:14`)" in report
+    assert (
+        "  - Fix: `app.helpers.gone` does not exist and no module of the project defines "
+        "`helper`: restore the module or remove the import" in report
+    )

@@ -736,6 +736,42 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.EN: "Cut the edge with the fewest breaking uses, so dependencies between "
         "distributions go one way only.",
     },
+    "finding.missing_module.title": {
+        Lang.ES: "Import de un módulo inexistente",
+        Lang.EN: "Import of a module that does not exist",
+    },
+    "finding.missing_module.explanation": {
+        Lang.ES: "Código empaquetado importa un módulo del proyecto que no existe, al cargarse "
+        "o dentro de una función y sin protegerlo: cuando se ejecuta, lanza ImportError.",
+        Lang.EN: "Packaged code imports a project module that does not exist, at load time or "
+        "inside a function and unguarded: when it runs, it raises ImportError.",
+    },
+    "finding.missing_module.recommendation": {
+        Lang.ES: "Restaurar el módulo, importar el nombre desde el módulo que lo define, o "
+        "eliminar el import.",
+        Lang.EN: "Restore the module, import the name from the module that defines it, or "
+        "remove the import.",
+    },
+    "finding.fix.import_from": {
+        Lang.ES: "importa {symbols} desde `{defined_in}`, que lo define{others}",
+        Lang.EN: "import {symbols} from `{defined_in}`, which defines it{others}",
+    },
+    "finding.fix.restore_or_remove": {
+        Lang.ES: "`{module}` no existe y ningún módulo del proyecto define {symbols}: "
+        "restaura el módulo o elimina el import",
+        Lang.EN: "`{module}` does not exist and no module of the project defines {symbols}: "
+        "restore the module or remove the import",
+    },
+    "finding.fix.restore_or_remove.module": {
+        Lang.ES: "`{module}` no existe; el más cercano que existe es {closest}: restaura el "
+        "módulo o elimina el import",
+        Lang.EN: "`{module}` does not exist; the closest that exists is {closest}: restore "
+        "the module or remove the import",
+    },
+    "finding.also_defined": {
+        Lang.ES: " (y en {count} módulo(s) más)",
+        Lang.EN: " (and in {count} more module(s))",
+    },
     "finding.layers": {
         Lang.ES: "capa {layer_from} → {layer_to}",
         Lang.EN: "layer {layer_from} → {layer_to}",
