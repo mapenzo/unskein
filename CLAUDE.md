@@ -144,6 +144,7 @@ src/unskein/
 │   ├── findings.py          # hallazgos: reglas deterministas sobre el grafo
 │   ├── scripts.py           # scripts (no empaquetados y sin importadores) y consumidores
 │   ├── distributions.py     # uso entre distribuciones, reglas 6-9 e instalabilidad
+│   ├── missing.py           # regla 10: imports a módulos inexistentes
 │   ├── impact.py            # radio de impacto transitivo (impact_radius)
 │   ├── steps.py             # pasos de refactor y sus costes (choose_step)
 │   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
@@ -169,8 +170,12 @@ para paquetes Python distribuibles).
   import.
 - **Los hallazgos (`graph/findings.py`, `graph/distributions.py`) son reglas deterministas
   sobre el grafo**; la IA solo los interpreta y nunca cambian el código de salida.
-  Son nueve reglas; la quinta (violación de capas) solo existe con `[layers]`, y de la
-  sexta a la novena (entre distribuciones) solo con distribuciones con nombre.
+  Son diez reglas; la quinta (violación de capas) solo existe con `[layers]`, de la
+  sexta a la novena (entre distribuciones) solo con distribuciones con nombre, y la décima
+  (import de un módulo inexistente) solo cuando el import rompe al ejecutarse.
+- **Paquetes de espacio de nombres (PEP 420)** = prefijos de nombres de módulo que no son
+  módulos. Son nodos virtuales marcados (`namespace=True`): sin archivo, fuera de los
+  hallazgos 1-5, contados aparte en el informe y marcados *(espacio de nombres)*.
 - **`is_external` se calcula comparando el primer segmento del import contra los
   módulos del proyecto**, no contra una lista de stdlib/paquetes conocidos.
 - **Ciclos y marañas = grafo al importar.** Cada `ImportEdge` lleva su `ImportKind`

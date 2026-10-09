@@ -69,6 +69,11 @@ detección.
   Cada hallazgo entre
   distribuciones trae un **Arreglo** que se puede copiar (la línea a añadir y el manifiesto
   donde va). Se calcula también con `[findings] enabled = false`.
+- **Espacios de nombres**: un directorio con código pero sin `__init__.py` (PEP 420) es
+  un paquete de espacio de nombres. Si algún módulo lo importa, aparece en el grafo sin
+  archivo y con Ce 0, marcado *(espacio de nombres)*, contado aparte en el resumen y en
+  las métricas generales, y fuera de los hallazgos de módulos (sí puede ser destino de una
+  violación de capas). `import a.b` seguido de `a.b.c.f()` depende de `a.b.c`.
 - **Módulos con mayor acoplamiento**: el 10 % superior por `Ca + Ce` (hasta
   15 filas).
   - **Ca** (acoplamiento aferente): cuántos módulos importan este. Un Ca alto

@@ -66,6 +66,11 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   shallower one keeps it. Each finding between
   distributions comes with a **Fix** you can copy (the line to add and the manifest it goes
   in). It is computed even with `[findings] enabled = false`.
+- **Namespace packages**: a directory with code but no `__init__.py` (PEP 420) is a
+  namespace package. When a module imports it, it appears in the graph with no file and
+  Ce 0, marked *(namespace package)*, counted apart in the summary and the general
+  metrics, and outside the module findings (it can still be the target of a layer
+  violation). `import a.b` followed by `a.b.c.f()` depends on `a.b.c`.
 - **Most coupled modules**: the top 10% by `Ca + Ce` (up to 15 rows).
   - **Ca** (afferent coupling): how many modules import this one. High Ca
     means many modules break if it changes.
