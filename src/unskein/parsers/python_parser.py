@@ -27,6 +27,7 @@ from unskein.parsers.models import (
     VirtualModule,
     WarningCode,
 )
+from unskein.parsers.native import EVIDENCE_SUFFIXES, find_native_modules, is_evidence
 from unskein.parsers.usage import collect_name_usage
 
 # Import statements only occur in statement lists; ``handlers`` holds ExceptHandler
@@ -707,7 +708,7 @@ class PythonAdapter(LanguageAdapter):
     def discover_files(
         self, root: Path, exclude_spec: pathspec.PathSpec, follow_symlinks: bool = False
     ) -> Iterator[Path]:
-        """Yield the Python files under root that are not excluded.
+        """Yield the Python files under root that are not excluded, plus stubs and binaries.
 
         Args:
             root: Project directory to walk.
@@ -715,9 +716,11 @@ class PythonAdapter(LanguageAdapter):
             follow_symlinks: Whether to descend into symlinked directories.
 
         Returns:
-            An iterator over the Python files to analyze.
+            An iterator over the Python files to analyze and the files that prove a module
+            exists without a ``.py`` (stubs, binaries, Cython sources).
         """
-        return walk_files(root, tuple(self.file_extensions), exclude_spec, follow_symlinks)
+        extensions = (*self.file_extensions, *EVIDENCE_SUFFIXES)
+        return walk_files(root, extensions, exclude_spec, follow_symlinks)
 
     def normalize_module_name(self, file_path: Path, root: Path) -> str:
         """Return the module name of a file, from the distribution that ships it.
@@ -740,7 +743,8 @@ class PythonAdapter(LanguageAdapter):
         """Name every file first, so imports can be classified against the whole project.
 
         Args:
-            files: Python source files to parse.
+            files: Python source files to parse, and evidence files (stubs, binaries,
+                Cython sources) that are only named.
             root: Project directory the files belong to.
 
         Returns:
@@ -748,15 +752,33 @@ class PythonAdapter(LanguageAdapter):
             layout warnings, the entry points its distributions declare, the named
             distributions with the distribution of each module, and the project root.
         """
-        layout, warnings = build_layout(root, files, self.config.source_roots)
-        named, collisions = name_files(layout, files)
+        sources = [path for path in files if not is_evidence(path)]
+        layout, warnings = build_layout(root, sources, self.config.source_roots)
+        named, collisions = name_files(layout, sources)
         tasks = [(path, name.name) for path, name in named]
+        names = {name for _, name in tasks}
+        native, native_distributions = find_native_modules(
+            layout, [path for path in files if is_evidence(path)], names
+        )
         unpackaged = frozenset(name.name for _, name in named if not name.is_packaged)
-        index = ProjectIndex.from_names({name for _, name in tasks}, unpackaged)
+        index = ProjectIndex.from_names(
+            names, unpackaged, {name: module.kind for name, module in native.items()}
+        )
         module_distributions = {
             name.name: name.distribution for _, name in named if name.distribution is not None
         }
-        namespaces = _namespace_owners(index, [name for _, name in named], module_distributions)
+        module_distributions.update(native_distributions)
+        native_names = [
+            ModuleName(name, module.is_packaged, native_distributions.get(name))
+            for name, module in native.items()
+        ]
+        namespaces = _namespace_owners(
+            index, [*(name for _, name in named), *native_names], module_distributions
+        )
+        virtual = {
+            name: VirtualModule(VirtualKind.NAMESPACE, shipped)
+            for name, shipped in namespaces.items()
+        } | native
         return ParsePlan(
             tasks,
             index,
@@ -765,10 +787,7 @@ class PythonAdapter(LanguageAdapter):
             layout.distribution_infos,
             module_distributions,
             layout.root,
-            virtual={
-                name: VirtualModule(VirtualKind.NAMESPACE, shipped)
-                for name, shipped in namespaces.items()
-            },
+            virtual=dict(sorted(virtual.items())),
         )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:

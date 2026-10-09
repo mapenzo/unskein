@@ -121,6 +121,15 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Cadenas de re-exports demasiado largas",
         Lang.EN: "Re-export chains too long",
     },
+    "warning.invalid_module_name": {
+        Lang.ES: "El manifiesto declara un módulo compilado con nombre inválido, se ignora: "
+        "{detail}",
+        Lang.EN: "The manifest declares a compiled module with an invalid name, ignored: {detail}",
+    },
+    "warning_title.invalid_module_name": {
+        Lang.ES: "Módulos compilados con nombre inválido",
+        Lang.EN: "Compiled modules with an invalid name",
+    },
     "warning.manifest_unreadable": {
         Lang.ES: "Manifiesto ilegible, se detectan sus paquetes por convención: {detail}",
         Lang.EN: "Unreadable manifest, its packages are detected by convention: {detail}",

@@ -1,0 +1,10 @@
+[project]
+name = "native-demo"
+version = "0.1.0"
+
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "pkg._native"

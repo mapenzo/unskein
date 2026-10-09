@@ -29,6 +29,8 @@ class WarningCode(StrEnum):
             the shallower one keeps it.
         INVALID_REQUIREMENT: A declared dependency (or an included dependency group) has
             no usable name; it is ignored.
+        INVALID_MODULE_NAME: A manifest declares a compiled module whose name is not dotted
+            identifiers; it is ignored.
     """
 
     STAR_IMPORT = "star_import"
@@ -44,6 +46,7 @@ class WarningCode(StrEnum):
     MODULE_NAME_COLLISION = "module_name_collision"
     INVALID_REQUIREMENT = "invalid_requirement"
     DUPLICATE_DISTRIBUTION_NAME = "duplicate_distribution_name"
+    INVALID_MODULE_NAME = "invalid_module_name"
 
 
 @dataclass(frozen=True, slots=True)

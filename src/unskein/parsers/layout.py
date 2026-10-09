@@ -19,6 +19,8 @@ MANIFEST_NAMES = (PYPROJECT_NAME, SETUP_PY_NAME, SETUP_CFG_NAME)
 SRC_DIR = "src"
 PACKAGE_INIT_FILE = "__init__.py"
 PYTHON_SUFFIX = ".py"
+MATURIN_MODULE_KEY = "module-name"
+TOML_ASSIGNMENT = "="
 # A normalized distribution name as an identifier: "litellm-enterprise" -> "litellm_enterprise".
 NAME_SEPARATOR = "-"
 IDENTIFIER_SEPARATOR = "_"
@@ -37,6 +39,8 @@ class Distribution:
         packages: Top-level names it ships; None ships everything under ``import_root``.
         script_modules: Modules its ``[project.scripts]`` and ``gui-scripts`` point at.
         info: Name and declared dependencies; None when the manifest declares no name.
+        native_declarations: Compiled modules its ``[tool.maturin]`` declares, each with the
+            line of its ``module-name`` (None when it cannot be found).
     """
 
     root: Path
@@ -44,6 +48,7 @@ class Distribution:
     packages: frozenset[str] | None
     script_modules: tuple[str, ...] = ()
     info: DistributionInfo | None = None
+    native_declarations: tuple[tuple[str, int | None], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +62,7 @@ class _Declaration:
         script_modules: Modules its scripts point at.
         auto_discovers: Whether the build backend is setuptools (or none is declared),
             which ships every top-level package it finds when nothing is declared.
+        native_declarations: Compiled modules ``[tool.maturin]`` declares, with their line.
     """
 
     import_root: str | None = None
@@ -64,6 +70,7 @@ class _Declaration:
     name: str | None = None
     script_modules: tuple[str, ...] = ()
     auto_discovers: bool = False
+    native_declarations: tuple[tuple[str, int | None], ...] = ()
 
 
 def _absolute(path: Path) -> Path:
@@ -181,7 +188,14 @@ def _distribution_at(directory: Path, warnings: list[ParseWarning]) -> Distribut
             declared.style,
             declared.groups,
         )
-    return Distribution(directory, import_root, packages, declaration.script_modules, info)
+    return Distribution(
+        directory,
+        import_root,
+        packages,
+        declaration.script_modules,
+        info,
+        declaration.native_declarations,
+    )
 
 
 def _default_import_root(directory: Path) -> Path:
@@ -286,7 +300,10 @@ def _read_declaration(directory: Path, warnings: list[ParseWarning]) -> _Declara
             declaration.script_modules,
             declaration.auto_discovers,
         )
-    return declaration
+    return replace(
+        declaration,
+        native_declarations=_maturin_declarations(directory / PYPROJECT_NAME, pyproject, warnings),
+    )
 
 
 def _load_toml(path: Path, warnings: list[ParseWarning]) -> dict:
@@ -415,6 +432,49 @@ def _maturin(data: dict) -> tuple[str | None, frozenset[str] | None]:
     """
     maturin = _table(data, "tool", "maturin")
     return _string(maturin.get("python-source")), _first_segments([maturin.get("module-name")])
+
+
+def _maturin_declarations(
+    path: Path, data: dict, warnings: list[ParseWarning]
+) -> tuple[tuple[str, int | None], ...]:
+    """Return the compiled module ``[tool.maturin]`` declares, with its line.
+
+    Args:
+        path: The ``pyproject.toml``.
+        data: Its parsed content.
+        warnings: Collects an ``INVALID_MODULE_NAME`` when the name is not dotted identifiers.
+
+    Returns:
+        The full ``module-name`` and the line it is on; empty when none is declared.
+    """
+    name = _string(_table(data, "tool", "maturin").get(MATURIN_MODULE_KEY))
+    if name is None:
+        return ()
+    if not all(part.isidentifier() for part in name.split(".")):
+        warnings.append(ParseWarning(WarningCode.INVALID_MODULE_NAME, path, None, name))
+        return ()
+    return ((name, _key_line(path, MATURIN_MODULE_KEY)),)
+
+
+def _key_line(path: Path, key: str) -> int | None:
+    """Return the first line of a TOML file that assigns a key.
+
+    Args:
+        path: TOML file.
+        key: Bare key name.
+
+    Returns:
+        The 1-based line number, or None when the file cannot be read or has no such line.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith(key) and stripped[len(key) :].lstrip().startswith(TOML_ASSIGNMENT):
+            return number
+    return None
 
 
 def _hatch(data: dict) -> tuple[str | None, frozenset[str] | None]:

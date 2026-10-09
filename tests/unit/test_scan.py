@@ -181,6 +181,13 @@ def test_project_without_python_files_is_a_usage_error(make_project: MakeProject
     assert exc.value.key is ErrorKey.NO_FILES_FOUND
 
 
+def test_project_with_only_stubs_is_a_usage_error(make_project: MakeProject) -> None:
+    root = make_project({"app/core.pyi": "X: int\n"})
+    with pytest.raises(UnskeinError) as exc:
+        execute_scan(prepare(ScanOptions(path=root)))
+    assert exc.value.key is ErrorKey.NO_FILES_FOUND
+
+
 def test_tests_are_excluded_unless_requested(make_project: MakeProject) -> None:
     root = make_project({"app/__init__.py": "", "tests/test_app.py": "import app\n"})
     default = execute_scan(prepare(ScanOptions(path=root)))

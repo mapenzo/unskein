@@ -28,6 +28,7 @@ from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
 from unskein.parsers.discovery import load_exclude_spec
 from unskein.parsers.models import ParseResult
+from unskein.parsers.native import PYTHON_SUFFIX
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.pipeline import parse_all
 from unskein.report.markdown import AIStatus
@@ -172,9 +173,10 @@ def parse_sources(context: ScanContext) -> ParseResult:
     adapter = PythonAdapter(config)
     spec = load_exclude_spec(root, config.exclude, config.include_tests)
     files = sorted(adapter.discover_files(root, spec, config.follow_symlinks))
-    if not files:
+    sources = sum(1 for path in files if path.suffix == PYTHON_SUFFIX)
+    if not sources:
         raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
-    logger.debug("Discovered %d Python files under %s", len(files), root)
+    logger.debug("Discovered %d Python files under %s", sources, root)
     return parse_all(files, adapter, root, config)
 
 
