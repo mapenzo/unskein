@@ -73,7 +73,11 @@ def package_of(module: str, depth: int, facades: Collection[str]) -> str:
 
 
 def summarize_packages(
-    graph: nx.DiGraph, depth: int, *, facades: Collection[str] = frozenset()
+    graph: nx.DiGraph,
+    depth: int,
+    *,
+    facades: Collection[str] = frozenset(),
+    virtual: Collection[str] = frozenset(),
 ) -> tuple[list[PackageMetrics], list[PackageEdge]]:
     """Group the modules of a graph into packages and count the dependencies between them.
 
@@ -83,13 +87,15 @@ def summarize_packages(
         graph: Internal module dependency graph.
         depth: Dotted segments that name a package.
         facades: Names of modules that are package ``__init__`` files.
+        virtual: Namespace packages: each is its own package and counts as no module.
 
     Returns:
         The packages ordered by ``Ca + Ce`` (highest first, then by name) and the
         dependencies between them ordered by import count (highest first, then by names).
     """
-    owner = {module: package_of(module, depth, facades) for module in graph.nodes}
-    module_counts = Counter(owner.values())
+    own_packages = {*facades, *virtual}
+    owner = {module: package_of(module, depth, own_packages) for module in graph.nodes}
+    module_counts = Counter(owner[module] for module in graph.nodes if module not in virtual)
     import_counts: Counter[tuple[str, str]] = Counter()
     for source, target in graph.edges:
         if owner[source] != owner[target]:
@@ -100,8 +106,8 @@ def summarize_packages(
         importers[target].add(source)
         imported[source].add(target)
     packages = [
-        PackageMetrics(name, count, len(importers[name]), len(imported[name]))
-        for name, count in module_counts.items()
+        PackageMetrics(name, module_counts[name], len(importers[name]), len(imported[name]))
+        for name in sorted(set(owner.values()))
     ]
     packages.sort(key=lambda package: (-(package.afferent + package.efferent), package.name))
     edges = [
@@ -112,7 +118,11 @@ def summarize_packages(
 
 
 def summarize_project_packages(
-    graph: nx.DiGraph, depth: int | None, *, facades: Collection[str] = frozenset()
+    graph: nx.DiGraph,
+    depth: int | None,
+    *,
+    facades: Collection[str] = frozenset(),
+    virtual: Collection[str] = frozenset(),
 ) -> tuple[list[PackageMetrics], list[PackageEdge]]:
     """Summarize packages at a fixed depth, or at an automatically chosen one.
 
@@ -124,13 +134,14 @@ def summarize_project_packages(
         graph: Internal module dependency graph.
         depth: Dotted segments that name a package; None for automatic.
         facades: Names of modules that are package ``__init__`` files.
+        virtual: Namespace packages: each is its own package and counts as no module.
 
     Returns:
         The same pair as ``summarize_packages``.
     """
     if depth is not None:
-        return summarize_packages(graph, depth, facades=facades)
-    packages, edges = summarize_packages(graph, AUTO_START_DEPTH, facades=facades)
+        return summarize_packages(graph, depth, facades=facades, virtual=virtual)
+    packages, edges = summarize_packages(graph, AUTO_START_DEPTH, facades=facades, virtual=virtual)
     if len(packages) == 1 and packages[0].name != ROOT_PACKAGE:
-        return summarize_packages(graph, AUTO_START_DEPTH + 1, facades=facades)
+        return summarize_packages(graph, AUTO_START_DEPTH + 1, facades=facades, virtual=virtual)
     return packages, edges

@@ -6,13 +6,16 @@ import networkx as nx
 
 from unskein.parsers.models import ImportKind, ParseResult
 
+NAMESPACE_ATTRIBUTE = "namespace"
+
 
 def build_graph(result: ParseResult) -> nx.DiGraph:
     """Build a directed graph of internal module dependencies.
 
     Only the project's own modules become nodes; external imports are dropped,
     since they already served their purpose through ``is_external``. Isolated
-    modules and internal targets whose file could not be parsed are nodes too.
+    modules and internal targets whose file could not be parsed are nodes too;
+    namespace packages that are imported are nodes marked ``namespace=True``.
     Nodes are inserted in sorted order so traversals are deterministic.
 
     Args:
@@ -38,4 +41,7 @@ def build_graph(result: ParseResult) -> nx.DiGraph:
     graph.add_nodes_from(sorted(nodes))
     for (source, target), weight in sorted(edge_counts.items()):
         graph.add_edge(source, target, weight=weight, kind=edge_kinds[source, target])
+    for name in result.namespaces:
+        if name in graph:
+            graph.nodes[name][NAMESPACE_ATTRIBUTE] = True
     return graph

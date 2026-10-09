@@ -269,6 +269,8 @@ class ParsePlan:
         distributions: Named distributions of the project.
         module_distributions: Distribution of each module that one ships.
         project_root: Absolute project directory, for relative paths in findings.
+        namespaces: Namespace packages, each with whether a distribution ships every
+            module under it.
     """
 
     tasks: list[ParseTask]
@@ -278,6 +280,7 @@ class ParsePlan:
     distributions: tuple[DistributionInfo, ...] = ()
     module_distributions: dict[str, str] = field(default_factory=dict)
     project_root: Path | None = None
+    namespaces: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -295,6 +298,8 @@ class ParseResult:
         project_root: Absolute project directory; None when parsed without a plan.
         module_distributions: Distribution of every module a named one ships, parsed or
             not (a file skipped as too large still belongs to its distribution).
+        namespaces: Namespace packages, each with whether a distribution ships every
+            module under it.
     """
 
     modules: list[ModuleInfo]
@@ -305,6 +310,7 @@ class ParseResult:
     distributions: tuple[DistributionInfo, ...] = ()
     project_root: Path | None = None
     module_distributions: dict[str, str] = field(default_factory=dict)
+    namespaces: dict[str, bool] = field(default_factory=dict)
 
     @classmethod
     def from_file_results(
@@ -332,6 +338,7 @@ class ParseResult:
             result.distributions = plan.distributions
             result.project_root = plan.project_root
             result.module_distributions = plan.module_distributions
+            result.namespaces = plan.namespaces
         for file_result in file_results:
             if file_result.module is not None:
                 module = file_result.module

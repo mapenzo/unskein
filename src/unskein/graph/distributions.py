@@ -1,7 +1,7 @@
 """Dependencies between the distributions of a project: uses, rules 6-9 and installability."""
 
 from collections import Counter, defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path, PurePosixPath
@@ -309,8 +309,12 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
     # Unparsed files (too large, syntax errors) still belong to their distribution.
     distribution_of: dict[str, str | None] = dict(result.module_distributions)
     distribution_of.update((module.name, module.distribution) for module in result.modules)
+    # Namespace packages have no file: their distribution and packaging come from their modules.
+    for namespace in result.namespaces:
+        distribution_of.setdefault(namespace, None)
     packaged = {module.name for module in result.modules if module.is_packaged}
     packaged.update(result.module_distributions)
+    packaged.update(name for name, shipped in result.namespaces.items() if shipped)
     # Sorted by relative POSIX path, so "first" is the same on every platform; computed
     # once per module (Path.relative_to is slow on tens of thousands of imports).
     sources = sorted(
@@ -339,6 +343,22 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
                 collector.unpackaged[key].add(use, location)
                 collector.unpackaged_targets[key].add(edge.target)
     return collector
+
+
+def _target_files(name: str, files: Mapping[str, Path]) -> list[Path]:
+    """Return the file of a module, or the files under a namespace package.
+
+    Args:
+        name: Imported module or namespace package.
+        files: Source file per parsed module.
+
+    Returns:
+        The files that make up the target.
+    """
+    if name in files:
+        return [files[name]]
+    prefix = f"{name}{NAME_SEPARATOR}"
+    return [path for module, path in sorted(files.items()) if module.startswith(prefix)]
 
 
 def _common_directory(paths: list[Path], root: Path | None) -> str:
@@ -660,7 +680,8 @@ def analyze_distributions(result: ParseResult, scripts: Collection[str]) -> Dist
     for (source, package), counter in sorted(collector.unpackaged.items()):
         if source in infos:
             targets = tuple(sorted(collector.unpackaged_targets[source, package]))
-            directory = _common_directory([files[t] for t in targets], result.project_root)
+            paths = [path for target in targets for path in _target_files(target, files)]
+            directory = _common_directory(paths, result.project_root)
             uses.append(UnpackagedUse(source, package, counter.freeze(), targets, directory))
     context = _Context(infos, result.project_root)
     findings = [

@@ -12,7 +12,7 @@ from unskein.config import AnalysisConfig
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
 from unskein.parsers.exports import module_exports
-from unskein.parsers.layout import build_layout, name_files
+from unskein.parsers.layout import ModuleName, build_layout, name_files
 from unskein.parsers.models import (
     STAR_EXPORT,
     FileParseResult,
@@ -611,6 +611,38 @@ def parse_file(
     return FileParseResult(module, collector.re_exports, collector.warnings)
 
 
+def _namespace_owners(
+    index: ProjectIndex, names: list[ModuleName], module_distributions: dict[str, str]
+) -> dict[str, bool]:
+    """Tell, for each namespace package, whether its modules are shipped and by whom.
+
+    One pass over the module names: each name updates the namespaces above it. A
+    namespace whose modules all belong to one named distribution is added to
+    ``module_distributions``.
+
+    Args:
+        index: Project index with the namespace packages.
+        names: Every file's module name.
+        module_distributions: Distribution per module; namespaces are added to it.
+
+    Returns:
+        Whether a distribution ships every module under each namespace, by namespace.
+    """
+    shipped: dict[str, bool] = {}
+    owners: defaultdict[str, set[str | None]] = defaultdict(set)
+    for name in names:
+        parts = name.name.split(NAME_SEPARATOR)
+        for end in range(1, len(parts)):
+            prefix = NAME_SEPARATOR.join(parts[:end])
+            if index.is_namespace(prefix):
+                shipped[prefix] = shipped.get(prefix, True) and name.is_packaged
+                owners[prefix].add(name.distribution)
+    for namespace, found in owners.items():
+        if len(found) == 1 and None not in found:
+            module_distributions[namespace] = next(iter(found))
+    return dict(sorted(shipped.items()))
+
+
 class PythonAdapter(LanguageAdapter):
     """Language adapter for Python, built on the standard library `ast` module.
 
@@ -683,6 +715,7 @@ class PythonAdapter(LanguageAdapter):
         module_distributions = {
             name.name: name.distribution for _, name in named if name.distribution is not None
         }
+        namespaces = _namespace_owners(index, [name for _, name in named], module_distributions)
         return ParsePlan(
             tasks,
             index,
@@ -691,6 +724,7 @@ class PythonAdapter(LanguageAdapter):
             layout.distribution_infos,
             module_distributions,
             layout.root,
+            namespaces=namespaces,
         )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:
