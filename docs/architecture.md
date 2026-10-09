@@ -414,7 +414,7 @@ Implementación concreta de `LanguageAdapter` usando `ast` de la stdlib.
   **Imports protegidos (`ImportEdge.is_guarded`)**: la sentencia está en el **cuerpo** de
   un `try`/`try*` con algún handler que captura `ImportError`, `ModuleNotFoundError`,
   `Exception` o `BaseException` (por nombre o atributo, también en tuplas) o un `except:`
-  desnudo, o en el cuerpo de un `with` cuyo gestor es `suppress(...)`/`x.suppress(...)` con
+  desnudo, y cuyo cuerpo no termina en `raise` (si relanza, el import sigue rompiendo), o en el cuerpo de un `with` cuyo gestor es `suppress(...)`/`x.suppress(...)` con
   alguno de esos nombres. Los handlers, `else` y `finally` no protegen. La protección se
   hereda hacia los bloques anidados (`block_guarded`, junto a `block_kind` en
   `iter_statements`). Un import protegido es opcional por contrato.
@@ -803,16 +803,20 @@ distribuciones con nombre no hace nada.
   instalada sola son `REQUIRED + LAZY`.
 - **Aristas** (`DistributionEdge`): cada import interno de un módulo de A (que no sea script)
   a un módulo parseado de B ≠ A suma en A → B, con su primera ubicación por uso
-  (`ruta:línea` POSIX relativa a la raíz). Su `DependencyStatus` sale del manifiesto de A:
+  (`ruta:línea` POSIX relativa a la raíz; los módulos se recorren en el orden de esa ruta,
+  igual en todas las plataformas). Su `DependencyStatus` sale del manifiesto de A:
   `REQUIRED`, `OPTIONAL` (con los extras o grupos que la declaran), `UNDECLARED` o `UNKNOWN`
-  (`requires = None`). Un import a código no empaquetado (ni script ni nombrado por ruta) se
-  agrupa por su primer segmento (`UnpackagedUse`).
+  (`requires = None`). Un import a código no empaquetado (`is_packaged=False`, ni script ni
+  nombrado por ruta) se agrupa por su primer segmento (`UnpackagedUse`), con el directorio
+  más profundo que contiene todos sus archivos. Un import a lo que empaqueta una
+  distribución sin nombre (solo `setup.py`) no cuenta: es una dependencia que no se puede
+  nombrar.
 
 | # | `FindingKind` | Se dispara | `modules` | Arreglo (`fix`) |
 |---|---|---|---|---|
 | 6 | `UNDECLARED_DEPENDENCY` | arista `UNDECLARED` con usos que rompen | `(A, B)` | `add_dependency`: `"B>=versión"` (o `"B"`) en `[project] dependencies` / `[options] install_requires` del manifiesto de A |
 | 7 | `OPTIONAL_REQUIRED` | arista `OPTIONAL` con usos `REQUIRED` | `(A, B)` | `promote_or_guard`: pasarla a requeridas o proteger el import |
-| 8 | `UNPACKAGED_IMPORT` | import de código no empaquetado con usos que rompen | `(A, segmento)` | `package_or_move`: `segmento/` dentro de un paquete de A o entre sus paquetes |
+| 8 | `UNPACKAGED_IMPORT` | import de código no empaquetado con usos que rompen | `(A, segmento)` | `package_or_move`: ese directorio dentro de un paquete de A o entre sus paquetes |
 | 9 | `DISTRIBUTION_CYCLE` | componente fuertemente conexa de ≥ 2 distribuciones (todas las aristas) | miembros ordenados | `cut_edge`: aristas a cortar, la de menos usos que rompen primero, repitiendo hasta que no quede ciclo |
 
 La evidencia es plana (números y cadenas cortas); el detalle de cada arista del ciclo vive
@@ -1148,7 +1152,7 @@ Estructura del reporte:
 ## Métricas generales
 ## Ciclos de dependencia
 ## Paquetes                         (si hay resumen por paquetes)
-## Distribuciones                   (con ≥ 2 distribuciones con nombre o un hallazgo 8:
+## Distribuciones                   (con ≥ 2 distribuciones con nombre o alguna no instalable:
                                     módulos, qué usa y ¿instalable sola?)
 ## Scripts                          (solo si hay scripts: por directorio de primer nivel,
                                     con recuento y paquetes que usan)

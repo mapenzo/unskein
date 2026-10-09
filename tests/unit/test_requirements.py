@@ -110,3 +110,22 @@ def test_unreadable_pyproject_is_quietly_unknown(make_project: MakeProject) -> N
     declared, warnings = _read(root)
     assert declared.requires is None
     assert warnings == []  # the layout already warns MANIFEST_UNREADABLE
+
+
+def test_setup_cfg_attr_and_file_versions_are_dynamic(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "setup.cfg": "[metadata]\nname = alpha\nversion = attr: apkg.__version__\n"
+            "[options]\ninstall_requires =\n    core\n"
+        }
+    )
+    declared, _ = _read(root)
+    assert declared.version is None
+
+
+def test_malformed_dynamic_entries_are_ignored(make_project: MakeProject) -> None:
+    root = make_project(
+        {"pyproject.toml": '[project]\nname = "x"\ndynamic = [{a = 1}, "dependencies"]\n'}
+    )
+    declared, _ = _read(root)
+    assert declared.requires is None

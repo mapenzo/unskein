@@ -74,7 +74,8 @@ Architecture health: fair.
   coupled module how many others depend on it, directly or indirectly.
 - **Monorepo distributions**: with no configuration, each `pyproject.toml` or `setup.cfg`
   is a distribution, and unskein says whether each one can be installed alone. Imports
-  inside a `try` that catches import errors count as optional, so they are not reported.
+  inside a `try` that catches import errors (without re-raising) count as optional, so they
+  are not reported.
   It also reports dependencies declared only in an extra but imported at load time,
   imports of code no distribution ships, and cycles between distributions, with the
   status of each edge. Each finding has a fix you can copy, such as

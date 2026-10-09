@@ -1,10 +1,11 @@
 """Dependencies between the distributions of a project: uses, rules 6-9 and installability."""
 
+import os
 from collections import Counter, defaultdict
 from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import networkx as nx
 
@@ -12,6 +13,7 @@ from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.parsers.models import DistributionInfo, ImportEdge, ImportKind, ParseResult
 
 PATH_SEPARATOR = "/"
+CURRENT_DIRECTORY = "."
 NAME_SEPARATOR = "."
 PROJECT_TABLE = "[project] dependencies"
 SETUP_CFG_TABLE = "[options] install_requires"
@@ -119,12 +121,15 @@ class UnpackagedUse:
         package: First segment of the imported modules.
         counts: Uses behind it.
         targets: Imported modules, sorted.
+        directory: Deepest directory holding every imported file, relative to the project,
+            with a trailing ``/``; the file itself when it sits at the project root.
     """
 
     source: str
     package: str
     counts: UseCounts
     targets: tuple[str, ...]
+    directory: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,13 +282,17 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
         The tallies.
     """
     distribution_of = {module.name: module.distribution for module in result.modules}
+    packaged = {module.name for module in result.modules if module.is_packaged}
+    # Sorted by relative POSIX path, so "first" is the same on every platform; computed
+    # once per module (Path.relative_to is slow on tens of thousands of imports).
+    sources = sorted(
+        (_relative(module.file_path, result.project_root), module)
+        for module in result.modules
+        if module.distribution is not None and module.name not in scripts
+    )
     collector = _Collector()
-    for module in sorted(result.modules, key=lambda m: str(m.file_path)):
+    for relative, module in sources:
         source = module.distribution
-        if source is None or module.name in scripts:
-            continue
-        # Relative paths are slow to compute: once per module, and only when needed.
-        relative = None
         for edge in sorted(module.imports, key=lambda e: e.line_number or 0):
             use = None if edge.is_external else import_use(edge)
             if use is None or edge.target not in distribution_of:
@@ -291,16 +300,34 @@ def _collect(result: ParseResult, scripts: Collection[str]) -> _Collector:
             target = distribution_of[edge.target]
             if target == source:
                 continue
-            if relative is None:
-                relative = _relative(module.file_path, result.project_root)
             location = _location(relative, edge.line_number)
             if target is not None:
                 collector.edges[source, target].add(use, location)
+            elif edge.target in packaged:
+                # Shipped by a distribution without a name: a dependency unskein cannot name.
+                continue
             elif edge.target not in scripts and PATH_SEPARATOR not in edge.target:
                 key = (source, edge.target.split(NAME_SEPARATOR, 1)[0])
                 collector.unpackaged[key].add(use, location)
                 collector.unpackaged_targets[key].add(edge.target)
     return collector
+
+
+def _common_directory(paths: list[Path], root: Path | None) -> str:
+    """Return the deepest directory holding every given file, relative to the project.
+
+    Args:
+        paths: Source files of the imported unpackaged modules.
+        root: Absolute project directory, if known.
+
+    Returns:
+        The directory with a trailing ``/``; the file itself when it sits at the root.
+    """
+    parents = [PurePosixPath(_relative(path, root)).parent for path in paths]
+    common = PurePosixPath(os.path.commonpath([str(parent) for parent in parents]))
+    if common == PurePosixPath(CURRENT_DIRECTORY):
+        return _relative(paths[0], root)
+    return f"{common}{PATH_SEPARATOR}"
 
 
 def _status(info: DistributionInfo, target: str) -> tuple[DependencyStatus, tuple[str, ...]]:
@@ -437,6 +464,8 @@ def _optional_required(edges: list[DistributionEdge], context: _Context) -> list
             continue
         evidence: Evidence = {
             "required": edge.counts.required,
+            "lazy": edge.counts.lazy,
+            "guarded": edge.counts.guarded,
             "extras": LIST_SEPARATOR.join(edge.extras),
             "first": edge.counts.first[ImportUse.REQUIRED],
             "fix": FIX_PROMOTE,
@@ -464,10 +493,11 @@ def _unpackaged(uses: list[UnpackagedUse]) -> list[Finding]:
         evidence: Evidence = {
             "required": use.counts.required,
             "lazy": use.counts.lazy,
+            "guarded": use.counts.guarded,
             "targets": LIST_SEPARATOR.join(use.targets[:MAX_UNPACKAGED_TARGETS]),
             "first": use.counts.first_breaking or "",
             "fix": FIX_PACKAGE,
-            "directory": f"{use.package}{PATH_SEPARATOR}",
+            "directory": use.directory,
         }
         findings.append(Finding(FindingKind.UNPACKAGED_IMPORT, (use.source, use.package), evidence))
     return findings
@@ -595,16 +625,13 @@ def analyze_distributions(result: ParseResult, scripts: Collection[str]) -> Dist
         if source in infos and target in infos:
             status, extras = _status(infos[source], target)
             edges.append(DistributionEdge(source, target, counter.freeze(), status, extras))
-    uses = [
-        UnpackagedUse(
-            source,
-            package,
-            counter.freeze(),
-            tuple(sorted(collector.unpackaged_targets[source, package])),
-        )
-        for (source, package), counter in sorted(collector.unpackaged.items())
-        if source in infos
-    ]
+    files = {module.name: module.file_path for module in result.modules}
+    uses = []
+    for (source, package), counter in sorted(collector.unpackaged.items()):
+        if source in infos:
+            targets = tuple(sorted(collector.unpackaged_targets[source, package]))
+            directory = _common_directory([files[t] for t in targets], result.project_root)
+            uses.append(UnpackagedUse(source, package, counter.freeze(), targets, directory))
     context = _Context(infos, result.project_root)
     findings = [
         *_undeclared(edges, context),

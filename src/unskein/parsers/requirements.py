@@ -20,6 +20,8 @@ CFG_INSTALL_REQUIRES = "install_requires"
 CFG_EXTRAS = "options.extras_require"
 CFG_METADATA = "metadata"
 CFG_VERSION = "version"
+# setup.cfg values computed at build time (``attr: pkg.__version__``, ``file: VERSION``).
+CFG_DYNAMIC_PREFIXES = ("attr:", "file:")
 # PEP 508: a name starts the specifier; versions, extras, markers and URLs follow it.
 _REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 # PEP 503 normalization.
@@ -167,7 +169,7 @@ def _from_project(project: dict, data: dict, source: _Source) -> DeclaredDepende
     Returns:
         The declared dependencies.
     """
-    dynamic = set(_as_list(project.get("dynamic")))
+    dynamic = {entry for entry in _as_list(project.get("dynamic")) if isinstance(entry, str)}
     requires = None
     if DYNAMIC_DEPENDENCIES not in dynamic:
         requires = _names(_as_list(project.get("dependencies")), source)
@@ -276,4 +278,6 @@ def _from_setup_cfg(path: Path, warnings: list[ParseWarning]) -> DeclaredDepende
         for extra in sorted(parser.options(CFG_EXTRAS)):
             optional[extra] = _names(_cfg_lines(parser.get(CFG_EXTRAS, extra)), source)
     version = parser.get(CFG_METADATA, CFG_VERSION, fallback="").strip() or None
+    if version is not None and version.startswith(CFG_DYNAMIC_PREFIXES):
+        version = None
     return DeclaredDependencies(requires, optional, version, path)

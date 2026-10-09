@@ -54,8 +54,8 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   really imports and whether it can be installed alone, without extras, with no failing
   import; if not, the `file:line` that prevents it. Each import between distributions counts
   as *required* (at import time), *lazy* (inside a function) or *guarded* (in the body of a
-  `try` that catches `ImportError`, `ModuleNotFoundError`, `Exception` or a bare `except:`,
-  or of `with contextlib.suppress(...)` for those errors); guarded imports are optional by
+  `try` that catches `ImportError`, `ModuleNotFoundError`, `Exception` or a bare `except:`
+  and does not end in `raise`, or of `with contextlib.suppress(...)` for those errors); guarded imports are optional by
   contract and never prevent installing it. Declared dependencies are read from
   `[project] dependencies`, its extras, `[dependency-groups]` and `setup.cfg`; with
   `dynamic = ["dependencies"]`, only `setup.py` or another format

@@ -7,7 +7,7 @@ import pathspec
 import pytest
 
 from unskein.ai.models import AIFailure, AIReport, Problem
-from unskein.config import AnalysisConfig
+from unskein.config import AnalysisConfig, FindingsConfig
 from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import (
     IMPACT_BOTTLENECK_MODULES,
@@ -764,3 +764,20 @@ def test_unknown_dependencies_do_not_claim_to_be_dynamic_en(tmp_path: Path) -> N
 def test_spanish_use_counts_do_not_put_a_plural_after_one() -> None:
     report = _distributions_report(Lang.ES)
     assert "requeridos: 2, perezosos: 0, protegidos: 0" in report
+
+
+def test_distributions_section_does_not_depend_on_findings(tmp_path: Path) -> None:
+    files = {
+        "pyproject.toml": '[build-system]\nbuild-backend = "hatchling.build"\n'
+        '[project]\nname = "a"\ndependencies = []\n',
+        "a/__init__.py": "import legacy.tool\n",
+        "legacy/__init__.py": "",
+        "legacy/tool.py": "",
+    }
+    for relative, content in files.items():
+        (tmp_path / relative).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / relative).write_text(content)
+    adapter = PythonAdapter(AnalysisConfig())
+    parsed = adapter.resolve_indirection(adapter.parse(sorted(tmp_path.rglob("*.py")), tmp_path))
+    result = analyze(parsed, FindingsConfig(enabled=False))
+    assert "## Distributions" in render(tmp_path, result)

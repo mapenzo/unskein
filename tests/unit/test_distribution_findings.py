@@ -241,3 +241,55 @@ def test_two_manifests_with_the_same_name_give_one_summary(make_project: MakePro
     )
     names = [summary.name for summary in _analyzed(root).distributions]
     assert names == ["a", "twin"]
+
+
+def test_code_shipped_by_an_unnamed_distribution_is_not_unpackaged(
+    make_project: MakeProject,
+) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "core"\ndependencies = []\n',
+            "core/__init__.py": "",
+            "core/a.py": "import legacy_pkg.x\n",
+            "legacy_member/setup.py": "raise SystemExit('never run')\n",
+            "legacy_member/legacy_pkg/__init__.py": "",
+            "legacy_member/legacy_pkg/x.py": "",
+        }
+    )
+    assert FindingKind.UNPACKAGED_IMPORT not in _by_kind(_analyzed(root))
+
+
+def test_unpackaged_fix_names_the_real_directory(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[build-system]\nbuild-backend = "hatchling.build"\n'
+            '[project]\nname = "core"\ndependencies = []\n',
+            "core/__init__.py": "",
+            "core/a.py": "import plug.tools.t\n",
+            "plug/pyproject.toml": '[project]\nname = "plug"\n[tool.uv.build-backend]\n'
+            'module-root = ""\nmodule-name = "plug_pkg"\n',
+            "plug/plug_pkg/__init__.py": "",
+            "plug/tools/__init__.py": "",
+            "plug/tools/t.py": "",
+        }
+    )
+    (finding,) = _by_kind(_analyzed(root))[FindingKind.UNPACKAGED_IMPORT]
+    assert finding.evidence["directory"] == "plug/tools/"
+
+
+def test_rules_7_and_8_carry_every_use_count(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": '[project]\nname = "a"\nversion = "1"\n'
+            '[project.optional-dependencies]\nx = ["b"]\n',
+            "a/__init__.py": "try:\n    import b_pkg\nexcept ImportError:\n    pass\n"
+            "import b_pkg\ndef f():\n    import b_pkg\n",
+            "bdist/pyproject.toml": '[project]\nname = "b"\nversion = "1"\ndependencies = []\n'
+            '[tool.uv.build-backend]\nmodule-root = ""\nmodule-name = "b_pkg"\n',
+            "bdist/b_pkg/__init__.py": "",
+        }
+    )
+    (finding,) = _by_kind(_analyzed(root))[FindingKind.OPTIONAL_REQUIRED]
+    assert (finding.evidence["lazy"], finding.evidence["guarded"]) == (1, 1)
+    (fixture_finding,) = _by_kind(_analyzed(FIXTURE))[FindingKind.UNPACKAGED_IMPORT]
+    assert fixture_finding.evidence["guarded"] == 0

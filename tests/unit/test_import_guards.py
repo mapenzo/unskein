@@ -88,3 +88,13 @@ def test_try_star_guards(make_project: MakeProject) -> None:
 def test_plain_imports_are_not_guarded(make_project: MakeProject) -> None:
     source = "import app.m1\nfrom app import m2\n"
     assert _guards(make_project, source) == {"app.m1": False, "app.m2": False}
+
+
+def test_handlers_that_always_raise_do_not_guard(make_project: MakeProject) -> None:
+    source = (
+        "try:\n    import app.m1\nexcept ImportError:\n    raise RuntimeError('install it')\n"
+        "try:\n    import app.m2\nexcept Exception as error:\n    log(error)\n    raise\n"
+        "try:\n    import app.m3\nexcept ValueError:\n    pass\n"
+        "except ImportError:\n    m3 = None\n"
+    )
+    assert _guards(make_project, source) == {"app.m1": False, "app.m2": False, "app.m3": True}

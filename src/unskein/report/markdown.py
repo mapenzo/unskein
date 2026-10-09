@@ -24,6 +24,7 @@ MAX_PACKAGE_EDGES_SHOWN = 10
 MIN_PACKAGES_SHOWN = 2
 NOT_MEASURED = "—"
 MIN_DISTRIBUTIONS_SHOWN = 2
+CYCLE_SEPARATOR = " ↔ "
 # Kinds whose line shows the uses behind an edge between a distribution and its target.
 EDGE_FINDINGS = (
     FindingKind.UNDECLARED_DEPENDENCY,
@@ -412,10 +413,10 @@ def _shows_distributions(result: AnalysisResult) -> bool:
 
     Returns:
         True with at least ``MIN_DISTRIBUTIONS_SHOWN`` named distributions, or when one
-        imports code no distribution ships.
+        cannot be installed alone (with a single one, only unpackaged code blocks it).
     """
     return len(result.distributions) >= MIN_DISTRIBUTIONS_SHOWN or any(
-        finding.kind is FindingKind.UNPACKAGED_IMPORT for finding in result.findings
+        summary.installable is False for summary in result.distributions
     )
 
 
@@ -573,7 +574,7 @@ def _fix_text(finding: Finding, lang: Lang) -> str:
         "target": finding.modules[-1],
         "extras": _backticked(extras.split(LIST_SEPARATOR)) if extras else NOT_MEASURED,
         "cuts": LIST_SEPARATOR.join(
-            " → ".join(f"`{end}`" for end in cut.split(EDGE_ARROW))
+            EDGE_ARROW.join(f"`{end}`" for end in cut.split(EDGE_ARROW))
             for cut in cuts.split(LIST_SEPARATOR)
         ),
     }
@@ -597,7 +598,7 @@ def _distribution_finding_line(finding: Finding, result: AnalysisResult, lang: L
         first = t("finding.first", lang, first=finding.evidence["first"])
         return f"- `{source}` → `{target}` ({_uses(finding.evidence, lang)}; {first})\n{fix}"
     members = set(finding.modules)
-    lines = [f"- {' ↔ '.join(f'`{member}`' for member in finding.modules)}"]
+    lines = [f"- {CYCLE_SEPARATOR.join(f'`{member}`' for member in finding.modules)}"]
     for edge in result.distribution_edges:
         if edge.source in members and edge.target in members:
             status = t(f"finding.status.{edge.status}", lang, extras=_backticked(edge.extras))

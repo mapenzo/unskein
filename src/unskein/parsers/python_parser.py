@@ -107,9 +107,12 @@ def catches_import_errors(handlers: list[ast.ExceptHandler]) -> bool:
         handlers: The ``except`` clauses.
 
     Returns:
-        True for a bare ``except:`` or a handler naming one of ``IMPORT_ERROR_NAMES``.
+        True for a bare ``except:`` or a handler naming one of ``IMPORT_ERROR_NAMES``,
+        unless it ends in ``raise``: then the failed import still propagates.
     """
     for handler in handlers:
+        if isinstance(handler.body[-1], ast.Raise):
+            continue
         if handler.type is None or IMPORT_ERROR_NAMES.intersection(_exception_names(handler.type)):
             return True
     return False

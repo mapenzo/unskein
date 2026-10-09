@@ -58,7 +58,7 @@ detección.
   si no, el `archivo:línea` que lo impide. Cada import entre distribuciones cuenta como
   *requerido* (al importar), *perezoso* (dentro de una función) o *protegido* (en el cuerpo
   de un `try` que captura `ImportError`, `ModuleNotFoundError`, `Exception` o un `except:`
-  desnudo, o de `with contextlib.suppress(...)` de esos errores); los protegidos son
+  desnudo y no termina en `raise`, o de `with contextlib.suppress(...)` de esos errores); los protegidos son
   opcionales por contrato y nunca impiden instalarla. Las dependencias declaradas se leen de
   `[project] dependencies`, sus extras, `[dependency-groups]` y `setup.cfg`; con
   `dynamic = ["dependencies"]`, solo `setup.py` u otro formato (`[tool.poetry.dependencies]`)

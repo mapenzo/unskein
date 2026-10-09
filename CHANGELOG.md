@@ -22,8 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   undeclared dependencies, dependencies declared only in an extra but imported at load
   time, imports of code that no distribution ships, and cycles between distributions
   (each edge marked required, optional, undeclared or unknown, with the edges to cut).
-  Imports inside a `try` that catches import errors, or `contextlib.suppress`, count as
-  optional by contract.
+  Imports inside a `try` that catches import errors (and does not re-raise), or
+  `contextlib.suppress`, count as optional by contract.
 - A Distributions section: what each distribution really imports from the others and
   whether it can be installed alone.
 - A warning for declared dependencies without a valid name.
