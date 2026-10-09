@@ -20,6 +20,8 @@ SRC_DIR = "src"
 PACKAGE_INIT_FILE = "__init__.py"
 PYTHON_SUFFIX = ".py"
 MATURIN_MODULE_KEY = "module-name"
+MATURIN_TABLE = "[tool.maturin]"
+TOML_TABLE_START = "["
 TOML_ASSIGNMENT = "="
 # A normalized distribution name as an identifier: "litellm-enterprise" -> "litellm_enterprise".
 NAME_SEPARATOR = "-"
@@ -453,14 +455,15 @@ def _maturin_declarations(
     if not all(part.isidentifier() for part in name.split(".")):
         warnings.append(ParseWarning(WarningCode.INVALID_MODULE_NAME, path, None, name))
         return ()
-    return ((name, _key_line(path, MATURIN_MODULE_KEY)),)
+    return ((name, _key_line(path, MATURIN_TABLE, MATURIN_MODULE_KEY)),)
 
 
-def _key_line(path: Path, key: str) -> int | None:
-    """Return the first line of a TOML file that assigns a key.
+def _key_line(path: Path, table: str, key: str) -> int | None:
+    """Return the line of a TOML file that assigns a key inside one table.
 
     Args:
         path: TOML file.
+        table: Table header, e.g. ``[tool.maturin]``.
         key: Bare key name.
 
     Returns:
@@ -470,9 +473,16 @@ def _key_line(path: Path, key: str) -> int | None:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
         return None
+    in_table = False
     for number, line in enumerate(lines, start=1):
         stripped = line.strip()
-        if stripped.startswith(key) and stripped[len(key) :].lstrip().startswith(TOML_ASSIGNMENT):
+        if stripped.startswith(TOML_TABLE_START):
+            in_table = stripped == table
+        elif (
+            in_table
+            and stripped.startswith(key)
+            and stripped[len(key) :].lstrip().startswith(TOML_ASSIGNMENT)
+        ):
             return number
     return None
 

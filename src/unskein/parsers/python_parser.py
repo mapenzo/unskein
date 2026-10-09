@@ -211,7 +211,8 @@ class ProjectIndex:
     top_level: frozenset[str]
     packages: frozenset[str]
     unpackaged: frozenset[str] = frozenset()
-    virtual: dict[str, VirtualKind] = field(default_factory=dict)
+    # A dict cannot be hashed; the other fields identify the index.
+    virtual: dict[str, VirtualKind] = field(default_factory=dict, hash=False)
 
     @classmethod
     def from_names(

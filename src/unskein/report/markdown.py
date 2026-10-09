@@ -22,6 +22,7 @@ MAX_TANGLE_MEMBERS_SHOWN = 10
 MAX_HIDDEN_TANGLES_SHOWN = 10
 MAX_FINDINGS_PER_KIND = 10
 MAX_PACKAGES_IN_TABLE = 15
+MAX_NATIVE_IN_TABLE = 15
 MAX_PACKAGE_EDGES_SHOWN = 10
 MIN_PACKAGES_SHOWN = 2
 NOT_MEASURED = "—"
@@ -873,13 +874,16 @@ def _native_boundary(result: AnalysisResult, lang: Lang) -> list[str]:
         f"| {t('report.native_works', lang)} | {t('report.native_out', lang)} |",
         "|---|---|---|---:|---|---|---|",
     ]
-    for native in result.native:
+    for native in result.native[:MAX_NATIVE_IN_TABLE]:
         uses = f"{native.required} / {native.lazy} / {native.guarded} / {native.type_only}"
         lines.append(
             f"| `{native.name}` | {t(f'report.native_kind.{native.kind}', lang)} "
             f"| {_backticked(native.evidence)} | {native.afferent} | {uses} "
             f"| {_native_works(native, lang)} | {t(f'report.native_out.{native.kind}', lang)} |"
         )
+    hidden = len(result.native) - MAX_NATIVE_IN_TABLE
+    if hidden > 0:
+        lines += ["", t("report.more", lang, count=hidden)]
     return [*lines, "", t("report.native_note", lang)]
 
 

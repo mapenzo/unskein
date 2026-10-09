@@ -176,3 +176,40 @@ def test_native_modules_count_in_their_parent_package(make_project: MakeProject)
     result = analyze(resolve_indirection(_parse(root)))
     core = next(p for p in result.packages if p.name == "app.core")
     assert core.modules == 3
+
+
+def test_maturin_line_is_the_one_in_its_table(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "pyproject.toml": (
+                '[project]\nname = "x"\n\n[tool.other]\nmodule-name = "nope"\n\n'
+                '[tool.maturin]\nmodule-name = "app._native"\n'
+            ),
+            "app/__init__.py": "",
+        }
+    )
+    assert _parse(root).virtual["app._native"].evidence == ("pyproject.toml:8",)
+
+
+def test_dangling_symlink_is_no_evidence(make_project: MakeProject) -> None:
+    root = make_project({"app/__init__.py": ""})
+    (root / "app" / "_gone.so").symlink_to(root / "missing.so")
+    assert _parse(root).virtual == {}
+
+
+def test_index_stays_hashable() -> None:
+    adapter = PythonAdapter(AnalysisConfig())
+    files = sorted(adapter.discover_files(FIXTURE, pathspec.PathSpec([])))
+    assert isinstance(hash(adapter.plan_parse(files, FIXTURE).shared), int)
+
+
+def test_evidence_files_do_not_count_towards_parallel_parsing(monkeypatch) -> None:
+    adapter = PythonAdapter(AnalysisConfig())
+    files = sorted(adapter.discover_files(FIXTURE, pathspec.PathSpec([])))
+    sources = sum(1 for path in files if path.suffix == ".py")
+
+    def refuse(*args):
+        raise AssertionError("parsed in parallel")
+
+    monkeypatch.setattr(pipeline, "_parse_parallel", refuse)
+    pipeline.parse_all(files, adapter, FIXTURE, AnalysisConfig(parallel_threshold=sources + 1))

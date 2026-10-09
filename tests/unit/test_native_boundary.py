@@ -159,3 +159,15 @@ def test_a_guarded_fallback_in_the_facade_keeps_its_users_guarded(
     assert (native.name, native.guarded, native.unguarded) == ("pkg._speedups", 3, ())
     assert native.works_without
     assert _rule_11(result) == []
+
+
+def test_a_binary_nothing_imports_is_not_in_the_boundary(make_project: MakeProject) -> None:
+    root = make_project(
+        {
+            "app/__init__.py": "",
+            "app/libfoo.so": "",
+            "app/_native.pyi": "",
+            "app/a.py": "from app import _native\n",
+        }
+    )
+    assert [native.name for native in _analyzed(root).native] == ["app._native"]

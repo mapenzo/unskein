@@ -66,9 +66,15 @@ def summarize_native(
         scripts: Unpackaged modules nothing imports.
 
     Returns:
-        One entry per native module, sorted by name.
+        One entry per native module some module imports, sorted by name.
     """
-    natives = {name for name, module in result.virtual.items() if module.kind.is_native}
+    imported = {edge.target for module in result.modules for edge in module.imports}
+    # A binary nothing imports (a ctypes library, a leftover) says nothing about the code.
+    natives = {
+        name
+        for name, module in result.virtual.items()
+        if module.kind.is_native and name in imported
+    }
     counts: dict[str, Counter[str]] = {name: Counter() for name in natives}
     unguarded: dict[str, list[str]] = {name: [] for name in natives}
     guarded: dict[str, list[str]] = {name: [] for name in natives}

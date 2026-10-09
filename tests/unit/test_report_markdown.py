@@ -25,6 +25,7 @@ from unskein.report.markdown import (
     MAX_FINDINGS_PER_KIND,
     MAX_HIDDEN_TANGLES_SHOWN,
     MAX_MODULES_IN_TABLE,
+    MAX_NATIVE_IN_TABLE,
     MAX_PACKAGE_EDGES_SHOWN,
     MAX_PACKAGES_IN_TABLE,
     MAX_TANGLE_MEMBERS_SHOWN,
@@ -952,3 +953,15 @@ def test_summary_uses_the_singular_for_one_es(make_project) -> None:
     single = make_project({"app.py": ""})
     report = render(single, analyzed(single), Lang.ES)
     assert "1 módulo, 0 dependencias internas, 0 ciclos de dependencia." in report
+
+
+def test_native_boundary_table_is_capped(make_project) -> None:
+    files = {"app/__init__.py": ""}
+    for number in range(MAX_NATIVE_IN_TABLE + 2):
+        files[f"app/_n{number:02d}.pyi"] = ""
+        files[f"app/u{number:02d}.py"] = f"from app import _n{number:02d}\n"
+    root = make_project(files)
+    report = render(root, analyzed(root))
+    assert "| `app._n14` |" in report
+    assert "| `app._n15` |" not in report
+    assert "…and 2 more" in report

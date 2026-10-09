@@ -84,6 +84,9 @@ def find_native_modules(
     packaged: dict[str, bool] = {}
     distributions: dict[str, str] = {}
     for path in evidence:
+        if not path.exists():
+            # A dangling symlink proves nothing.
+            continue
         module = layout.name_of(_as_source_path(path))
         proofs[module.name].add(_relative(path, layout.root))
         if path.suffix in COMPILED_SUFFIXES:
