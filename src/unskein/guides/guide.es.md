@@ -432,12 +432,13 @@ La prueba nunca cambia el código de salida. Lee el grafo de imports, no el comp
 un corte probado significa que la dependencia ya no está y, con `--run`, que los módulos
 siguen cargando; no ejecuta tus tests.
 
-En litellm (240 cortes), `--prove` tarda unos 17 segundos más que el plan y prueba 221 cortes
-(200 perezosos, 15 importando desde el módulo que define el nombre, 6 posponiendo anotaciones);
+En litellm (240 cortes), `--prove` tarda unos 17 segundos más que el plan y prueba 218 cortes
+(200 perezosos, 14 importando desde el módulo que define el nombre, 4 posponiendo anotaciones);
 13 son olores de diseño con nombre (8 donde una clase base importa a su subclase, 5 donde se
-copia un ajuste al importar) y 6 requieren otras decisiones (3 de diseño, 2 de módulos que
+copia un ajuste al importar) y 9 tienen otros motivos (3 de diseño, 2 de módulos que
 leen `__annotations__` o importan pydantic, 1 que reutiliza el nombre `litellm` en varias
-sentencias de import). Aplicar los cortes probados reduce la maraña principal de 616 a 117
+sentencias de import, 1 que lee un nombre mutable, 1 que se ejecuta al importar, 1 que no
+se reescribe como una sola edición). Aplicar los cortes probados reduce la maraña principal de 616 a 123
 módulos y deja intacta la de bedrock (9 módulos). Con `--run` y el intérprete que ejecuta
 unskein, los 625 módulos de las marañas se importaron antes y después, sin regresiones; la
 comprobación tardó unos 14 minutos (un subproceso por módulo, cada uno importando litellm),

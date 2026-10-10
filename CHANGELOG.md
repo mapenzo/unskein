@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rest say why they are not, or the design smell behind them (a base class that imports its
   subclass, a setting copied at import time). `--run` also imports the tangle's modules before
   and after in isolated subprocesses (it executes code of the analyzed project); `--python`
-  picks the interpreter. On litellm: 221 of 240 cuts proven, 0 broken, the main tangle goes
-  from 616 to 117 modules and all 625 modules import afterwards. The proof never changes the exit code.
+  picks the interpreter. On litellm: 218 of 240 cuts proven, 0 broken, the main tangle goes
+  from 616 to 123 modules and all 625 modules import afterwards. The proof never changes the exit code.
 - Finding: API leak, opt in with `--api-leaks` (or `api_leaks = true` under `[analysis]`).
   Code outside a package (another top-level package or distribution) that imports a module
   the package keeps internal — declared in the new `[api]` table (`public` and `internal`

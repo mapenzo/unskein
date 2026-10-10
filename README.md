@@ -124,8 +124,8 @@ Architecture health: fair.
   import-linter, tach) proposes cuts; the commercial ones that do (Sonargraph,
   Structure101, Lattix) target Java/.NET. With `--prove` it applies the cuts to a temporary copy and checks each one (lazy imports,
   `TYPE_CHECKING`, postponed annotations, imports from the defining module) and names the
-  design smells it cannot fix: on litellm, 221 of 240 cuts are proven, the main tangle
-  shrinks from 616 to 117 modules, and with `--run` all 625 modules of the tangles still
+  design smells it cannot fix: on litellm, 218 of 240 cuts are proven, the main tangle
+  shrinks from 616 to 123 modules, and with `--run` all 625 modules of the tangles still
   import afterwards (about 14 minutes). Your project is never modified.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
   Only imports that run when the code is imported count; those inside functions or under

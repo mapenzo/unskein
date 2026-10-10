@@ -420,12 +420,13 @@ The proof never changes the exit code. It reads the import graph, not behavior: 
 cut means the dependency is gone and, with `--run`, that the modules still load; it does not
 run your tests.
 
-On litellm (240 cuts), `--prove` takes about 17 seconds on top of the plan and proves 221
-cuts (200 lazy, 15 by importing from the defining module, 6 by postponing annotations);
+On litellm (240 cuts), `--prove` takes about 17 seconds on top of the plan and proves 218
+cuts (200 lazy, 14 by importing from the defining module, 4 by postponing annotations);
 13 are named design smells (8 where a base class imports its subclass, 5 where a setting is
-copied at import time) and 6 need other decisions (3 need design, 2 belong to modules that
+copied at import time) and 9 have other reasons (3 need design, 2 belong to modules that
 read `__annotations__` or import pydantic, 1 reuses the name `litellm` in several import
-statements). Applying the proven cuts shrinks the main tangle from 616 to 117 modules and
+statements, 1 reads a mutable name, 1 runs at import time, 1 cannot be rewritten as one
+edit). Applying the proven cuts shrinks the main tangle from 616 to 123 modules and
 leaves the bedrock tangle (9 modules) untouched. With `--run` and the interpreter that runs
 unskein, all 625 modules of the tangles imported before and after, with no regressions; the
 check took about 14 minutes (one subprocess per module, each importing litellm), so use it
