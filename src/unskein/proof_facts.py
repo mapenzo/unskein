@@ -3,11 +3,15 @@
 import ast
 
 from unskein.graph.definers import DefinerIndex, build_definer_index
+from unskein.graph.smells import Smell, base_knows_subclass, config_snapshot
 from unskein.graph.untangle import Cut
 from unskein.parsers.discovery import parse_source
 from unskein.parsers.models import ParseResult
 from unskein.parsers.rewrite import import_time_attributes
+from unskein.parsers.usage import UseContext
 from unskein.scan import ScanContext, parse_sources, resolve_parsed
+
+PACKAGE_INIT = "__init__.py"
 
 
 class ProjectFacts:
@@ -74,6 +78,20 @@ class ProjectFacts:
             self._trees[module] = parse_source(info.file_path, encoding) if info else None
         return self._trees[module]
 
+    def _is_package(self, module: str) -> bool:
+        """Tell whether a project module is a package ``__init__``.
+
+        Args:
+            module: Dotted module name.
+
+        Returns:
+            True when its file is ``__init__.py``.
+        """
+        return any(
+            info.name == module and info.file_path.name == PACKAGE_INIT
+            for info in self.sources().modules
+        )
+
     def definers_read(self, cut: Cut, tree: ast.Module) -> tuple[tuple[str, str], ...]:
         """Find the definer of every attribute a module reads at import time through a package.
 
@@ -91,3 +109,27 @@ class ProjectFacts:
         index = self.definers()
         found = ((name, index.definer(cut.target, name)) for name in attributes)
         return tuple(sorted((name, module) for name, module in found if module is not None))
+
+    def smell(self, cut: Cut) -> Smell | None:
+        """Name the design smell behind a cut that is not rewritten.
+
+        Args:
+            cut: A cut of the plan.
+
+        Returns:
+            The smell, or None when the cut shows none of the known ones.
+        """
+        source = self.tree(cut.source)
+        target = self.tree(cut.target)
+        if source is None or target is None:
+            return None
+        evidence = cut.evidence
+        found = base_knows_subclass(source, target, evidence.symbols)
+        if found is not None:
+            return found
+        if not self._is_package(cut.target):
+            return None
+        read = set(import_time_attributes(source, frozenset(evidence.bound_names)))
+        if UseContext.MODULE in evidence.contexts:
+            read |= set(evidence.symbols)
+        return config_snapshot(target, read)

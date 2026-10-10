@@ -41,6 +41,20 @@ POSTPONE_CYCLE = {
     ),
 }
 
+BASE_SMELL = {
+    "app/__init__.py": "",
+    "app/base.py": (
+        "from app.child import Child\n\n\nclass Base:\n    kinds = (Child,)\n\n\nX = 1\nY = 2\n"
+    ),
+    "app/child.py": (
+        "from app.base import Base, X, Y\n\n\nclass Child(Base):\n    values = (X, Y)\n"
+    ),
+}
+SNAPSHOT_SMELL = {
+    "app/__init__.py": "from .conf import Settings\n\nmax_tokens = 100\n",
+    "app/conf.py": "import app\n\n\nclass Settings:\n    limit = app.max_tokens\n",
+}
+
 
 def make_project_in(base: Path, files: dict[str, str]) -> Path:
     for rel, source in files.items():
@@ -216,3 +230,22 @@ def test_a_name_that_something_reassigns_is_not_bypassed(make_project: MakeProje
     assert [(p.verdict, p.reason) for p in proof.cuts] == [
         (ProofVerdict.NOT_PROVEN, ProofReason.MUTABLE_ATTRIBUTE)
     ]
+
+
+def test_a_base_that_imports_its_subclass_is_named_instead_of_needs_design(
+    make_project: MakeProject,
+) -> None:
+    _, proof = prove(make_project(BASE_SMELL))
+    [cut] = proof.cuts
+    assert (cut.source, cut.target) == ("app.base", "app.child")
+    assert (cut.verdict, cut.reason) == (ProofVerdict.NOT_PROVEN, ProofReason.BASE_KNOWS_SUBCLASS)
+    assert cut.detail == "Base <- Child"
+
+
+def test_a_setting_copied_at_import_is_named_instead_of_needs_design(
+    make_project: MakeProject,
+) -> None:
+    _, proof = prove(make_project(SNAPSHOT_SMELL))
+    [cut] = proof.cuts
+    assert (cut.verdict, cut.reason) == (ProofVerdict.NOT_PROVEN, ProofReason.CONFIG_SNAPSHOT)
+    assert cut.detail == "max_tokens"

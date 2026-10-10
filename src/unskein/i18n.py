@@ -664,6 +664,22 @@ _PROOF: dict[str, dict[Lang, str]] = {
         Lang.ES: "requiere diseño",
         Lang.EN: "needs design",
     },
+    "untangle.proof.reason.base_knows_subclass": {
+        Lang.ES: "diseño: la clase base conoce a su subclase",
+        Lang.EN: "design: the base class knows its subclass",
+    },
+    "untangle.proof.reason.config_snapshot": {
+        Lang.ES: "diseño: copia al importar un ajuste que puede cambiar",
+        Lang.EN: "design: copies at import time a setting that can change",
+    },
+    "untangle.proof.smells": {
+        Lang.ES: "Olores de diseño detectados",
+        Lang.EN: "Design smells found",
+    },
+    "untangle.proof.smell": {
+        Lang.ES: "`{source}` → `{target}`: {reason} (`{detail}`)",
+        Lang.EN: "`{source}` → `{target}`: {reason} (`{detail}`)",
+    },
     "untangle.proof.reason.no_definer": {
         Lang.ES: "ningún módulo del proyecto define esos nombres",
         Lang.EN: "no project module defines those names",

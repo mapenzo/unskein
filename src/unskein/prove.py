@@ -85,6 +85,31 @@ class ProofUnavailable(Exception):
         self.detail = detail
 
 
+SMELLABLE_REASONS = frozenset(
+    {ProofReason.NEEDS_DESIGN, ProofReason.READ_AT_IMPORT, ProofReason.MUTABLE_ATTRIBUTE}
+)
+
+
+def _name_smells(cuts: list[Cut], verdicts: dict[Edge, CutProof], *, facts: ProjectFacts) -> None:
+    """Replace a generic reason by the design smell behind it, where there is one.
+
+    Args:
+        cuts: Every cut of the plan.
+        verdicts: Verdicts settled so far; updated in place.
+        facts: Project facts; only read for the cuts that can carry a smell.
+    """
+    for cut in cuts:
+        edge = (cut.source, cut.target)
+        found = verdicts.get(edge)
+        if found is None or found.reason not in SMELLABLE_REASONS:
+            continue
+        smell = facts.smell(cut)
+        if smell is not None:
+            verdicts[edge] = CutProof(
+                cut.source, cut.target, ProofVerdict.NOT_PROVEN, smell.reason, smell.detail
+            )
+
+
 def _planned_refusal(cut: Cut) -> ProofReason | None:
     """Tell why a cut cannot be applied mechanically, before reading any file.
 
@@ -519,7 +544,9 @@ def prove_plan(context: ScanContext, plan: UntanglePlan, options: ProveOptions) 
             base = Path(workspace)
             copy_root = base / COPY_DIR / context.root.resolve().name
             copy_project(context, copy_root, whole_tree=python is not None)
-            applied, verdicts = _apply_cuts(context, cuts, copy_root, facts=ProjectFacts(context))
+            facts = ProjectFacts(context)
+            applied, verdicts = _apply_cuts(context, cuts, copy_root, facts=facts)
+            _name_smells(cuts, verdicts, facts=facts)
             scope, modules = _reanalyze(context, copy_root, all_edges=plan.all_edges)
             for done in applied.values():
                 for cut in done:

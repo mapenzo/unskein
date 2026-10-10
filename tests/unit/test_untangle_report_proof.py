@@ -11,7 +11,12 @@ from unskein.graph.proof import (
 )
 from unskein.graph.untangle import UntanglePlan
 from unskein.i18n import Lang, t
-from unskein.report.untangle import MAX_REGRESSIONS_SHOWN, render_untangle
+from unskein.report.untangle import (
+    MAX_REGRESSIONS_SHOWN,
+    _proof_summary,
+    _smell_lines,
+    render_untangle,
+)
 from unskein.untangle import UntangleOptions, build_untangle_plan, prepare_untangle
 
 MakeProject = Callable[[dict[str, str]], Path]
@@ -136,3 +141,28 @@ def test_modules_that_never_imported_are_called_out(make_project: MakeProject) -
     proof = proof_of(ProofVerdict.PROVEN, run=run_proof())
     report = render(make_project, proof)
     assert t("untangle.proof.run_skipped", Lang.EN, count=1) in report
+
+
+def test_the_report_lists_the_design_smells_with_their_detail() -> None:
+    result = ProofResult(
+        cuts=(
+            CutProof(
+                "app.base",
+                "app.child",
+                ProofVerdict.NOT_PROVEN,
+                ProofReason.BASE_KNOWS_SUBCLASS,
+                "Base <- Child",
+            ),
+        ),
+        tangles_after=1,
+        cycles_after=1,
+        cycles_after_truncated=False,
+    )
+    text = "\n".join(_proof_summary(result, Lang.EN) + _smell_lines(result, Lang.EN))
+    assert t("untangle.proof.smells", Lang.EN) in text
+    assert "`app.base` → `app.child`" in text and "Base <- Child" in text
+
+
+def test_the_report_has_no_smell_block_without_smells() -> None:
+    result = ProofResult(cuts=(), tangles_after=0, cycles_after=0, cycles_after_truncated=False)
+    assert _smell_lines(result, Lang.EN) == []

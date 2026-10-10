@@ -39,6 +39,8 @@ class ProofReason(StrEnum):
             get_type_hints), so postponing them is unsafe.
         MUTABLE_ATTRIBUTE: A name read at import time through the package is not a class or
             function that nothing reassigns.
+        BASE_KNOWS_SUBCLASS: Design smell: a base class imports a class that inherits from it.
+        CONFIG_SNAPSHOT: Design smell: a setting that can change is copied once at import time.
         UNREADABLE: The edited file would not parse, so the edit was discarded.
         EDGE_REMAINS: The cut was applied and the re-analysis still sees the dependency.
         IMPORT_FAILED: With --run, a module that imported before no longer imports.
@@ -58,9 +60,14 @@ class ProofReason(StrEnum):
     INLINE_BODY = "inline_body"
     RUNTIME_ANNOTATIONS = "runtime_annotations"
     MUTABLE_ATTRIBUTE = "mutable_attribute"
+    BASE_KNOWS_SUBCLASS = "base_knows_subclass"
+    CONFIG_SNAPSHOT = "config_snapshot"
     UNREADABLE = "unreadable"
     EDGE_REMAINS = "edge_remains"
     IMPORT_FAILED = "import_failed"
+
+
+DESIGN_SMELLS = frozenset({ProofReason.BASE_KNOWS_SUBCLASS, ProofReason.CONFIG_SNAPSHOT})
 
 
 @dataclass(frozen=True, slots=True)
