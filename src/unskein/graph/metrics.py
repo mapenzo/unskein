@@ -15,6 +15,7 @@ from unskein.graph.distributions import (
 )
 from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
+from unskein.graph.leaks import LeakModule, summarize_leaks
 from unskein.graph.missing import find_missing_modules
 from unskein.graph.native import NativeModule, find_optional_native_required, summarize_native
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
@@ -61,6 +62,8 @@ class AnalysisResult:
         native: How packaged code uses each compiled extension and stub-only module, by name.
         wildcards: Star imports of packaged code with their fixes, by star-imported module;
             empty with findings off.
+        leaks: Imports of package internals with their fixes, by written module; empty with
+            findings or api_leaks off.
     """
 
     graph: nx.DiGraph
@@ -83,6 +86,7 @@ class AnalysisResult:
     virtual: dict[str, VirtualKind] = field(default_factory=dict)
     native: list[NativeModule] = field(default_factory=list)
     wildcards: list[WildcardModule] = field(default_factory=list)
+    leaks: list[LeakModule] = field(default_factory=list)
 
     @property
     def namespaces(self) -> frozenset[str]:
@@ -298,9 +302,12 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
     native = summarize_native(result, graph, scripts)
     impact_targets = _impact_targets(high_coupling, findings)
     wildcards: list[WildcardModule] = []
+    leaks: list[LeakModule] = []
     if findings_config.enabled:
         missing = find_missing_modules(result, scripts)
         wildcards = summarize_wildcards(result, scripts) if result.star_fixes else []
+        if result.api_leaks:
+            leaks = summarize_leaks(result, import_graph, findings_config.api)
         findings = [
             *findings,
             *distribution_analysis.findings,
@@ -332,4 +339,5 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         virtual=virtual,
         native=native,
         wildcards=wildcards,
+        leaks=leaks,
     )

@@ -142,6 +142,9 @@ detección.
     `--star-fixes`»): un hallazgo por módulo importado con `from x import *` fuera de una
     fachada, con el import explícito que escribir en cada sentencia cuando unskein puede
     demostrar que es seguro, y el motivo cuando no puede.
+  - **Fuga de API** (solo con `--api-leaks`): código de fuera de un paquete que importa lo
+    que el paquete mantiene interno, o rodea una fachada que ya ofrece el nombre, con el
+    import que escribir en su lugar cuando unskein puede demostrar que es seguro.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 

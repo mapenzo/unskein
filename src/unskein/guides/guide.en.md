@@ -136,6 +136,9 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     one finding per module imported with `from x import *` outside a package facade, with
     the explicit import to write for each statement when unskein can prove it safe, and
     the reason when it cannot.
+  - **API leak** (only with `--api-leaks`): code outside a package that imports what the
+    package keeps internal, or goes around a facade that already offers the name, with the
+    import to write instead when unskein can prove it safe.
   - **Cycle between distributions**: distributions that import each other; it says which
     edge to cut.
 
