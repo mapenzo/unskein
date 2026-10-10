@@ -346,6 +346,57 @@ warnings there were; `unskein scan` shows them in detail.
 Exit codes: 0 when the plan was built (with or without tangles), 1 for usage errors,
 3 for internal errors. `untangle` never calls the AI.
 
+## Proving the plan: `--prove`
+
+`unskein untangle --prove` takes the cuts of the plan and checks them instead of just
+proposing them. It copies the project to a temporary directory, applies each cut that can
+be applied mechanically, analyzes the copy again and reports, per cut, one verdict in a
+new `Proof` column. Your project is never modified.
+
+| Verdict | Meaning |
+|---|---|
+| Proven | The cut was applied to the copy and the re-analysis no longer sees the dependency. |
+| Not proven | The cut was not applied; the reason says why. |
+| Broken | The cut was applied and did not work: the dependency remains, or (with `--run`) a module stopped importing. |
+
+Only two steps are rewritten: the lazy import (the import statement moves into every
+function that reads its names) and `TYPE_CHECKING` (the statement moves under
+`if TYPE_CHECKING:`, adding `from typing import TYPE_CHECKING` once per file). Every other
+step is "Not proven" with its reason: moving a symbol, extracting a module or reorganizing
+a package are design decisions ("needs design"), and importing from the defining module is
+not rewritten when the import is `import pkg` ("whole-module import": replacing `pkg.X` by
+a direct import changes behavior when something assigns `pkg.X` at run time).
+
+A cut is also "Not proven" when the rewrite would not be safe: the import is not at module
+level (inside `try`, `if`), it shares its line with another statement, it is a star
+import, the name is read while the module loads (module level, decorators, defaults, class
+bodies, annotations that Python evaluates), no function reads it, the name is bound again
+or a function reuses it as a parameter, assignment, `global`, `def`, `class`, `except as`,
+`match` or `del`, it is listed in `__all__`, or the function body is on the `def` line. A
+`TYPE_CHECKING` move also needs the annotations to be postponed (`from __future__ import
+annotations`) or quoted: otherwise Python 3.12 and 3.13 raise `NameError` when the function
+is defined. Comments, line endings (CRLF), a BOM and the declared encoding survive the edit.
+
+`--run` goes one step further and imports every module of the tangles, before and after the
+cuts, each one in its own isolated subprocess (`python -I -B`, 60 seconds at most). A module
+that imported before and does not import after is a regression; it marks the cut whose
+edited file appears in the traceback as "Broken". **`--run` executes code of the analyzed
+project** (the module-level code of the modules it imports), always on the temporary copy,
+which for `--run` holds the whole project tree (without `.git`, virtual environments and
+caches) so data files read at import exist. Modules that do not import even before the cuts
+(missing dependencies, data or services) are counted and cannot show a regression; pick the
+interpreter that has the project's dependencies with `--python PATH`.
+
+The proof never changes the exit code. It reads the import graph, not behavior: a proven
+cut means the dependency is gone and, with `--run`, that the modules still load; it does not
+run your tests.
+
+On litellm (240 cuts), `--prove` takes about 2.6 seconds on top of the plan and proves 77 of
+the 79 lazy cuts (the other 2 reuse the name `litellm`: four statements bind it in one file, a function binds it itself in the other); the 143
+cuts that import the whole `litellm` package and the 18 that need design are not proven.
+Applying the 77 shrinks the main tangle from 616 to 570 modules and leaves the second one
+untouched. With `--run` and the interpreter that runs unskein, all 625 modules of the tangles imported before and after, with no regressions; the check took about 14 minutes (one subprocess per module, each importing litellm), so use it when you can afford the wait.
+
 ## Excluding paths
 
 Three sources are combined; none replaces the others:

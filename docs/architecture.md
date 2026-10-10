@@ -1194,10 +1194,10 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
 - **Calibración medida.** Con costes planos, 14 de 15 cortes de networkx eran aristas
   fachada a hijo propio (de ahí el coste de `PACKAGE_STRUCTURE` y `BYPASS_FACADE`). Resultado
   final de esta rama, sin `--all-edges`: networkx 32 cortes (29 `BYPASS_FACADE` y 3
-  `PACKAGE_STRUCTURE`), rich 31 (23 `MOVE_SYMBOL`, 6 `TYPE_CHECKING`, 2 `LAZY`), aiohttp 3
-  (2 `BYPASS_FACADE`, 1 `MOVE_SYMBOL`), botocore 2 (1 `LAZY`, 1 `MOVE_SYMBOL`) y litellm 228
-  (140 `BYPASS_FACADE`, 73 `LAZY`, 13 `MOVE_SYMBOL`, 1 `EXTRACT_SHARED`, 1 `TYPE_CHECKING`;
-  3,5 s). Con `--all-edges` (solo pasos estructurales): rich 58 cortes en 2 marañas
+  `PACKAGE_STRUCTURE`), rich 28 (27 `MOVE_SYMBOL`, 1 `LAZY`; tras exigir anotaciones pospuestas o entre comillas, ya no sale ningún `TYPE_CHECKING`), aiohttp 3
+  (2 `BYPASS_FACADE`, 1 `MOVE_SYMBOL`), botocore 2 (1 `LAZY`, 1 `MOVE_SYMBOL`) y litellm 240
+  (143 `BYPASS_FACADE`, 79 `LAZY`, 17 `MOVE_SYMBOL`, 1 `EXTRACT_SHARED`; unos 6 s; con
+  `--prove` 77 `LAZY` probados y 0 rotos). Con `--all-edges` (solo pasos estructurales): rich 58 cortes en 2 marañas
   (54 `MOVE_SYMBOL`, 4 `EXTRACT_SHARED`), aiohttp 28 (22 `MOVE_SYMBOL`, 4 `EXTRACT_SHARED`,
   2 `BYPASS_FACADE`) y pydantic 57 en 2 marañas (47 `MOVE_SYMBOL`, 10 `EXTRACT_SHARED`).
   Todos con 0 marañas y 0 ciclos tras la simulación, y el mismo resultado con cualquier
