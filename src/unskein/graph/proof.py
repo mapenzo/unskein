@@ -37,6 +37,10 @@ class ProofReason(StrEnum):
         NAME_REUSED: A function that reads the name also binds it, or it is rebound.
         EXPORTED: The name is in ``__all__``, or ``__all__`` cannot be read statically.
         INLINE_BODY: The statement sits in a one-line compound statement.
+        RUNTIME_ANNOTATIONS: The module may read its annotations at run time (pydantic, typer,
+            get_type_hints), so postponing them is unsafe.
+        MUTABLE_ATTRIBUTE: A name read at import time through the package is not a class or
+            function that nothing reassigns.
         UNREADABLE: The edited file would not parse, so the edit was discarded.
         EDGE_REMAINS: The cut was applied and the re-analysis still sees the dependency.
         IMPORT_FAILED: With --run, a module that imported before no longer imports.
@@ -55,6 +59,8 @@ class ProofReason(StrEnum):
     NAME_REUSED = "name_reused"
     EXPORTED = "exported"
     INLINE_BODY = "inline_body"
+    RUNTIME_ANNOTATIONS = "runtime_annotations"
+    MUTABLE_ATTRIBUTE = "mutable_attribute"
     UNREADABLE = "unreadable"
     EDGE_REMAINS = "edge_remains"
     IMPORT_FAILED = "import_failed"

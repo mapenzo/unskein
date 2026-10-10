@@ -31,6 +31,14 @@ WHOLE_FACADE = {
     ),
 }
 
+POSTPONE_CYCLE = {
+    "app/__init__.py": "",
+    "app/a.py": "from app.b import B\n\n\ndef make() -> B:\n    return B()\n",
+    "app/b.py": (
+        "from app.a import make\n\n\nclass B:\n    pass\n\n\ndef again():\n    return make()\n"
+    ),
+}
+
 
 def make_project_in(base: Path, files: dict[str, str]) -> Path:
     for rel, source in files.items():
@@ -183,5 +191,15 @@ def test_a_whole_module_facade_import_read_in_functions_is_proven_lazy(
     plan, proof = prove(make_project(WHOLE_FACADE))
     [cut] = plan.tangles[0].cuts
     assert cut.step is StepKind.LAZY
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [(ProofVerdict.PROVEN, None)]
+    assert proof.tangles_after == 0
+
+
+def test_an_evaluated_annotation_cut_is_proven_by_postponing_annotations(
+    make_project: MakeProject,
+) -> None:
+    plan, proof = prove(make_project(POSTPONE_CYCLE))
+    [cut] = plan.tangles[0].cuts
+    assert (cut.source, cut.target, cut.step) == ("app.a", "app.b", StepKind.POSTPONE_ANNOTATIONS)
     assert [(p.verdict, p.reason) for p in proof.cuts] == [(ProofVerdict.PROVEN, None)]
     assert proof.tangles_after == 0

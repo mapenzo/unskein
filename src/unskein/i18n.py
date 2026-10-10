@@ -570,6 +570,24 @@ _REPORT: dict[str, dict[Lang, str]] = {
         "runtime (pydantic models, typer or FastAPI signatures, `typing.get_type_hints`, "
         "`functools.singledispatch`) need the name at runtime: it does not work there.",
     },
+    "untangle.step.postpone_annotations": {
+        Lang.ES: "Posponer las anotaciones",
+        Lang.EN: "Postpone annotations",
+    },
+    "untangle.step.postpone_annotations.help": {
+        Lang.ES: "Las anotaciones de las firmas evalúan el nombre al definir la función. "
+        "Añadir `from __future__ import annotations` las pospone y permite mover el import a "
+        "las funciones que lo leen o bajo `if TYPE_CHECKING:`. Las bibliotecas que leen "
+        "anotaciones en ejecución (modelos de pydantic, firmas de typer o FastAPI, "
+        "`typing.get_type_hints`, `functools.singledispatch`) dejan de encontrar el nombre: "
+        "ahí no sirve.",
+        Lang.EN: "Signature annotations evaluate the name when the function is defined. "
+        "Adding `from __future__ import annotations` postpones them and lets the import "
+        "move into the functions that read it or under `if TYPE_CHECKING:`. Libraries that "
+        "read annotations at runtime (pydantic models, typer or FastAPI signatures, "
+        "`typing.get_type_hints`, `functools.singledispatch`) no longer find the name: it "
+        "does not work there.",
+    },
     "untangle.step.bypass_facade": {
         Lang.ES: "Importar del módulo que lo define",
         Lang.EN: "Import from the defining module",
@@ -706,6 +724,18 @@ _PROOF: dict[str, dict[Lang, str]] = {
     "untangle.proof.reason.import_failed": {
         Lang.ES: "un módulo dejó de importarse",
         Lang.EN: "a module stopped importing",
+    },
+    "untangle.proof.reason.runtime_annotations": {
+        Lang.ES: "el módulo podría leer sus anotaciones en ejecución (pydantic, typer, "
+        "`get_type_hints`…)",
+        Lang.EN: "the module may read its annotations at run time (pydantic, typer, "
+        "`get_type_hints`…)",
+    },
+    "untangle.proof.reason.mutable_attribute": {
+        Lang.ES: "un nombre del paquete se lee al importar y no es una clase o función que "
+        "nadie reasigne",
+        Lang.EN: "a package name is read at import time and is not a class or function that "
+        "nothing reassigns",
     },
     "untangle.proof.summary": {
         Lang.ES: "Prueba: {proven} de {total} cortes probados, {not_proven} sin probar, "

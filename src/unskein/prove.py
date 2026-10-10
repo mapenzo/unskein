@@ -20,7 +20,7 @@ from unskein.graph.proof import (
     ProofVerdict,
     RunProof,
 )
-from unskein.graph.steps import StepKind
+from unskein.graph.steps import DEFERRED_CONTEXTS, StepKind
 from unskein.graph.untangle import Cut, Edge, UntanglePlan
 from unskein.parsers.discovery import detect_encoding
 from unskein.parsers.layout import MANIFEST_NAMES
@@ -48,7 +48,6 @@ SKIPPED_DIRECTORIES = (
     "venv",
     ".eggs",
 )
-MOVE_KINDS = {StepKind.LAZY: MoveKind.LAZY, StepKind.TYPE_CHECKING: MoveKind.TYPE_CHECKING}
 DESIGN_STEPS = frozenset(
     {StepKind.MOVE_SYMBOL, StepKind.EXTRACT_SHARED, StepKind.PACKAGE_STRUCTURE}
 )
@@ -199,6 +198,25 @@ def _refused(cuts: list[Cut], reason: ProofReason) -> dict[Edge, CutProof]:
     }
 
 
+def _move_for(cut: Cut) -> Move:
+    """Build the rewrite move that applies a cut.
+
+    Args:
+        cut: A cut whose step can be rewritten.
+
+    Returns:
+        The move; a postponing cut also adds ``from __future__ import annotations``, and
+        goes under ``TYPE_CHECKING`` only when every read is an annotation.
+    """
+    evidence = cut.evidence
+    postpone = cut.step is StepKind.POSTPONE_ANNOTATIONS
+    type_only = cut.step is StepKind.TYPE_CHECKING or (
+        postpone and evidence.contexts <= DEFERRED_CONTEXTS
+    )
+    kind = MoveKind.TYPE_CHECKING if type_only else MoveKind.LAZY
+    return Move(kind, evidence.lines, postpone=postpone)
+
+
 def _rewrite_file(
     context: ScanContext, path: Path, cuts: list[Cut], *, copy_root: Path
 ) -> tuple[list[Cut], dict[Edge, CutProof]]:
@@ -224,7 +242,7 @@ def _rewrite_file(
         return [], _refused(cuts, ProofReason.UNREADABLE)
     if relative is None:
         return [], _refused(cuts, ProofReason.UNREADABLE)
-    moves = [Move(MOVE_KINDS[cut.step], cut.evidence.lines) for cut in cuts]
+    moves = [_move_for(cut) for cut in cuts]
     result = rewrite_source(text, moves)
     applied: list[Cut] = []
     refused: dict[Edge, CutProof] = {}

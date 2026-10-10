@@ -22,6 +22,34 @@ NAMESPACE_WRITERS = frozenset({"globals", "exec"})
 VARS_NAME = "vars"
 MODULE_NAME_VARIABLE = "__name__"
 MODULES_ATTRIBUTE = "modules"
+FUTURE_IMPORT = "from __future__ import annotations"
+RUNTIME_ANNOTATION_PACKAGES = frozenset(
+    {
+        "pydantic",
+        "pydantic_settings",
+        "fastapi",
+        "typer",
+        "msgspec",
+        "attr",
+        "attrs",
+        "cattrs",
+        "sqlalchemy",
+        "sqlmodel",
+        "beartype",
+        "typeguard",
+        "strawberry",
+        "marshmallow_dataclass",
+    }
+)
+RUNTIME_ANNOTATION_NAMES = frozenset(
+    {
+        "get_type_hints",
+        "get_annotations",
+        "singledispatch",
+        "singledispatchmethod",
+        "__annotations__",
+    }
+)
 
 
 class RewriteRefusal(StrEnum):
@@ -38,6 +66,10 @@ class RewriteRefusal(StrEnum):
         NAME_REUSED: The name is bound again, or a reading function binds it.
         EXPORTED: The name is listed in ``__all__``.
         INLINE_BODY: The first statement of a reading function shares its line.
+        RUNTIME_ANNOTATIONS: The module may read its annotations at run time, so postponing
+            them is unsafe.
+        MUTABLE_ATTRIBUTE: An attribute read at import time is not a class or function
+            nobody reassigns.
         UNREADABLE: The lines do not match an import, or the result would not parse.
     """
 
@@ -51,6 +83,8 @@ class RewriteRefusal(StrEnum):
     NAME_REUSED = "name_reused"
     EXPORTED = "exported"
     INLINE_BODY = "inline_body"
+    RUNTIME_ANNOTATIONS = "runtime_annotations"
+    MUTABLE_ATTRIBUTE = "mutable_attribute"
     UNREADABLE = "unreadable"
 
 
@@ -60,10 +94,12 @@ class MoveKind(StrEnum):
     Attributes:
         LAZY: Into each function that reads its names.
         TYPE_CHECKING: Under ``if TYPE_CHECKING:`` at the same place.
+        BYPASS: Replace import-time reads of ``pkg.X`` by direct imports of ``X``.
     """
 
     LAZY = "lazy"
     TYPE_CHECKING = "type_checking"
+    BYPASS = "bypass"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,10 +109,15 @@ class Move:
     Attributes:
         kind: Where the import goes.
         lines: Line numbers (1-based) of the import statements to move.
+        postpone: Whether the module also gets ``from __future__ import annotations``.
+        definers: For a bypass, ``(attribute, defining module)`` of every attribute the
+            module reads at import time through the moved name.
     """
 
     kind: MoveKind
     lines: tuple[int, ...]
+    postpone: bool = False
+    definers: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1010,6 +1051,77 @@ def _plan_type_checking(
     return edits
 
 
+def _reads_annotations_at_run_time(tree: ast.Module) -> bool:
+    """Tell whether a module may use its annotations while the program runs.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True when it imports a library known to read annotations (pydantic, typer…) or
+        mentions ``get_type_hints``, ``singledispatch`` or ``__annotations__``.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name.split(".")[0] in RUNTIME_ANNOTATION_PACKAGES for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            package = (node.module or "").split(".")[0]
+            if node.level == 0 and package in RUNTIME_ANNOTATION_PACKAGES:
+                return True
+            if any(alias.name in RUNTIME_ANNOTATION_NAMES for alias in node.names):
+                return True
+        elif RUNTIME_ANNOTATION_NAMES & {getattr(node, "id", None), getattr(node, "attr", None)}:
+            return True
+    return False
+
+
+def _future_edit(ctx: _Context) -> _Edit | None:
+    """Plan inserting ``from __future__ import annotations`` before the first statement.
+
+    Args:
+        ctx: The module being rewritten.
+
+    Returns:
+        The insertion, or None when the first statement shares a line with the docstring
+        (a line above it would stop the docstring from being one).
+    """
+    body = ctx.tree.body
+    docstring = body[0] if _is_docstring(body[0]) else None
+    rest = body[1:] if docstring is not None else body
+    if not rest:
+        return None
+    first = rest[0]
+    line = min([first.lineno, *(d.lineno for d in getattr(first, "decorator_list", ()))])
+    if docstring is not None and line <= (docstring.end_lineno or docstring.lineno):
+        return None
+    return _Edit(line - 1, line - 1, (FUTURE_IMPORT + ctx.newline,))
+
+
+def _plan_move(ctx: _Context, move: Move, *, future_ok: bool) -> list[_Edit] | RewriteRefusal:
+    """Plan one move, locating its statements and choosing the planner.
+
+    Args:
+        ctx: The module being rewritten.
+        move: The move.
+        future_ok: Whether ``from __future__ import annotations`` can be inserted.
+
+    Returns:
+        The edits, or why the move is unsafe.
+    """
+    statements = _locate(ctx, move.lines)
+    if isinstance(statements, RewriteRefusal):
+        return statements
+    postpone = move.postpone and not ctx.postponed
+    if postpone and not future_ok:
+        return RewriteRefusal.UNREADABLE
+    if postpone and _reads_annotations_at_run_time(ctx.tree):
+        return RewriteRefusal.RUNTIME_ANNOTATIONS
+    if move.kind is MoveKind.LAZY:
+        return _plan_lazy(ctx, statements, postpone=postpone)
+    return _plan_type_checking(ctx, statements, postpone=postpone)
+
+
 def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
     """Apply some import moves to a module's source, all against the original tree.
 
@@ -1028,30 +1140,30 @@ def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
         return Rewritten(source, (RewriteRefusal.UNREADABLE,) * len(moves))
     text_lines = _split_lines(source)
     ctx = _Context(tree, text_lines, _newline_of(text_lines), postpones_annotations(tree))
-    outcomes: dict[tuple[MoveKind, tuple[int, ...]], RewriteRefusal | None] = {}
+    future = _future_edit(ctx) if any(move.postpone for move in moves) else None
+    outcomes: dict[Move, RewriteRefusal | None] = {}
     claimed: set[int] = set()
     edits: list[_Edit] = []
-    keys = [(move.kind, move.lines) for move in moves]
-    for key in keys:
-        if key in outcomes:
+    postponing = False
+    for move in moves:
+        if move in outcomes:
             continue
-        kind, lines = key
-        if claimed & set(lines):
-            outcomes[key] = RewriteRefusal.MULTIPLE_STATEMENTS
+        if claimed & set(move.lines):
+            outcomes[move] = RewriteRefusal.MULTIPLE_STATEMENTS
             continue
-        statements = _locate(ctx, lines)
-        planner = _plan_lazy if kind is MoveKind.LAZY else _plan_type_checking
-        planned = (
-            planner(ctx, statements) if not isinstance(statements, RewriteRefusal) else statements
-        )
+        planned = _plan_move(ctx, move, future_ok=future is not None)
         if isinstance(planned, RewriteRefusal):
-            outcomes[key] = planned
+            outcomes[move] = planned
             continue
-        outcomes[key] = None
+        outcomes[move] = None
         edits.extend(planned)
-        claimed.update(lines)
+        claimed.update(move.lines)
+        postponing |= move.postpone and not ctx.postponed
+    if postponing and future is not None:
+        edits.insert(0, future)
+    refusals = tuple(outcomes[move] for move in moves)
     if not edits:
-        return Rewritten(source, tuple(outcomes[key] for key in keys))
+        return Rewritten(source, refusals)
     new = _apply(source, edits)
     try:
         ast.parse(new)
@@ -1059,8 +1171,7 @@ def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
         return Rewritten(
             source,
             tuple(
-                RewriteRefusal.UNREADABLE if outcomes[key] is None else outcomes[key]
-                for key in keys
+                RewriteRefusal.UNREADABLE if outcome is None else outcome for outcome in refusals
             ),
         )
-    return Rewritten(new, tuple(outcomes[key] for key in keys))
+    return Rewritten(new, refusals)

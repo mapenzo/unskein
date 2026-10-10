@@ -1,6 +1,7 @@
 """Choose the refactoring step that removes one dependency, from static evidence."""
 
 from collections.abc import Collection, Mapping
+from dataclasses import replace
 from enum import StrEnum
 from types import MappingProxyType
 
@@ -15,6 +16,10 @@ class StepKind(StrEnum):
     Attributes:
         TYPE_CHECKING: The names are only read in annotations that are not evaluated at
             import (postponed or quoted); import them under ``if TYPE_CHECKING:``.
+        POSTPONE_ANNOTATIONS: The names are read in annotations that Python evaluates when the
+            definition runs (and maybe inside functions); adding
+            ``from __future__ import annotations`` postpones the annotations, so the import
+            can then go under ``TYPE_CHECKING`` or into the functions.
         BYPASS_FACADE: The dependency goes to a package's ``__init__.py``; import from the
             module that defines the name instead (not offered when the facade defines every
             imported name itself). A whole-module import that is only read inside functions
@@ -28,6 +33,7 @@ class StepKind(StrEnum):
     """
 
     TYPE_CHECKING = "type_checking"
+    POSTPONE_ANNOTATIONS = "postpone_annotations"
     BYPASS_FACADE = "bypass_facade"
     LAZY = "lazy"
     MOVE_SYMBOL = "move_symbol"
@@ -52,6 +58,7 @@ STEP_COSTS: Mapping[StepKind, int] = MappingProxyType(
     {
         StepKind.TYPE_CHECKING: 1,
         StepKind.BYPASS_FACADE: 2,
+        StepKind.POSTPONE_ANNOTATIONS: 2,
         StepKind.LAZY: 3,
         StepKind.MOVE_SYMBOL: 4,
         StepKind.EXTRACT_SHARED: 6,
@@ -106,6 +113,22 @@ def _lazy_applies(evidence: ImportEvidence) -> bool:
     }
 
 
+def _postpone_applies(evidence: ImportEvidence) -> bool:
+    """Tell whether postponing the module's annotations would let an import move.
+
+    Args:
+        evidence: Where the names are read and whether annotations are postponed.
+
+    Returns:
+        True when some read is an annotation Python evaluates now and, with annotations
+        postponed, every read would allow the type-only or the lazy step.
+    """
+    if evidence.postponed_annotations or UseContext.ANNOTATION not in evidence.contexts:
+        return False
+    postponed = replace(evidence, postponed_annotations=True)
+    return _deferred_annotations(postponed) or _lazy_applies(postponed)
+
+
 def _bypass_applies(evidence: ImportEvidence, own_names: Collection[str]) -> bool:
     """Tell whether the imported names can come from somewhere other than the facade.
 
@@ -153,6 +176,8 @@ def _applicable_steps(
         steps.add(StepKind.TYPE_CHECKING)
     if _lazy_applies(evidence):
         steps.add(StepKind.LAZY)
+    if _postpone_applies(evidence):
+        steps.add(StepKind.POSTPONE_ANNOTATIONS)
     if target in facades and _bypass_applies(evidence, facades[target]):
         steps.add(StepKind.BYPASS_FACADE)
     if 1 <= len(evidence.symbols) <= MAX_MOVABLE_SYMBOLS:

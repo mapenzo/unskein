@@ -136,7 +136,7 @@ def test_report_truncates_cuts_beyond_the_limit(
 
 @pytest.mark.parametrize(
     ("header", "expected"),
-    [("", StepKind.MOVE_SYMBOL), ("from __future__ import annotations\n", StepKind.LAZY)],
+    [("", StepKind.POSTPONE_ANNOTATIONS), ("from __future__ import annotations\n", StepKind.LAZY)],
     ids=["signature_evaluated_at_import", "signature_postponed"],
 )
 def test_lazy_needs_postponed_annotations_when_a_signature_reads_the_name(
