@@ -46,6 +46,14 @@ _ERRORS: dict[str, dict[Lang, str]] = {
         Lang.ES: "No existe el archivo de configuración '{path}'",
         Lang.EN: "Config file '{path}' does not exist",
     },
+    "run_needs_prove": {
+        Lang.ES: "--run solo funciona junto a --prove",
+        Lang.EN: "--run only works together with --prove",
+    },
+    "python_not_found": {
+        Lang.ES: "No existe el intérprete de Python indicado: {path}",
+        Lang.EN: "The given Python interpreter does not exist: {path}",
+    },
 }
 
 _WARNINGS: dict[str, dict[Lang, str]] = {

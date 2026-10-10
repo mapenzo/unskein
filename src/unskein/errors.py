@@ -31,6 +31,8 @@ class ErrorKey(StrEnum):
         CONFIG_EXISTS: ``unskein init`` or ``config save`` would overwrite an
             existing config file.
         CONFIG_NOT_FOUND: The config file to save does not exist.
+        RUN_NEEDS_PROVE: ``untangle --run`` was given without ``--prove``.
+        PYTHON_NOT_FOUND: The interpreter given to ``untangle --python`` does not exist.
     """
 
     PATH_NOT_FOUND = "path_not_found"
@@ -40,6 +42,8 @@ class ErrorKey(StrEnum):
     INVALID_VALUE = "invalid_value"
     CONFIG_EXISTS = "config_exists"
     CONFIG_NOT_FOUND = "config_not_found"
+    RUN_NEEDS_PROVE = "run_needs_prove"
+    PYTHON_NOT_FOUND = "python_not_found"
 
 
 class UnskeinError(Exception):

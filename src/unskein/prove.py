@@ -2,24 +2,37 @@
 
 import dataclasses
 import shutil
+import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import networkx as nx
 
+from unskein.errors import ErrorKey, UnskeinError
 from unskein.graph.metrics import analyze, find_cycles, find_tangles
-from unskein.graph.proof import CutProof, ProofReason, ProofResult, ProofVerdict
+from unskein.graph.proof import (
+    CutProof,
+    ProbeResult,
+    ProofReason,
+    ProofResult,
+    ProofVerdict,
+    RunProof,
+)
 from unskein.graph.steps import StepKind
 from unskein.graph.untangle import Cut, Edge, UntanglePlan
 from unskein.parsers.discovery import detect_encoding
 from unskein.parsers.layout import MANIFEST_NAMES
 from unskein.parsers.rewrite import Move, MoveKind, rewrite_source
+from unskein.pipeline import worker_count
+from unskein.probe import PROBE_TIMEOUT_SECONDS, ProbeJob, import_roots, run_probes
 from unskein.scan import ScanContext, discover_project, parse_sources, resolve_parsed
 from unskein.untangle import untangle_scope
 
 WORKSPACE_PREFIX = "unskein-prove-"
 COPY_DIR = "after"
+BEFORE_DIR = "before"
 MOVE_KINDS = {StepKind.LAZY: MoveKind.LAZY, StepKind.TYPE_CHECKING: MoveKind.TYPE_CHECKING}
 DESIGN_STEPS = frozenset(
     {StepKind.MOVE_SYMBOL, StepKind.EXTRACT_SHARED, StepKind.PACKAGE_STRUCTURE}
@@ -202,7 +215,7 @@ def _rewrite_file(
 
 def _apply_cuts(
     context: ScanContext, cuts: list[Cut], copy_root: Path
-) -> tuple[list[Cut], dict[Edge, CutProof]]:
+) -> tuple[dict[Path, list[Cut]], dict[Edge, CutProof]]:
     """Apply every cut that can be applied mechanically to the copy.
 
     Args:
@@ -211,7 +224,8 @@ def _apply_cuts(
         copy_root: Root of the copy.
 
     Returns:
-        The cuts that were applied, and the verdicts of all the others.
+        The cuts that were applied, grouped by the original file they edit, and the
+        verdicts of all the others.
 
     Raises:
         ProofUnavailable: If an edited file cannot be written.
@@ -224,15 +238,18 @@ def _apply_cuts(
             by_file.setdefault(cut.evidence.file_path, []).append(cut)
         else:
             settled.update(_refused([cut], reason or ProofReason.UNREADABLE))
-    applied: list[Cut] = []
+    applied: dict[Path, list[Cut]] = {}
     for path, file_cuts in by_file.items():
         done, refused = _rewrite_file(context, path, file_cuts, copy_root)
-        applied.extend(done)
+        if done:
+            applied[path] = done
         settled.update(refused)
     return applied, settled
 
 
-def _reanalyze(context: ScanContext, copy_root: Path, *, all_edges: bool) -> nx.DiGraph:
+def _reanalyze(
+    context: ScanContext, copy_root: Path, *, all_edges: bool
+) -> tuple[nx.DiGraph, dict[str, Path]]:
     """Analyze the edited copy as the original was analyzed.
 
     Args:
@@ -241,14 +258,179 @@ def _reanalyze(context: ScanContext, copy_root: Path, *, all_edges: bool) -> nx.
         all_edges: Whether lazy and type-only imports count too.
 
     Returns:
-        The graph whose tangles `untangle` plans, for the copy.
+        The graph whose tangles `untangle` plans, for the copy, and the path of every
+        parsed module relative to the copy root.
 
     Raises:
         UnskeinError: If the copy holds no Python files.
     """
     copy_context = dataclasses.replace(context, root=copy_root)
     parsed = resolve_parsed(parse_sources(copy_context), copy_context)
-    return untangle_scope(analyze(parsed, copy_context.findings).graph, all_edges=all_edges)
+    modules: dict[str, Path] = {}
+    for module in parsed.modules:
+        relative = _relative(module.file_path, copy_root)
+        if relative is not None:
+            modules[module.name] = relative
+    scope = untangle_scope(analyze(parsed, copy_context.findings).graph, all_edges=all_edges)
+    return scope, modules
+
+
+def resolve_python(python: Path | None) -> Path:
+    """Pick the interpreter that runs the imports of ``--run``.
+
+    Args:
+        python: The interpreter the user asked for, or None for the running one.
+
+    Returns:
+        The interpreter path.
+
+    Raises:
+        UnskeinError: If the given interpreter does not exist.
+    """
+    if python is None:
+        return Path(sys.executable)
+    if not python.is_file():
+        raise UnskeinError(ErrorKey.PYTHON_NOT_FOUND, {"path": str(python)})
+    return python
+
+
+@dataclass(frozen=True, slots=True)
+class _RunInputs:
+    """What the execution layer needs, gathered once.
+
+    Attributes:
+        python: Interpreter for every import.
+        before_root: Root of the unedited copy.
+        after_root: Root of the edited copy.
+        modules: Module name to its path relative to either root.
+        members: The modules of the tangles, sorted.
+        edited: Edited file of the copy, resolved, to the cuts applied in it.
+        workers: How many imports run at the same time.
+    """
+
+    python: Path
+    before_root: Path
+    after_root: Path
+    modules: dict[str, Path]
+    members: list[str]
+    edited: dict[Path, list[Cut]]
+    workers: int
+
+
+def _probe_root(inputs: _RunInputs, root: Path) -> dict[str, ProbeResult]:
+    """Import every tangle member from one copy.
+
+    Args:
+        inputs: What the run needs.
+        root: Root of the copy to import from.
+
+    Returns:
+        The outcome per member.
+    """
+    job = ProbeJob(
+        inputs.python,
+        root,
+        import_roots(inputs.modules, root),
+        PROBE_TIMEOUT_SECONDS,
+        inputs.workers,
+    )
+    return run_probes(job, inputs.members)
+
+
+def _attributed_cuts(inputs: _RunInputs, result: ProbeResult) -> list[Cut]:
+    """Find the cuts whose edited file appears in a failed import's traceback.
+
+    Args:
+        inputs: What the run needs.
+        result: A failed import.
+
+    Returns:
+        The cuts applied in the edited files the traceback names.
+    """
+    found: list[Cut] = []
+    for name in result.files:
+        found.extend(inputs.edited.get(Path(name).resolve(), []))
+    return found
+
+
+def _run_layer(inputs: _RunInputs) -> tuple[RunProof, dict[Edge, CutProof]]:
+    """Import the tangle's modules before and after the cuts and compare.
+
+    A module that did not import before cannot regress. A regression is tied to a cut
+    when its traceback goes through a file that the cut edited.
+
+    Args:
+        inputs: What the run needs.
+
+    Returns:
+        The run summary and a broken verdict for every cut tied to a regression.
+    """
+    started = time.perf_counter()
+    before = _probe_root(inputs, inputs.before_root)
+    after = _probe_root(inputs, inputs.after_root)
+    regressions: list[ProbeResult] = []
+    unattributed: list[ProbeResult] = []
+    broken: dict[Edge, CutProof] = {}
+    for name in inputs.members:
+        if not before[name].ok or after[name].ok:
+            continue
+        culprits = _attributed_cuts(inputs, after[name])
+        (regressions if culprits else unattributed).append(after[name])
+        for cut in culprits:
+            broken.setdefault(
+                (cut.source, cut.target),
+                CutProof(
+                    cut.source,
+                    cut.target,
+                    ProofVerdict.BROKEN,
+                    ProofReason.IMPORT_FAILED,
+                    f"{name}: {after[name].error}",
+                ),
+            )
+    run = RunProof(
+        modules=len(inputs.members),
+        importable=sum(1 for name in inputs.members if before[name].ok),
+        regressions=tuple(regressions),
+        unattributed=tuple(unattributed),
+        seconds=time.perf_counter() - started,
+    )
+    return run, broken
+
+
+def _static_verdict(cut: Cut, scope: nx.DiGraph) -> CutProof:
+    """Judge an applied cut by whether the re-analysis still sees its edge.
+
+    Args:
+        cut: A cut that was applied to the copy.
+        scope: The re-analyzed graph of the copy.
+
+    Returns:
+        ``PROVEN`` when the dependency is gone, else ``BROKEN`` with ``EDGE_REMAINS``.
+    """
+    if (cut.source, cut.target) in scope.edges:
+        return CutProof(cut.source, cut.target, ProofVerdict.BROKEN, ProofReason.EDGE_REMAINS)
+    return CutProof(cut.source, cut.target, ProofVerdict.PROVEN)
+
+
+def _edited_files(
+    context: ScanContext, applied: dict[Path, list[Cut]], copy_root: Path
+) -> dict[Path, list[Cut]]:
+    """Map each edited file of the copy to the cuts applied in it.
+
+    Args:
+        context: A prepared scan.
+        applied: Applied cuts by original file.
+        copy_root: Root of the copy.
+
+    Returns:
+        The resolved path of every edited file of the copy.
+    """
+    edited: dict[Path, list[Cut]] = {}
+    for path, done in applied.items():
+        relative = _relative(path, context.root)
+        if relative is not None:
+            edited[(copy_root / relative).resolve()] = done
+    return edited
 
 
 def prove_plan(context: ScanContext, plan: UntanglePlan, options: ProveOptions) -> ProofResult:
@@ -267,29 +449,43 @@ def prove_plan(context: ScanContext, plan: UntanglePlan, options: ProveOptions) 
 
     Raises:
         ProofUnavailable: If the copy or the run cannot be done.
-        UnskeinError: If the path is not a directory or holds no Python files.
+        UnskeinError: If the path is not a directory, holds no Python files, or the
+            interpreter of ``--run`` does not exist.
     """
     cuts = [cut for tangle in plan.tangles for cut in tangle.cuts]
+    python = resolve_python(options.python) if options.run else None
     try:
         with tempfile.TemporaryDirectory(prefix=WORKSPACE_PREFIX) as workspace:
-            copy_root = Path(workspace) / COPY_DIR / context.root.resolve().name
+            base = Path(workspace)
+            copy_root = base / COPY_DIR / context.root.resolve().name
             copy_project(context, copy_root)
             applied, verdicts = _apply_cuts(context, cuts, copy_root)
-            scope = _reanalyze(context, copy_root, all_edges=plan.all_edges)
+            scope, modules = _reanalyze(context, copy_root, all_edges=plan.all_edges)
+            for done in applied.values():
+                for cut in done:
+                    verdicts[(cut.source, cut.target)] = _static_verdict(cut, scope)
+            run = None
+            if python is not None:
+                before_root = base / BEFORE_DIR / copy_root.name
+                copy_project(context, before_root)
+                inputs = _RunInputs(
+                    python,
+                    before_root,
+                    copy_root,
+                    modules,
+                    sorted({member for tangle in plan.tangles for member in tangle.members}),
+                    _edited_files(context, applied, copy_root),
+                    worker_count(context.analysis),
+                )
+                run, broken = _run_layer(inputs)
+                verdicts.update(broken)
     except OSError as error:
         raise ProofUnavailable(str(error)) from error
-    for cut in applied:
-        edge = (cut.source, cut.target)
-        if edge in scope.edges:
-            verdicts[edge] = CutProof(
-                cut.source, cut.target, ProofVerdict.BROKEN, ProofReason.EDGE_REMAINS
-            )
-        else:
-            verdicts[edge] = CutProof(cut.source, cut.target, ProofVerdict.PROVEN)
     cycles, truncated = find_cycles(scope)
     return ProofResult(
         cuts=tuple(verdicts[(cut.source, cut.target)] for cut in cuts),
         tangles_after=len(find_tangles(scope)),
         cycles_after=len(cycles),
         cycles_after_truncated=truncated,
+        run=run,
     )
