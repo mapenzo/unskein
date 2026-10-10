@@ -8,6 +8,7 @@ from pathlib import Path
 from unskein.ai.models import AIFailure, AIReport, Problem, Severity
 from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, DistributionSummary
 from unskein.graph.findings import Evidence, Finding, FindingKind
+from unskein.graph.leaks import LeakAction, LeakFix
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.graph.native import NativeModule
@@ -23,7 +24,7 @@ MAX_TANGLE_MEMBERS_SHOWN = 10
 MAX_HIDDEN_TANGLES_SHOWN = 10
 MAX_FINDINGS_PER_KIND = 10
 # Findings whose fix is meant to be copied are all listed.
-UNCAPPED_FINDINGS = frozenset({FindingKind.WILDCARD_IMPORT})
+UNCAPPED_FINDINGS = frozenset({FindingKind.WILDCARD_IMPORT, FindingKind.API_LEAK})
 MAX_PACKAGES_IN_TABLE = 15
 MAX_NATIVE_IN_TABLE = 15
 MAX_PACKAGE_EDGES_SHOWN = 10
@@ -1034,6 +1035,58 @@ def _wildcard_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     return "\n".join(lines)
 
 
+def _leak_fix_line(fix: LeakFix, lang: Lang) -> str:
+    """Render the fix of one statement, or the reason it has none.
+
+    Args:
+        fix: The fix.
+        lang: Report language.
+
+    Returns:
+        One indented Markdown list item.
+    """
+    if fix.action is LeakAction.FACADE_IMPORT:
+        name = fix.symbol if fix.alias is None else f"{fix.symbol} as {fix.alias}"
+        text = t("finding.api_leak.fix", lang, statement=f"from {fix.facade} import {name}")
+    else:
+        text = t(f"finding.api_leak.no_fix.{fix.reason}", lang, name=fix.symbol)
+    return f"  - `{fix.location}`: {text}"
+
+
+def _leak_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
+    """Render a finding of rule 13: the summary, then the fix of each statement.
+
+    Args:
+        finding: An ``API_LEAK`` finding.
+        result: The deterministic analysis, with the fixes.
+        lang: Report language.
+
+    Returns:
+        A multi-line Markdown list item.
+    """
+    (module,) = finding.modules
+    leak = next(entry for entry in result.leaks if entry.name == module)
+    roots = PART_SEPARATOR.join(f"{root} {count}" for root, count in leak.roots)
+    statements = len(leak.fixes)
+    summary = DETAIL_SEPARATOR.join(
+        [
+            t(f"finding.api_leak.reason.{leak.reason}", lang),
+            t(
+                f"finding.api_leak.consumers.{_plural_key(leak.consumers)}",
+                lang,
+                count=leak.consumers,
+            ),
+            t(f"finding.api_leak.statements.{_plural_key(statements)}", lang, count=statements)
+            + " "
+            + t("finding.api_leak.roots", lang, roots=roots),
+        ]
+    )
+    lines = [f"- `{module}` ({summary})"]
+    # Every statement: the fix is meant to be copied.
+    lines += [_leak_fix_line(fix, lang) for fix in leak.fixes]
+    return "\n".join(lines)
+
+
 def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
@@ -1056,6 +1109,8 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
         return _native_finding_line(finding, result, lang)
     if finding.kind is FindingKind.WILDCARD_IMPORT:
         return _wildcard_line(finding, result, lang)
+    if finding.kind is FindingKind.API_LEAK:
+        return _leak_line(finding, result, lang)
     if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
         source, target = finding.modules
         return (

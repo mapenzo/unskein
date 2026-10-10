@@ -237,3 +237,17 @@ def test_scan_of_a_workspace_counts_member_imports_as_internal() -> None:
     assert result.exit_code == 0
     assert "core_enterprise" in result.output
     assert ".circleci.scripts" not in result.output
+
+
+def test_scan_help_lists_the_api_leak_option() -> None:
+    output = plain(runner.invoke(app, ["scan", "--help"]).output)
+    assert "--api-leaks" in output
+    assert "--no-api-leaks" in output
+
+
+def test_scan_reports_api_leaks_only_with_the_option() -> None:
+    root = str(Path(__file__).parent.parent / "fixtures" / "api_project")
+    off = runner.invoke(app, ["scan", root, "--no-ai", "--lang", "en"])
+    on = runner.invoke(app, ["scan", root, "--no-ai", "--lang", "en", "--api-leaks"])
+    assert "API leak" not in off.output
+    assert "API leak" in on.output

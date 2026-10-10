@@ -945,6 +945,57 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "drop the underscore); otherwise import from the package that offers it or stop "
         "depending on it.",
     },
+    "finding.api_leak.reason.declared": {
+        Lang.ES: "interno según `[api]`",
+        Lang.EN: "internal per `[api]`",
+    },
+    "finding.api_leak.reason.convention": {
+        Lang.ES: "interno por convención de nombre",
+        Lang.EN: "internal by naming convention",
+    },
+    "finding.api_leak.reason.facade": {
+        Lang.ES: "rodeado: un paquete superior ofrece el nombre",
+        Lang.EN: "bypassed: a package above it offers the name",
+    },
+    "finding.api_leak.consumers.one": {
+        Lang.ES: "{count} módulo consumidor",
+        Lang.EN: "{count} consuming module",
+    },
+    "finding.api_leak.consumers.other": {
+        Lang.ES: "{count} módulos consumidores",
+        Lang.EN: "{count} consuming modules",
+    },
+    "finding.api_leak.statements.one": {Lang.ES: "{count} sentencia", Lang.EN: "{count} statement"},
+    "finding.api_leak.statements.other": {
+        Lang.ES: "{count} sentencias",
+        Lang.EN: "{count} statements",
+    },
+    "finding.api_leak.roots": {Lang.ES: "desde {roots}", Lang.EN: "from {roots}"},
+    "finding.api_leak.fix": {Lang.ES: "`{statement}`", Lang.EN: "`{statement}`"},
+    "finding.api_leak.no_fix.no_public_path": {
+        Lang.ES: "sin arreglo seguro: ningún paquete ofrece `{name}`; decide el dueño",
+        Lang.EN: "no safe fix: nothing offers `{name}`; the owner decides",
+    },
+    "finding.api_leak.no_fix.not_ancestor": {
+        Lang.ES: "sin arreglo seguro: solo lo ofrece un paquete que no es ancestro del módulo",
+        Lang.EN: "no safe fix: only a package that is not an ancestor offers it",
+    },
+    "finding.api_leak.no_fix.cycle": {
+        Lang.ES: "sin arreglo seguro: la fachada importa a este módulo al cargarse",
+        Lang.EN: "no safe fix: the facade imports this module when it loads",
+    },
+    "finding.api_leak.no_fix.guarded": {
+        Lang.ES: "sin arreglo seguro: la fachada importa el nombre dentro de un `try`",
+        Lang.EN: "no safe fix: the facade imports the name inside a `try`",
+    },
+    "finding.api_leak.no_fix.rebound": {
+        Lang.ES: "sin arreglo seguro: la fachada vuelve a ligar el nombre",
+        Lang.EN: "no safe fix: the facade binds the name again",
+    },
+    "finding.api_leak.no_fix.module_import": {
+        Lang.ES: "sin arreglo seguro: importa un módulo, no un nombre",
+        Lang.EN: "no safe fix: it imports a module, not a name",
+    },
     "finding.wildcard.importers.one": {Lang.ES: "{count} módulo", Lang.EN: "{count} module"},
     "finding.wildcard.importers.other": {Lang.ES: "{count} módulos", Lang.EN: "{count} modules"},
     "finding.wildcard.statements.one": {
