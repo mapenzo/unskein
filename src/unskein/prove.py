@@ -1,5 +1,6 @@
 """Prove an untangle plan: apply its cuts to a copy of the project and check each one."""
 
+import ast
 import dataclasses
 import shutil
 import sys
@@ -20,13 +21,15 @@ from unskein.graph.proof import (
     ProofVerdict,
     RunProof,
 )
-from unskein.graph.steps import StepKind
+from unskein.graph.steps import DEFERRED_CONTEXTS, StepKind
 from unskein.graph.untangle import Cut, Edge, UntanglePlan
 from unskein.parsers.discovery import detect_encoding
 from unskein.parsers.layout import MANIFEST_NAMES
-from unskein.parsers.rewrite import Move, MoveKind, rewrite_source
+from unskein.parsers.rewrite import Move, MoveKind, mentions_module_table, rewrite_source
+from unskein.parsers.usage import MODULE_SEPARATOR
 from unskein.pipeline import worker_count
 from unskein.probe import PROBE_TIMEOUT_SECONDS, ProbeJob, import_roots, run_probes
+from unskein.proof_facts import ProjectFacts
 from unskein.scan import ScanContext, discover_project, parse_sources, resolve_parsed
 from unskein.untangle import untangle_scope
 
@@ -48,7 +51,6 @@ SKIPPED_DIRECTORIES = (
     "venv",
     ".eggs",
 )
-MOVE_KINDS = {StepKind.LAZY: MoveKind.LAZY, StepKind.TYPE_CHECKING: MoveKind.TYPE_CHECKING}
 DESIGN_STEPS = frozenset(
     {StepKind.MOVE_SYMBOL, StepKind.EXTRACT_SHARED, StepKind.PACKAGE_STRUCTURE}
 )
@@ -84,6 +86,36 @@ class ProofUnavailable(Exception):
         self.detail = detail
 
 
+SMELLABLE_REASONS = frozenset(
+    {
+        ProofReason.NEEDS_DESIGN,
+        ProofReason.READ_AT_IMPORT,
+        ProofReason.MUTABLE_ATTRIBUTE,
+        ProofReason.RUNTIME_ANNOTATIONS,
+    }
+)
+
+
+def _name_smells(cuts: list[Cut], verdicts: dict[Edge, CutProof], *, facts: ProjectFacts) -> None:
+    """Replace a generic reason by the design smell behind it, where there is one.
+
+    Args:
+        cuts: Every cut of the plan.
+        verdicts: Verdicts settled so far; updated in place.
+        facts: Project facts; only read for the cuts that can carry a smell.
+    """
+    for cut in cuts:
+        edge = (cut.source, cut.target)
+        found = verdicts.get(edge)
+        if found is None or found.reason not in SMELLABLE_REASONS:
+            continue
+        smell = facts.smell(cut)
+        if smell is not None:
+            verdicts[edge] = CutProof(
+                cut.source, cut.target, ProofVerdict.NOT_PROVEN, smell.reason, smell.detail
+            )
+
+
 def _planned_refusal(cut: Cut) -> ProofReason | None:
     """Tell why a cut cannot be applied mechanically, before reading any file.
 
@@ -95,8 +127,8 @@ def _planned_refusal(cut: Cut) -> ProofReason | None:
     """
     if cut.step in DESIGN_STEPS:
         return ProofReason.NEEDS_DESIGN
-    if cut.step is StepKind.BYPASS_FACADE:
-        return ProofReason.NO_DEFINER if cut.evidence.symbols else ProofReason.WHOLE_MODULE_IMPORT
+    if cut.step is StepKind.BYPASS_FACADE and cut.evidence.symbols:
+        return ProofReason.NO_DEFINER
     if cut.evidence.file_path is None or not cut.evidence.lines:
         return ProofReason.UNREADABLE
     return None
@@ -199,8 +231,79 @@ def _refused(cuts: list[Cut], reason: ProofReason) -> dict[Edge, CutProof]:
     }
 
 
+def _is_stable_ancestor(source: str, package: str, facts: ProjectFacts) -> bool:
+    """Tell whether a package contains a module and keeps its module object.
+
+    Args:
+        source: Dotted name of the importing module.
+        package: Dotted name imported.
+        facts: Project facts.
+
+    Returns:
+        True when ``package`` is a proper prefix of ``source`` and its ``__init__`` never
+        touches ``sys.modules``.
+    """
+    if not source.startswith(package + MODULE_SEPARATOR):
+        return False
+    tree = facts.tree(package)
+    return tree is not None and not mentions_module_table(tree)
+
+
+def _imports_ancestor(cut: Cut, tree: ast.Module, facts: ProjectFacts) -> bool:
+    """Tell whether the cut's statement imports a package that contains the importer.
+
+    The statement decides, not the cut: ``import pkg`` also yields cuts toward
+    ``pkg.sub`` when the module reads ``pkg.sub.x``, and moving it is equally harmless.
+
+    Args:
+        cut: A cut of the plan.
+        tree: Syntax tree of the importing module.
+        facts: Project facts; the package must not replace itself in ``sys.modules``.
+
+    Returns:
+        True when a ``import name`` statement on the cut's lines names a package that is a
+        proper prefix of the importing module.
+    """
+    return any(
+        isinstance(node, ast.Import)
+        and node.lineno in cut.evidence.lines
+        and any(_is_stable_ancestor(cut.source, alias.name, facts) for alias in node.names)
+        for node in tree.body
+    )
+
+
+def _move_for(cut: Cut, tree: ast.Module, facts: ProjectFacts) -> Move:
+    """Build the rewrite move that applies a cut.
+
+    Args:
+        cut: A cut whose step can be rewritten.
+        tree: Syntax tree of the importing module.
+        facts: Project facts; the definer index is only built for a bypass.
+
+    Returns:
+        The move, which knows when the imported module is an ancestor package of the importer;
+        a postponing cut also adds ``from __future__ import annotations``, and
+        goes under ``TYPE_CHECKING`` only when every read is an annotation.
+    """
+    evidence = cut.evidence
+    ancestor = _imports_ancestor(cut, tree, facts)
+    if cut.step is StepKind.BYPASS_FACADE:
+        return Move(
+            MoveKind.BYPASS,
+            evidence.lines,
+            definers=facts.definers_read(cut, tree),
+            already_loaded=ancestor,
+        )
+    postpone = cut.step is StepKind.POSTPONE_ANNOTATIONS
+    type_only = cut.step is StepKind.TYPE_CHECKING or (
+        postpone and evidence.contexts <= DEFERRED_CONTEXTS
+    )
+    kind = MoveKind.TYPE_CHECKING if type_only else MoveKind.LAZY
+    return Move(kind, evidence.lines, postpone=postpone, already_loaded=ancestor)
+
+
 def _rewrite_file(
-    context: ScanContext, path: Path, cuts: list[Cut], *, copy_root: Path
+    context: ScanContext, path: Path, cuts: list[Cut], *, copy_root: Path, facts: ProjectFacts
 ) -> tuple[list[Cut], dict[Edge, CutProof]]:
     """Apply the cuts of one file to its copy, all in one pass.
 
@@ -209,6 +312,7 @@ def _rewrite_file(
         path: The original file.
         cuts: The cuts whose import statements live in it.
         copy_root: Root of the copy.
+        facts: Project facts shared by every file.
 
     Returns:
         The cuts that were applied, and the verdicts of those that were refused.
@@ -224,7 +328,11 @@ def _rewrite_file(
         return [], _refused(cuts, ProofReason.UNREADABLE)
     if relative is None:
         return [], _refused(cuts, ProofReason.UNREADABLE)
-    moves = [Move(MOVE_KINDS[cut.step], cut.evidence.lines) for cut in cuts]
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return [], _refused(cuts, ProofReason.UNREADABLE)
+    moves = [_move_for(cut, tree, facts) for cut in cuts]
     result = rewrite_source(text, moves)
     applied: list[Cut] = []
     refused: dict[Edge, CutProof] = {}
@@ -244,7 +352,7 @@ def _rewrite_file(
 
 
 def _apply_cuts(
-    context: ScanContext, cuts: list[Cut], copy_root: Path
+    context: ScanContext, cuts: list[Cut], copy_root: Path, *, facts: ProjectFacts
 ) -> tuple[dict[Path, list[Cut]], dict[Edge, CutProof]]:
     """Apply every cut that can be applied mechanically to the copy.
 
@@ -252,6 +360,7 @@ def _apply_cuts(
         context: A prepared scan.
         cuts: Every cut of the plan.
         copy_root: Root of the copy.
+        facts: Project facts shared by every file.
 
     Returns:
         The cuts that were applied, grouped by the original file they edit, and the
@@ -270,7 +379,7 @@ def _apply_cuts(
             settled.update(_refused([cut], reason or ProofReason.UNREADABLE))
     applied: dict[Path, list[Cut]] = {}
     for path, file_cuts in by_file.items():
-        done, refused = _rewrite_file(context, path, file_cuts, copy_root=copy_root)
+        done, refused = _rewrite_file(context, path, file_cuts, copy_root=copy_root, facts=facts)
         if done:
             applied[path] = done
         settled.update(refused)
@@ -489,7 +598,9 @@ def prove_plan(context: ScanContext, plan: UntanglePlan, options: ProveOptions) 
             base = Path(workspace)
             copy_root = base / COPY_DIR / context.root.resolve().name
             copy_project(context, copy_root, whole_tree=python is not None)
-            applied, verdicts = _apply_cuts(context, cuts, copy_root)
+            facts = ProjectFacts(context)
+            applied, verdicts = _apply_cuts(context, cuts, copy_root, facts=facts)
+            _name_smells(cuts, verdicts, facts=facts)
             scope, modules = _reanalyze(context, copy_root, all_edges=plan.all_edges)
             for done in applied.values():
                 for cut in done:

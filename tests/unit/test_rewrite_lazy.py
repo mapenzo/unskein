@@ -207,7 +207,7 @@ def test_a_lazy_move_breaks_the_cycle_and_both_modules_still_import(tmp_path: Pa
 
 def test_a_rewrite_that_does_not_parse_is_discarded(monkeypatch: pytest.MonkeyPatch) -> None:
     broken = rewrite._Edit(0, 1, ("def (:\n",))
-    monkeypatch.setattr(rewrite, "_plan_lazy", lambda ctx, statements: [broken])
+    monkeypatch.setattr(rewrite, "_plan_lazy", lambda ctx, statements, **_: [broken])
     source = "import json\n\n\ndef f():\n    return json\n"
     assert lazy(source) == (source, RewriteRefusal.UNREADABLE)
 

@@ -3,7 +3,14 @@
 from pathlib import Path
 
 from unskein.graph.coupling import CouplingMetrics
-from unskein.graph.proof import CutProof, ProbeResult, ProofResult, ProofVerdict, RunProof
+from unskein.graph.proof import (
+    DESIGN_SMELLS,
+    CutProof,
+    ProbeResult,
+    ProofResult,
+    ProofVerdict,
+    RunProof,
+)
 from unskein.graph.steps import STEP_COSTS
 from unskein.graph.untangle import Cut, ModuleChange, TanglePlan, UntanglePlan
 from unskein.i18n import Lang, t
@@ -51,6 +58,9 @@ def render_untangle(
     lines += _summary(plan, lang)
     if proof is not None:
         lines += ["", *_proof_summary(proof, lang)]
+        smells = _smell_lines(proof, lang)
+        if smells:
+            lines += ["", *smells]
     if plan.hidden_tangles and not plan.all_edges:
         lines += ["", t("untangle.hidden_hint", lang, count=plan.hidden_tangles)]
     proofs = {(cut.source, cut.target): cut for cut in proof.cuts} if proof is not None else None
@@ -280,6 +290,35 @@ def _proof_cell(proof: CutProof, lang: Lang) -> str:
     if proof.detail:
         cell += f" ({proof.detail.replace('|', chr(92) + '|')})"
     return cell
+
+
+def _smell_lines(proof: ProofResult, lang: Lang) -> list[str]:
+    """List the design smells behind the cuts that are not rewritten.
+
+    Args:
+        proof: The proof of the plan.
+        lang: Report language.
+
+    Returns:
+        Markdown lines: a heading and one bullet per smell, or nothing when there are none.
+    """
+    found = [cut for cut in proof.cuts if cut.reason in DESIGN_SMELLS]
+    if not found:
+        return []
+    lines = [f"### {t('untangle.proof.smells', lang)}", ""]
+    lines += [
+        "- "
+        + t(
+            "untangle.proof.smell",
+            lang,
+            source=cut.source,
+            target=cut.target,
+            reason=t(f"untangle.proof.reason.{cut.reason}", lang),
+            detail=cut.detail,
+        )
+        for cut in found
+    ]
+    return lines
 
 
 def _proof_summary(proof: ProofResult, lang: Lang) -> list[str]:

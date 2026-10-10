@@ -18,6 +18,7 @@ DYNAMIC_IMPORTERS = frozenset({"import_module", "__import__"})
 IDENTIFIER = re.compile(r"[A-Za-z_]\w*")
 # Longer strings are prose, not quoted annotations.
 MAX_ANNOTATION_LENGTH = 200
+STAR_IMPORT_NAME = "*"
 
 
 @dataclass(slots=True)
@@ -505,6 +506,16 @@ class _ReadThroughCollector:
         if module in self.wanted:
             self.found.setdefault(module, set()).update(self.wanted[module])
 
+    def add_all_but(self, module: str, name: str) -> None:
+        """Count every wanted name of a module as read except one.
+
+        Args:
+            module: Module whose names may be read; ignored when nothing is wanted from it.
+            name: The one name that does not count.
+        """
+        if module in self.wanted:
+            self.found.setdefault(module, set()).update(self.wanted[module] - {name})
+
     def add_symbol(self, module: str, symbol: str) -> None:
         """Count a name imported from a module.
 
@@ -560,15 +571,57 @@ def _alias_refers_to(node: ast.Import | ast.ImportFrom, module: str) -> tuple[st
     return None
 
 
+def _star_lines(tree: ast.Module) -> set[int]:
+    """Return the lines of the star imports of a module.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        The first line of every ``from x import *``.
+    """
+    return {
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and any(alias.name == STAR_IMPORT_NAME for alias in node.names)
+    }
+
+
+def _loads_name(tree: ast.Module, name: str) -> bool:
+    """Tell whether a module loads a bare name anywhere.
+
+    Args:
+        tree: Parsed module.
+        name: The name.
+
+    Returns:
+        True when some ``Name`` node loads it.
+    """
+    return any(
+        isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(tree)
+    )
+
+
 def _whole_module_reads(
-    tree: ast.Module | None, imports: Collection[tuple[int, str]], collector: _ReadThroughCollector
+    tree: ast.Module | None,
+    imports: Collection[tuple[int, str]],
+    collector: _ReadThroughCollector,
+    *,
+    importer: str,
 ) -> None:
     """Record what a module reads through the whole modules it imports.
+
+    A star import re-exposes the imported module's public names, including the importer's
+    own package (``import pkg`` inside ``pkg.sub``, star-imported by ``pkg``). That name is
+    not read by the star itself, so it only counts when the importer loads the bare name.
 
     Args:
         tree: The importing module parsed again, or None when it cannot be read any more.
         imports: ``(line, imported module)`` of its whole-module imports without usage data.
         collector: Where the reads are recorded.
+        importer: Name of the importing module.
     """
     if tree is None:
         for _, module in imports:
@@ -588,8 +641,15 @@ def _whole_module_reads(
                 refers.setdefault(binding[0], set()).add(binding[1])
                 matched.add((node.lineno, module))
     # Star imports, targets that fell back to an ancestor, or a file changed since the scan.
+    star_lines = _star_lines(tree)
+    root = importer.split(MODULE_SEPARATOR)[0]
+    root_unread = not _loads_name(tree, root)
     for line, module in imports:
-        if (line, module) not in matched:
+        if (line, module) in matched:
+            continue
+        if line in star_lines and root_unread:
+            collector.add_all_but(module, root)
+        else:
             collector.add_all(module)
     usages = collect_name_usage(tree, refers)
     for name, modules in refers.items():
@@ -606,7 +666,9 @@ def collect_names_read_from(
 
     A name counts when it is imported by name from the module, read as an attribute of
     it or of a package above it, or possibly taken by a star import or a use of the
-    module by itself. Imports under ``TYPE_CHECKING`` never run, so they do not count.
+    module by itself. A star import does not count the importer's own package name unless the
+    importer loads that bare name. Imports under ``TYPE_CHECKING`` never run, so they do
+    not count.
     Modules whose use of a whole-module import was not analyzed by the parser are parsed
     again; one that cannot be read any more counts as reading every name.
 
@@ -641,7 +703,9 @@ def collect_names_read_from(
             else:
                 collector.add_all(edge.target)
         if pending:
-            _whole_module_reads(parse_source(module.file_path, encoding), pending, collector)
+            _whole_module_reads(
+                parse_source(module.file_path, encoding), pending, collector, importer=module.name
+            )
     return {module: frozenset(names) for module, names in collector.found.items()}
 
 

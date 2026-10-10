@@ -122,10 +122,10 @@ Architecture health: fair.
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,
   import-linter, tach) proposes cuts; the commercial ones that do (Sonargraph,
-  Structure101, Lattix) target Java/.NET. With `--prove` it applies the lazy-import and
-  `TYPE_CHECKING` cuts to a temporary copy and checks each one: on litellm, 77 of the 79
-  lazy cuts are proven, the other 163 cuts say why they are not (the 143 that import the
-  whole package are never rewritten), and with `--run` all 625 modules of the tangles still
+  Structure101, Lattix) target Java/.NET. With `--prove` it applies the cuts to a temporary copy and checks each one (lazy imports,
+  `TYPE_CHECKING`, postponed annotations, imports from the defining module) and names the
+  design smells it cannot fix: on litellm, 218 of 240 cuts are proven, the main tangle
+  shrinks from 616 to 123 modules, and with `--run` all 625 modules of the tangles still
   import afterwards (about 14 minutes). Your project is never modified.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
   Only imports that run when the code is imported count; those inside functions or under

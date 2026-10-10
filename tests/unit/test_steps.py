@@ -35,16 +35,16 @@ def evidence(
         ("pkg", "pkg.sub.deep", evidence({A}), StepKind.PACKAGE_STRUCTURE),
         ("app.a", "app.b", evidence({A}, postponed=True), StepKind.TYPE_CHECKING),
         ("app.a", "pkg", evidence({A}, postponed=True), StepKind.TYPE_CHECKING),
-        ("app.a", "app.b", evidence({A}), StepKind.MOVE_SYMBOL),
+        ("app.a", "app.b", evidence({A}), StepKind.POSTPONE_ANNOTATIONS),
         ("app.a", "app.b", evidence({Q}), StepKind.TYPE_CHECKING),
-        ("app.a", "app.b", evidence({A, Q}), StepKind.MOVE_SYMBOL),
+        ("app.a", "app.b", evidence({A, Q}), StepKind.POSTPONE_ANNOTATIONS),
         ("app.a", "app.b", evidence({Q, F}), StepKind.LAZY),
         ("app.a", "pkg", evidence({M}), StepKind.BYPASS_FACADE),
         ("pkg.sub.x", "pkg", evidence({M}), StepKind.BYPASS_FACADE),
         ("app.a", "app.b", evidence({F}), StepKind.LAZY),
         ("app.a", "app.b", evidence({A, F}, postponed=True), StepKind.LAZY),
-        ("app.a", "app.b", evidence({A, F}), StepKind.MOVE_SYMBOL),
-        ("app.a", "app.b", evidence({A, F}, ("X", "Y", "Z")), StepKind.EXTRACT_SHARED),
+        ("app.a", "app.b", evidence({A, F}), StepKind.POSTPONE_ANNOTATIONS),
+        ("app.a", "app.b", evidence({A, F}, ("X", "Y", "Z")), StepKind.POSTPONE_ANNOTATIONS),
         ("app.a", "app.b", evidence({M}, ("X", "Y")), StepKind.MOVE_SYMBOL),
         ("app.a", "app.b", evidence({M}, ("X", "Y", "Z")), StepKind.EXTRACT_SHARED),
         ("app.a", "app.b", evidence({M}, ()), StepKind.EXTRACT_SHARED),
@@ -55,7 +55,7 @@ def evidence(
         "package_grandchild",
         "annotation_only_postponed",
         "annotation_only_postponed_wins_over_facade",
-        "annotation_evaluated_is_not_type_checking",
+        "annotation_evaluated_is_postponed",
         "quoted_only",
         "quoted_and_evaluated",
         "quoted_and_function",
@@ -63,7 +63,7 @@ def evidence(
         "child_into_its_parent_facade",
         "function_only",
         "annotation_and_function_postponed",
-        "annotation_read_at_import_is_not_lazy",
+        "annotation_and_function_evaluated_is_postponed",
         "annotation_read_at_import_many_symbols",
         "two_symbols",
         "three_symbols",
@@ -81,6 +81,7 @@ def test_costs_rank_the_steps() -> None:
     order = sorted(StepKind, key=lambda kind: STEP_COSTS[kind])
     assert order == [
         StepKind.TYPE_CHECKING,
+        StepKind.POSTPONE_ANNOTATIONS,
         StepKind.BYPASS_FACADE,
         StepKind.LAZY,
         StepKind.MOVE_SYMBOL,
@@ -105,3 +106,30 @@ def test_bypass_is_not_offered_for_names_the_facade_defines(
     found: ImportEvidence, expected: StepKind
 ) -> None:
     assert choose_step("pkg.a", "pkg", found, facades=FACADES) is expected
+
+
+def test_a_whole_module_import_read_only_in_functions_is_lazy_not_bypass() -> None:
+    assert choose_step("app.a", "pkg", evidence({F}, ()), facades=FACADES) is StepKind.LAZY
+
+
+def test_a_whole_module_import_read_at_import_stays_a_bypass() -> None:
+    found = evidence({M, F}, ())
+    assert choose_step("app.a", "pkg", found, facades=FACADES) is StepKind.BYPASS_FACADE
+
+
+def test_postponing_needs_an_evaluated_annotation() -> None:
+    assert choose_step("a", "b", evidence({F}), facades={}) is StepKind.LAZY
+    assert choose_step("a", "b", evidence({M, A}), facades={}) is StepKind.MOVE_SYMBOL
+
+
+def test_postponing_is_not_offered_when_annotations_are_already_postponed() -> None:
+    found = evidence({A}, postponed=True)
+    assert choose_step("a", "b", found, facades={}) is StepKind.TYPE_CHECKING
+
+
+def test_postponing_costs_between_type_checking_and_lazy() -> None:
+    assert (
+        STEP_COSTS[StepKind.TYPE_CHECKING]
+        < STEP_COSTS[StepKind.POSTPONE_ANNOTATIONS]
+        < STEP_COSTS[StepKind.LAZY]
+    )

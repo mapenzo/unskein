@@ -2,7 +2,8 @@
 
 import ast
 import io
-from collections.abc import Collection, Sequence
+from collections import Counter
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -16,6 +17,39 @@ TYPING_MODULES = frozenset({"typing", "typing_extensions"})
 TYPING_IMPORT = f"from typing import {TYPE_CHECKING_NAME}"
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 COMMENT_START = "#"
+STAR = "*"
+NAMESPACE_WRITERS = frozenset({"globals", "exec"})
+VARS_NAME = "vars"
+MODULE_NAME_VARIABLE = "__name__"
+MODULES_ATTRIBUTE = "modules"
+FUTURE_IMPORT = "from __future__ import annotations"
+RUNTIME_ANNOTATION_PACKAGES = frozenset(
+    {
+        "pydantic",
+        "pydantic_settings",
+        "fastapi",
+        "typer",
+        "msgspec",
+        "attr",
+        "attrs",
+        "cattrs",
+        "sqlalchemy",
+        "sqlmodel",
+        "beartype",
+        "typeguard",
+        "strawberry",
+        "marshmallow_dataclass",
+    }
+)
+RUNTIME_ANNOTATION_NAMES = frozenset(
+    {
+        "get_type_hints",
+        "get_annotations",
+        "singledispatch",
+        "singledispatchmethod",
+        "__annotations__",
+    }
+)
 
 
 class RewriteRefusal(StrEnum):
@@ -32,6 +66,10 @@ class RewriteRefusal(StrEnum):
         NAME_REUSED: The name is bound again, or a reading function binds it.
         EXPORTED: The name is listed in ``__all__``.
         INLINE_BODY: The first statement of a reading function shares its line.
+        RUNTIME_ANNOTATIONS: The module may read its annotations at run time, so postponing
+            them is unsafe.
+        MUTABLE_ATTRIBUTE: An attribute read at import time is not a class or function
+            nobody reassigns.
         UNREADABLE: The lines do not match an import, or the result would not parse.
     """
 
@@ -45,6 +83,8 @@ class RewriteRefusal(StrEnum):
     NAME_REUSED = "name_reused"
     EXPORTED = "exported"
     INLINE_BODY = "inline_body"
+    RUNTIME_ANNOTATIONS = "runtime_annotations"
+    MUTABLE_ATTRIBUTE = "mutable_attribute"
     UNREADABLE = "unreadable"
 
 
@@ -54,10 +94,12 @@ class MoveKind(StrEnum):
     Attributes:
         LAZY: Into each function that reads its names.
         TYPE_CHECKING: Under ``if TYPE_CHECKING:`` at the same place.
+        BYPASS: Replace import-time reads of ``pkg.X`` by direct imports of ``X``.
     """
 
     LAZY = "lazy"
     TYPE_CHECKING = "type_checking"
+    BYPASS = "bypass"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,10 +109,19 @@ class Move:
     Attributes:
         kind: Where the import goes.
         lines: Line numbers (1-based) of the import statements to move.
+        postpone: Whether the module also gets ``from __future__ import annotations``.
+        definers: For a bypass, ``(attribute, defining module)`` of every attribute the
+            module reads at import time through the moved name.
+        already_loaded: Whether the imported module is an ancestor package of this one, which
+            Python has loaded before this module runs, so a plain ``import`` of it has no
+            effect to delay.
     """
 
     kind: MoveKind
     lines: tuple[int, ...]
+    postpone: bool = False
+    definers: tuple[tuple[str, str], ...] = ()
+    already_loaded: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,7 +325,7 @@ def _locate(
         return RewriteRefusal.NESTED_IMPORT
     found.sort(key=lambda node: node.lineno)
     for node in found:
-        if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
+        if isinstance(node, ast.ImportFrom) and any(alias.name == STAR for alias in node.names):
             return RewriteRefusal.STAR_IMPORT
     if not all(_alone(ctx.text_lines, node) for node in found):
         return RewriteRefusal.MULTIPLE_STATEMENTS
@@ -361,19 +412,132 @@ def _exported(tree: ast.Module, names: Collection[str]) -> bool:
     return False
 
 
-def _check_names(ctx: _Context, names: Collection[str]) -> RewriteRefusal | None:
+def _reaches_the_module(node: ast.expr) -> bool:
+    """Tell whether an expression names the module itself or the table of loaded modules.
+
+    Args:
+        node: The argument of a ``vars`` call.
+
+    Returns:
+        True when ``__name__`` or ``sys.modules`` appears anywhere in it.
+    """
+    return any(
+        (isinstance(part, ast.Name) and part.id == MODULE_NAME_VARIABLE)
+        or (isinstance(part, ast.Attribute) and part.attr == MODULES_ATTRIBUTE)
+        for part in ast.walk(node)
+    )
+
+
+def mentions_module_table(tree: ast.Module) -> bool:
+    """Tell whether a module touches ``sys.modules``, where a package can replace itself.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True when any attribute named ``modules`` appears in it.
+    """
+    return any(
+        isinstance(node, ast.Attribute) and node.attr == MODULES_ATTRIBUTE
+        for node in ast.walk(tree)
+    )
+
+
+def _writes_namespace(tree: ast.Module) -> bool:
+    """Tell whether a call can bind module names that cannot be read from the source.
+
+    ``globals()``, ``exec`` and ``vars()`` without arguments reach the module namespace;
+    ``vars(obj)`` on another object does not, unless ``obj`` names the module itself. A
+    module object kept in another variable is not followed.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True when such a call exists anywhere in the module.
+    """
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if node.func.id in NAMESPACE_WRITERS:
+            return True
+        if node.func.id == VARS_NAME and (not node.args or _reaches_the_module(node.args[0])):
+            return True
+    return False
+
+
+def _namespace_unreadable(tree: ast.Module) -> bool:
+    """Tell whether the module can bind names nobody can read from its source.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True for a star import inside a block or a call that writes the module namespace.
+    """
+    top = {id(node) for node in tree.body}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and id(node) not in top
+            and any(alias.name == STAR for alias in node.names)
+        ):
+            return True
+    return _writes_namespace(tree)
+
+
+def _sibling_imports(
+    tree: ast.Module, statements: Sequence[ast.Import | ast.ImportFrom], names: Collection[str]
+) -> Counter[str]:
+    """Count, per name, the other module-level ``import name.sub`` statements.
+
+    ``import pkg.sub`` binds the same package object that ``import pkg`` binds, so it keeps
+    the name alive when the plain import moves away.
+
+    Args:
+        tree: Parsed module.
+        statements: The statements being moved; they are not siblings of themselves.
+        names: Names the moved statements bind.
+
+    Returns:
+        How many such statements bind each name; a renamed one (``as``) does not count.
+    """
+    moved = {id(node) for node in statements}
+    found: Counter[str] = Counter()
+    for node in tree.body:
+        if id(node) in moved or not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            root, dot, _ = alias.name.partition(".")
+            if dot and alias.asname is None and root in names:
+                found[root] += 1
+    return found
+
+
+def _check_names(
+    ctx: _Context, statements: Sequence[ast.Import | ast.ImportFrom], names: Collection[str]
+) -> RewriteRefusal | None:
     """Refuse a move whose names are bound elsewhere or exported.
+
+    A name may also be bound by sibling ``import name.sub`` statements, and a module is
+    only uncertain when it can really write its namespace.
 
     Args:
         ctx: The module being rewritten.
+        statements: The located statements being moved.
         names: Names the moved statements bind.
 
     Returns:
         Why the move is unsafe, or None.
     """
+    moved = Counter(name for node in statements for name in _bound_names([node]))
+    siblings = _sibling_imports(ctx.tree, statements, names)
+    unreadable = _namespace_unreadable(ctx.tree)
     for name in names:
         binding = name_binding(ctx.tree, name)
-        if binding.sites != 1 or binding.in_block or binding.uncertain:
+        if binding.in_block or (binding.uncertain and unreadable):
+            return RewriteRefusal.NAME_REUSED
+        if moved[name] != 1 or binding.sites != 1 + siblings[name]:
             return RewriteRefusal.NAME_REUSED
     if _exported(ctx.tree, names):
         return RewriteRefusal.EXPORTED
@@ -516,22 +680,77 @@ class _ReadScanner(ast.NodeVisitor):
             self.visit(node.value)
 
 
+class _AttributeScanner(_ReadScanner):
+    """Find the attributes read at import time through some names, with their nodes.
+
+    Attributes:
+        attributes: Every ``name.attr`` load that runs while the module is imported.
+    """
+
+    def __init__(self, names: Collection[str], *, postponed: bool) -> None:
+        """Start a scan at module level.
+
+        Args:
+            names: The names to track.
+            postponed: Whether the module postpones annotations.
+        """
+        super().__init__(names, postponed=postponed)
+        self.attributes: list[ast.Attribute] = []
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        """Record ``name.attr`` loads; anything else is scanned like any read.
+
+        Args:
+            node: An attribute access.
+        """
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in self.names
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.value.ctx, ast.Load)
+        ):
+            if self._in_function:
+                self.reads.in_function = True
+            else:
+                self.attributes.append(node)
+                self.reads.import_names.add(node.attr)
+            return
+        super().visit_Attribute(node)
+
+
 # pylint: enable=invalid-name
 
 
-def _scan_reads(ctx: _Context, names: Collection[str]) -> _Reads:
+def _scan_reads(ctx: _Context, names: Collection[str], *, postpone: bool = False) -> _Reads:
     """Classify every read of the names in a module.
 
     Args:
         ctx: The module being rewritten.
         names: Names the moved statements bind.
+        postpone: Whether the move adds ``from __future__ import annotations``, so annotations
+            do not run.
 
     Returns:
         Where the module reads them.
     """
-    scanner = _ReadScanner(names, postponed=ctx.postponed)
+    scanner = _ReadScanner(names, postponed=ctx.postponed or postpone)
     scanner.visit(ctx.tree)
     return scanner.reads
+
+
+def import_time_attributes(tree: ast.Module, names: Collection[str]) -> frozenset[str]:
+    """List the attributes a module reads at import time through some names.
+
+    Args:
+        tree: Parsed module.
+        names: Names bound to a package, e.g. the ones ``import pkg`` binds.
+
+    Returns:
+        The attribute names (``pkg.X`` gives ``X``) read while the module is imported.
+    """
+    scanner = _AttributeScanner(names, postponed=postpones_annotations(tree))
+    scanner.visit(tree)
+    return frozenset(node.attr for node in scanner.attributes)
 
 
 def _reads_in_body(
@@ -613,19 +832,22 @@ def _runs_at_import(
     return False
 
 
-def _rebinds(function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection[str]) -> bool:
-    """Tell whether a function binds, deletes or declares any of the names.
+def _rebinds(scope: ast.AST, names: Collection[str], ignored: Collection[int] = ()) -> bool:
+    """Tell whether a scope binds, deletes or declares any of the names.
 
     A new local import would be overwritten by (or conflict with) such a binding.
 
     Args:
-        function: A function definition.
+        scope: A function, class or module.
         names: Names the moved import binds.
+        ignored: ``id`` of the nodes that do not count.
 
     Returns:
-        True when the function reuses one of the names.
+        True when the scope reuses one of the names.
     """
-    for node in ast.walk(function):
+    for node in ast.walk(scope):
+        if id(node) in ignored:
+            continue
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             hit = node.id in names
         elif isinstance(node, ast.arg):
@@ -645,6 +867,76 @@ def _rebinds(function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection
         if hit:
             return True
     return False
+
+
+def _is_plain_alias(alias: ast.alias, names: Collection[str]) -> bool:
+    """Tell whether an import alias binds one of the names without renaming it.
+
+    Args:
+        alias: An alias of an ``import`` statement.
+        names: Names of interest.
+
+    Returns:
+        True for ``import name`` or ``import name.sub`` without ``as``.
+    """
+    return alias.asname is None and alias.name.split(".")[0] in names
+
+
+def _own_imports(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection[str]
+) -> list[ast.Import]:
+    """List the plain imports of the names written in the function itself.
+
+    Args:
+        function: A function definition.
+        names: Names of interest.
+
+    Returns:
+        The statements, nested functions, classes and lambdas apart.
+    """
+    found: list[ast.Import] = []
+    stack: list[ast.AST] = list(function.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (*FUNCTIONS, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(node, ast.Import) and any(_is_plain_alias(a, names) for a in node.names):
+            found.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _imports_locally(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection[str]
+) -> bool:
+    """Tell whether a function imports every name it reads before it reads it.
+
+    Such a function does not depend on the module-level import, so the move leaves it alone.
+
+    Args:
+        function: A function definition.
+        names: Names the moved import binds.
+
+    Returns:
+        True when every read of a name comes after the function's own plain import of it
+        and the function binds the names in no other way.
+    """
+    firsts: dict[str, tuple[int, int]] = {}
+    imports = _own_imports(function, names)
+    for node in imports:
+        end = (node.end_lineno or node.lineno, node.end_col_offset or 0)
+        for alias in node.names:
+            if _is_plain_alias(alias, names):
+                root = alias.name.split(".")[0]
+                firsts[root] = min(firsts.get(root, end), end)
+    ignored = {id(part) for node in imports for part in (node, *node.names)}
+    if not firsts or _rebinds(function, names, ignored):
+        return False
+    return all(
+        node.id in firsts and (node.lineno, node.col_offset) >= firsts[node.id]
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name) and node.id in names and isinstance(node.ctx, ast.Load)
+    )
 
 
 def _is_docstring(node: ast.stmt) -> bool:
@@ -698,34 +990,39 @@ def _indented(indent: str, line: str) -> str:
     return indent + line if line.strip() else line
 
 
-def _plan_lazy(
-    ctx: _Context, statements: Sequence[ast.Import | ast.ImportFrom]
+def _reader_edits(
+    ctx: _Context,
+    statements: Sequence[ast.Import | ast.ImportFrom],
+    names: Collection[str],
+    *,
+    loaded: set[str],
+    effectless: bool = False,
 ) -> list[_Edit] | RewriteRefusal:
-    """Plan moving some imports into every outermost function that reads their names.
+    """Plan inserting the statements into every function that needs them.
+
+    A function that already imports the names itself is left alone.
 
     Args:
         ctx: The module being rewritten.
         statements: The located import statements.
+        names: Names the statements bind.
+        loaded: Names and attributes loaded while the module is imported.
+        effectless: Whether running the import later changes nothing, so a function that
+            may run while the module loads can still receive it.
 
     Returns:
-        The edits, or why the move is unsafe.
+        The insertions, or why the move is unsafe.
     """
-    names = _bound_names(statements)
-    refusal = _check_names(ctx, names)
-    if refusal is not None:
-        return refusal
-    reads = _scan_reads(ctx, names)
-    if reads.at_import or reads.evaluated_annotation:
-        return RewriteRefusal.READ_AT_IMPORT
     readers = _outermost_readers(ctx.tree, names)
     if not readers:
         return RewriteRefusal.NO_READER
-    if any(_rebinds(reader, names) for reader in readers):
+    needy = [reader for reader in readers if not _imports_locally(reader, names)]
+    if any(_rebinds(reader, names) for reader in needy):
         return RewriteRefusal.NAME_REUSED
-    if _runs_at_import(ctx.tree, readers, reads.import_names):
+    if not effectless and _runs_at_import(ctx.tree, needy, loaded):
         return RewriteRefusal.READ_AT_IMPORT
     edits: list[_Edit] = []
-    for reader in readers:
+    for reader in needy:
         anchor = _anchor(ctx, reader)
         if isinstance(anchor, RewriteRefusal):
             return anchor
@@ -733,8 +1030,57 @@ def _plan_lazy(
         for node in statements:
             moved = tuple(_indented(indent, line) for line in _statement_lines(ctx, node))
             edits.append(_Edit(index, index, moved))
-    edits += [_Edit(node.lineno - 1, node.end_lineno or node.lineno, ()) for node in statements]
     return edits
+
+
+def _is_effectless(statements: Sequence[ast.Import | ast.ImportFrom], move: Move) -> bool:
+    """Tell whether delaying the statements cannot change what importing does.
+
+    Args:
+        statements: The located import statements.
+        move: The move; it says whether the imported module is an ancestor package.
+
+    Returns:
+        True for an ancestor package imported by single-name ``import name`` statements only.
+    """
+    return move.already_loaded and all(
+        isinstance(node, ast.Import) and len(node.names) == 1 and "." not in node.names[0].name
+        for node in statements
+    )
+
+
+def _plan_lazy(
+    ctx: _Context,
+    statements: Sequence[ast.Import | ast.ImportFrom],
+    *,
+    postpone: bool = False,
+    effectless: bool = False,
+) -> list[_Edit] | RewriteRefusal:
+    """Plan moving some imports into every outermost function that reads their names.
+
+    Args:
+        ctx: The module being rewritten.
+        statements: The located import statements.
+        postpone: Whether the move adds ``from __future__ import annotations``.
+        effectless: Whether running the imports later changes nothing.
+
+    Returns:
+        The edits, or why the move is unsafe.
+    """
+    names = _bound_names(statements)
+    refusal = _check_names(ctx, statements, names)
+    if refusal is not None:
+        return refusal
+    reads = _scan_reads(ctx, names, postpone=postpone)
+    if reads.at_import or reads.evaluated_annotation:
+        return RewriteRefusal.READ_AT_IMPORT
+    inserted = _reader_edits(
+        ctx, statements, names, loaded=reads.import_names, effectless=effectless
+    )
+    if isinstance(inserted, RewriteRefusal):
+        return inserted
+    removals = [_Edit(node.lineno - 1, node.end_lineno or node.lineno, ()) for node in statements]
+    return inserted + removals
 
 
 def _typing_guard_available(ctx: _Context, before_line: int) -> bool:
@@ -761,22 +1107,26 @@ def _typing_guard_available(ctx: _Context, before_line: int) -> bool:
 
 
 def _plan_type_checking(
-    ctx: _Context, statements: Sequence[ast.Import | ast.ImportFrom]
+    ctx: _Context,
+    statements: Sequence[ast.Import | ast.ImportFrom],
+    *,
+    postpone: bool = False,
 ) -> list[_Edit] | RewriteRefusal:
     """Plan moving some imports under ``if TYPE_CHECKING:`` where they are.
 
     Args:
         ctx: The module being rewritten.
         statements: The located import statements.
+        postpone: Whether the move adds ``from __future__ import annotations``.
 
     Returns:
         The edits, or why the move is unsafe.
     """
     names = _bound_names(statements)
-    refusal = _check_names(ctx, names)
+    refusal = _check_names(ctx, statements, names)
     if refusal is not None:
         return refusal
-    reads = _scan_reads(ctx, names)
+    reads = _scan_reads(ctx, names, postpone=postpone)
     if reads.evaluated_annotation:
         return RewriteRefusal.ANNOTATIONS_EVALUATED
     if reads.at_import or reads.in_function:
@@ -794,6 +1144,208 @@ def _plan_type_checking(
         edits.append(_Edit(node.lineno - 1, node.end_lineno or node.lineno, tuple(block)))
     ctx.typing_import_added = ctx.typing_import_added or add_import
     return edits
+
+
+def _reads_annotations_at_run_time(tree: ast.Module) -> bool:
+    """Tell whether a module may use its annotations while the program runs.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True when it imports a library known to read annotations (pydantic, typer…) or
+        mentions ``get_type_hints``, ``singledispatch`` or ``__annotations__``.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            if any(a.name.split(".")[0] in RUNTIME_ANNOTATION_PACKAGES for a in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            package = (node.module or "").split(".")[0]
+            if node.level == 0 and package in RUNTIME_ANNOTATION_PACKAGES:
+                return True
+            if any(alias.name in RUNTIME_ANNOTATION_NAMES for alias in node.names):
+                return True
+        elif RUNTIME_ANNOTATION_NAMES & {getattr(node, "id", None), getattr(node, "attr", None)}:
+            return True
+    return False
+
+
+def _future_edit(ctx: _Context) -> _Edit | None:
+    """Plan inserting ``from __future__ import annotations`` before the first statement.
+
+    Args:
+        ctx: The module being rewritten.
+
+    Returns:
+        The insertion, or None when the first statement shares a line with the docstring
+        (a line above it would stop the docstring from being one).
+    """
+    body = ctx.tree.body
+    docstring = body[0] if _is_docstring(body[0]) else None
+    rest = body[1:] if docstring is not None else body
+    if not rest:
+        return None
+    first = rest[0]
+    line = min([first.lineno, *(d.lineno for d in getattr(first, "decorator_list", ()))])
+    if docstring is not None and line <= (docstring.end_lineno or docstring.lineno):
+        return None
+    return _Edit(line - 1, line - 1, (FUTURE_IMPORT + ctx.newline,))
+
+
+def _plan_move(ctx: _Context, move: Move, *, future_ok: bool) -> list[_Edit] | RewriteRefusal:
+    """Plan one move, locating its statements and choosing the planner.
+
+    Args:
+        ctx: The module being rewritten.
+        move: The move.
+        future_ok: Whether ``from __future__ import annotations`` can be inserted.
+
+    Returns:
+        The edits, or why the move is unsafe.
+    """
+    statements = _locate(ctx, move.lines)
+    if isinstance(statements, RewriteRefusal):
+        return statements
+    postpone = move.postpone and not ctx.postponed
+    if postpone and not future_ok:
+        return RewriteRefusal.UNREADABLE
+    if postpone and _reads_annotations_at_run_time(ctx.tree):
+        return RewriteRefusal.RUNTIME_ANNOTATIONS
+    if move.kind is MoveKind.LAZY:
+        return _plan_lazy(
+            ctx, statements, postpone=postpone, effectless=_is_effectless(statements, move)
+        )
+    if move.kind is MoveKind.TYPE_CHECKING:
+        return _plan_type_checking(ctx, statements, postpone=postpone)
+    return _plan_bypass(
+        ctx, statements, dict(move.definers), effectless=_is_effectless(statements, move)
+    )
+
+
+def _in_use(tree: ast.Module, name: str) -> bool:
+    """Tell whether a module binds or loads a bare name anywhere.
+
+    Args:
+        tree: Parsed module.
+        name: The name.
+
+    Returns:
+        True when adding a module-level import of that name could capture or shadow a use.
+    """
+    return _rebinds(tree, {name}) or any(
+        isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(tree)
+    )
+
+
+def _replace_spans(
+    ctx: _Context, spans: Sequence[tuple[ast.expr, str]]
+) -> list[_Edit] | RewriteRefusal:
+    """Plan replacing some single-line expressions by new text.
+
+    Args:
+        ctx: The module being rewritten.
+        spans: ``(expression, new text)`` pairs.
+
+    Returns:
+        One line edit per touched line, or ``UNREADABLE`` when an expression spans lines.
+    """
+    by_line: dict[int, list[tuple[int, int, str]]] = {}
+    for node, text in spans:
+        if node.end_lineno != node.lineno or node.end_col_offset is None:
+            return RewriteRefusal.UNREADABLE
+        by_line.setdefault(node.lineno, []).append((node.col_offset, node.end_col_offset, text))
+    edits = []
+    for line, found in by_line.items():
+        data = ctx.text_lines[line - 1].encode()
+        for start, end, text in sorted(found, reverse=True):
+            data = data[:start] + text.encode() + data[end:]
+        edits.append(_Edit(line - 1, line, (data.decode(),)))
+    return edits
+
+
+def _definer_imports(ctx: _Context, pairs: Mapping[str, str]) -> tuple[str, ...]:
+    """Write the direct imports that replace reads through a package.
+
+    Args:
+        ctx: The module being rewritten.
+        pairs: Attribute name to the module that defines it.
+
+    Returns:
+        One ``from module import a, b`` line per defining module, in module order.
+    """
+    by_module: dict[str, list[str]] = {}
+    for name, module in pairs.items():
+        by_module.setdefault(module, []).append(name)
+    return tuple(
+        f"from {module} import {', '.join(sorted(found))}{ctx.newline}"
+        for module, found in sorted(by_module.items())
+    )
+
+
+def _plan_bypass(
+    ctx: _Context,
+    statements: Sequence[ast.Import | ast.ImportFrom],
+    definers: Mapping[str, str],
+    *,
+    effectless: bool = False,
+) -> list[_Edit] | RewriteRefusal:
+    """Plan replacing ``pkg.X`` reads at import time by direct imports of ``X``.
+
+    Reads inside functions keep ``pkg``: the package import moves into those functions
+    like a lazy import.
+
+    Args:
+        ctx: The module being rewritten.
+        statements: The located ``import pkg`` statements.
+        definers: Attribute name to the module that defines it, for every attribute the
+            caller proved stable.
+        effectless: Whether running the ``import pkg`` statements later changes nothing.
+
+    Returns:
+        The edits, or why the rewrite is unsafe.
+    """
+    plain = all(
+        isinstance(node, ast.Import) and len(node.names) == 1 and "." not in node.names[0].name
+        for node in statements
+    )
+    if not plain:
+        return RewriteRefusal.UNREADABLE
+    names = _bound_names(statements)
+    refusal = _check_names(ctx, statements, names)
+    if refusal is not None:
+        return refusal
+    scanner = _AttributeScanner(names, postponed=ctx.postponed)
+    scanner.visit(ctx.tree)
+    reads = scanner.reads
+    if reads.at_import or reads.evaluated_annotation:
+        return RewriteRefusal.READ_AT_IMPORT
+    if reads.in_annotation:
+        return RewriteRefusal.UNREADABLE
+    wanted = sorted({node.attr for node in scanner.attributes})
+    if not wanted and not reads.in_function:
+        return RewriteRefusal.NO_READER
+    if not set(wanted) <= set(definers):
+        return RewriteRefusal.MUTABLE_ATTRIBUTE
+    if any(_in_use(ctx.tree, attribute) for attribute in wanted):
+        return RewriteRefusal.NAME_REUSED
+    spans = _replace_spans(ctx, [(node, node.attr) for node in scanner.attributes])
+    if isinstance(spans, RewriteRefusal):
+        return spans
+    inserted: list[_Edit] = []
+    if reads.in_function:
+        found = _reader_edits(
+            ctx, statements, names, loaded=reads.import_names, effectless=effectless
+        )
+        if isinstance(found, RewriteRefusal):
+            return found
+        inserted = found
+    imports = _definer_imports(ctx, {attribute: definers[attribute] for attribute in wanted})
+    first, *rest = statements
+    replaced = [_Edit(first.lineno - 1, first.end_lineno or first.lineno, imports)]
+    replaced += [_Edit(node.lineno - 1, node.end_lineno or node.lineno, ()) for node in rest]
+    return spans + inserted + replaced
 
 
 def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
@@ -814,30 +1366,36 @@ def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
         return Rewritten(source, (RewriteRefusal.UNREADABLE,) * len(moves))
     text_lines = _split_lines(source)
     ctx = _Context(tree, text_lines, _newline_of(text_lines), postpones_annotations(tree))
-    outcomes: dict[tuple[MoveKind, tuple[int, ...]], RewriteRefusal | None] = {}
+    future = _future_edit(ctx) if any(move.postpone for move in moves) else None
+    outcomes: dict[Move, RewriteRefusal | None] = {}
     claimed: set[int] = set()
+    touched: set[int] = set()
     edits: list[_Edit] = []
-    keys = [(move.kind, move.lines) for move in moves]
-    for key in keys:
-        if key in outcomes:
+    postponing = False
+    for move in moves:
+        if move in outcomes:
             continue
-        kind, lines = key
-        if claimed & set(lines):
-            outcomes[key] = RewriteRefusal.MULTIPLE_STATEMENTS
+        if claimed & set(move.lines):
+            outcomes[move] = RewriteRefusal.MULTIPLE_STATEMENTS
             continue
-        statements = _locate(ctx, lines)
-        planner = _plan_lazy if kind is MoveKind.LAZY else _plan_type_checking
-        planned = (
-            planner(ctx, statements) if not isinstance(statements, RewriteRefusal) else statements
-        )
+        planned = _plan_move(ctx, move, future_ok=future is not None)
         if isinstance(planned, RewriteRefusal):
-            outcomes[key] = planned
+            outcomes[move] = planned
             continue
-        outcomes[key] = None
+        spans = {index for edit in planned for index in range(edit.start, edit.stop)}
+        if move.kind is MoveKind.BYPASS and spans & touched:
+            outcomes[move] = RewriteRefusal.MULTIPLE_STATEMENTS
+            continue
+        touched |= spans
+        outcomes[move] = None
         edits.extend(planned)
-        claimed.update(lines)
+        claimed.update(move.lines)
+        postponing |= move.postpone and not ctx.postponed
+    if postponing and future is not None:
+        edits.insert(0, future)
+    refusals = tuple(outcomes[move] for move in moves)
     if not edits:
-        return Rewritten(source, tuple(outcomes[key] for key in keys))
+        return Rewritten(source, refusals)
     new = _apply(source, edits)
     try:
         ast.parse(new)
@@ -845,8 +1403,7 @@ def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
         return Rewritten(
             source,
             tuple(
-                RewriteRefusal.UNREADABLE if outcomes[key] is None else outcomes[key]
-                for key in keys
+                RewriteRefusal.UNREADABLE if outcome is None else outcome for outcome in refusals
             ),
         )
-    return Rewritten(new, tuple(outcomes[key] for key in keys))
+    return Rewritten(new, refusals)

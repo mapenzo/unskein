@@ -1,6 +1,7 @@
 """Choose the refactoring step that removes one dependency, from static evidence."""
 
 from collections.abc import Collection, Mapping
+from dataclasses import replace
 from enum import StrEnum
 from types import MappingProxyType
 
@@ -15,9 +16,14 @@ class StepKind(StrEnum):
     Attributes:
         TYPE_CHECKING: The names are only read in annotations that are not evaluated at
             import (postponed or quoted); import them under ``if TYPE_CHECKING:``.
+        POSTPONE_ANNOTATIONS: The names are read in annotations that Python evaluates when the
+            definition runs (and maybe inside functions); adding
+            ``from __future__ import annotations`` postpones the annotations, so the import
+            can then go under ``TYPE_CHECKING`` or into the functions.
         BYPASS_FACADE: The dependency goes to a package's ``__init__.py``; import from the
             module that defines the name instead (not offered when the facade defines every
-            imported name itself).
+            imported name itself). A whole-module import that is only read inside functions
+            gets LAZY instead.
         LAZY: The names are only read inside functions (or in annotations too, when the
             module postpones them); import them there.
         MOVE_SYMBOL: One or two symbols are imported; move them out of the cycle.
@@ -27,6 +33,7 @@ class StepKind(StrEnum):
     """
 
     TYPE_CHECKING = "type_checking"
+    POSTPONE_ANNOTATIONS = "postpone_annotations"
     BYPASS_FACADE = "bypass_facade"
     LAZY = "lazy"
     MOVE_SYMBOL = "move_symbol"
@@ -51,6 +58,7 @@ STEP_COSTS: Mapping[StepKind, int] = MappingProxyType(
     {
         StepKind.TYPE_CHECKING: 1,
         StepKind.BYPASS_FACADE: 2,
+        StepKind.POSTPONE_ANNOTATIONS: 2,
         StepKind.LAZY: 3,
         StepKind.MOVE_SYMBOL: 4,
         StepKind.EXTRACT_SHARED: 6,
@@ -105,18 +113,41 @@ def _lazy_applies(evidence: ImportEvidence) -> bool:
     }
 
 
+def _postpone_applies(evidence: ImportEvidence) -> bool:
+    """Tell whether postponing the module's annotations would let an import move.
+
+    Args:
+        evidence: Where the names are read and whether annotations are postponed.
+
+    Returns:
+        True when some read is an annotation Python evaluates now and, with annotations
+        postponed, every read would allow the type-only or the lazy step.
+    """
+    if evidence.postponed_annotations or UseContext.ANNOTATION not in evidence.contexts:
+        return False
+    postponed = replace(evidence, postponed_annotations=True)
+    return _deferred_annotations(postponed) or _lazy_applies(postponed)
+
+
 def _bypass_applies(evidence: ImportEvidence, own_names: Collection[str]) -> bool:
     """Tell whether the imported names can come from somewhere other than the facade.
+
+    A whole-module import (no symbols) is bypassed only when moving it into the functions
+    that read it is not enough: replacing every ``pkg.X`` by a direct import cannot be
+    proven when ``X`` is state that something reassigns, and the lazy step removes the same
+    import-time dependency with one edit.
 
     Args:
         evidence: What the dependency imports by name.
         own_names: Names the facade defines itself (not re-exports nor submodules).
 
     Returns:
-        False only when names are imported and the facade defines every one of them;
-        a whole-module import (no symbols) can always be bypassed.
+        False when names are imported and the facade defines every one of them, or when a
+        whole-module import is only read after import time; True otherwise.
     """
-    return not evidence.symbols or not set(evidence.symbols) <= set(own_names)
+    if not evidence.symbols:
+        return not _lazy_applies(evidence)
+    return not set(evidence.symbols) <= set(own_names)
 
 
 def _applicable_steps(
@@ -145,6 +176,8 @@ def _applicable_steps(
         steps.add(StepKind.TYPE_CHECKING)
     if _lazy_applies(evidence):
         steps.add(StepKind.LAZY)
+    if _postpone_applies(evidence):
+        steps.add(StepKind.POSTPONE_ANNOTATIONS)
     if target in facades and _bypass_applies(evidence, facades[target]):
         steps.add(StepKind.BYPASS_FACADE)
     if 1 <= len(evidence.symbols) <= MAX_MOVABLE_SYMBOLS:

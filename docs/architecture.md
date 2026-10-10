@@ -1213,15 +1213,31 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   vez (`rewrite_source`), porque aplicarlos uno a uno desplazaría los números de línea del
   resto; (3) el resultado se vuelve a parsear y se descarta si no compila (`UNREADABLE`);
   (4) `_reanalyze` repite el análisis sobre la copia; un corte es `PROBADO` si su arista ya
-  no está en el grafo y `ROTO` (`EDGE_REMAINS`) si sigue. Solo se reescriben `LAZY` y
-  `TYPE_CHECKING`; `MOVE_SYMBOL`, `EXTRACT_SHARED` y `PACKAGE_STRUCTURE` son `NOT_PROVEN`
-  `NEEDS_DESIGN`.
-- **Por qué `BYPASS_FACADE` no se reescribe.** Las aristas ya apuntan al módulo que define
-  cada nombre, así que un corte `BYPASS_FACADE` con símbolos casi no existe: en litellm los 143
-  son `import litellm` sin símbolos. Sustituir `litellm.X` por un import directo cambia el
-  comportamiento cuando algo reasigna el atributo en ejecución (`litellm.cache = ...`), así
-  que quedan `NOT_PROVEN` `WHOLE_MODULE_IMPORT` (o `NO_DEFINER` si la evidencia nombra
-  símbolos que ningún módulo define).
+  no está en el grafo y `ROTO` (`EDGE_REMAINS`) si sigue. Se reescriben `LAZY`, `TYPE_CHECKING`,
+  `POSTPONE_ANNOTATIONS` (coste 2) y `BYPASS_FACADE` por símbolo; `MOVE_SYMBOL`,
+  `EXTRACT_SHARED` y `PACKAGE_STRUCTURE` son `NOT_PROVEN` `NEEDS_DESIGN`, o el olor de diseño
+  que muestran (`BASE_KNOWS_SUBCLASS`, `CONFIG_SNAPSHOT`, de `graph/smells.py`).
+- **`BYPASS_FACADE` por símbolo.** Las aristas ya apuntan al módulo que define cada nombre, así
+  que un corte `BYPASS_FACADE` con símbolos casi no existe: en litellm los 143 son `import
+  litellm` sin símbolos. Reescribir cada `litellm.X` por un import directo cambia el
+  comportamiento cuando `X` es estado que alguien reasigna (`litellm.api_key = ...`), así que
+  esos nombres nunca se reescriben. Primero el plan prefiere `LAZY` a un desvío cuando el
+  `import pkg` solo se lee dentro de funciones (`_bypass_applies` devuelve falso si `_lazy_applies`
+  se cumple). Cuando hay lecturas al importar, `ProjectFacts.definers_read` pregunta a
+  `DefinerIndex.definer(fachada, nombre)` (`graph/definers.py`), que solo responde si el nombre
+  no se reasigna en el proyecto (`obj.n = ...`, `del obj.n`, `setattr`/`delattr` con cadena
+  literal), no es un submódulo de la fachada, no pasa por una reexportación con guarda, cada
+  salto lo liga una sola vez con un import plano y el origen lo define una vez como `def` o
+  `class` de nivel superior. Si algún nombre leído al importar no cumple, el corte queda
+  `NOT_PROVEN` `MUTABLE_ATTRIBUTE`; si cumplen todos, `_plan_bypass` reescribe esas lecturas a
+  `from <definidor> import X`, y las lecturas dentro de funciones conservan `import pkg`,
+  movido a ellas. Límite declarado: código fuera del proyecto que reasigne `pkg.X`.
+- **Un import de un paquete ancestro no tiene efecto que retrasar.** `import pkg` dentro de
+  `pkg.sub` busca en `sys.modules` un paquete que Python ya cargó (el padre se importa antes
+  que el hijo), así que `Move.already_loaded` omite la comprobación `_runs_at_import` (clases
+  construidas al importar cuyos métodos leen el nombre) solo para sentencias `import nombre`
+  de un único nombre sin puntos. La sentencia decide, no el corte: `import litellm` también
+  produce cortes hacia `litellm.main` cuando el módulo lee `litellm.main.x`.
 - **Qué rechaza el reescritor** (`RewriteRefusal`, mismos valores que `ProofReason`): el import
   no está a nivel de módulo (`NESTED_IMPORT`, p. ej. dentro de `try`); comparte línea con otra
   sentencia o termina en `;` (`MULTIPLE_STATEMENTS`); es `import *` (`STAR_IMPORT`); el nombre
@@ -1232,13 +1248,31 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   (`NAME_REUSED`); está en `__all__` (`EXPORTED`); la primera sentencia de la función comparte
   línea con el `def` (`INLINE_BODY`). `TYPE_CHECKING` rechaza además anotaciones evaluadas
   (`ANNOTATIONS_EVALUATED`), lecturas en ejecución (`READ_AT_RUNTIME`) y un `TYPE_CHECKING`
-  ligado a otra cosa. El texto se edita por posiciones de `ast` (nunca `ast.unparse`), así que
+  ligado a otra cosa. Posponer anotaciones rechaza módulos que importan bibliotecas que leen
+  anotaciones en ejecución o usan `get_type_hints`, `singledispatch` o `__annotations__`
+  (`RUNTIME_ANNOTATIONS`, constantes `RUNTIME_ANNOTATION_PACKAGES`/`_NAMES`), y el desvío
+  rechaza nombres leídos al importar que no son estables (`MUTABLE_ATTRIBUTE`). El texto se edita por posiciones de `ast` (nunca `ast.unparse`), así que
   comentarios, CRLF, BOM y la codificación declarada se conservan byte a byte salvo lo movido.
 - **`NameError` en Python 3.12/3.13.** `def f(x: B)` evalúa `B` al definir la función; mover
   su import bajo `if TYPE_CHECKING:` falla en 3.12 y 3.13 (3.14 evalúa las anotaciones de forma
   perezosa, PEP 649). Por eso `TYPE_CHECKING` solo se ofrece con `from __future__ import
   annotations` o anotaciones entre comillas (`UseContext.QUOTED`); antes se ofrecía siempre que
-  todos los usos fueran anotaciones.
+  todos los usos fueran anotaciones. `POSTPONE_ANNOTATIONS` cierra el hueco: añade ese import
+  (tras el docstring, el shebang y la cookie de codificación, antes de decoradores) y mueve
+  el import como `TYPE_CHECKING` o `LAZY`.
+- **Reglas de nombre del reescritor.** Un `import pkg.sub` de nivel de módulo ligado sin `as`
+  enlaza el mismo objeto que `import pkg`, así que no bloquea mover este último; una función
+  que ya hace su propio `import pkg` antes de leerlo se deja como está; y `vars(obj)` sobre
+  otro objeto no hace el módulo «incierto» (sí `globals()`, `exec`, `vars()` y
+  `vars(sys.modules[__name__])`). El filtro de estrellas de `parsers/usage.py` no cuenta como
+  lectura el nombre del paquete que un `from .sub import *` re-expone desde su propio
+  submódulo, salvo que el paquete cargue ese nombre desnudo. Límite declarado: un
+  `from P import *` seguido de la lectura de `P` fuera de ese módulo.
+- **Olores de diseño** (`graph/smells.py`, `ProjectFacts.smell`). Para un corte que no se puede
+  reescribir, `BASE_KNOWS_SUBCLASS` (la clase base del origen la hereda una clase que el origen
+  importa del destino) y `CONFIG_SNAPSHOT` (un ajuste asignado de forma plana en la fachada y
+  leído al importar). Sustituyen a `NEEDS_DESIGN`, `READ_AT_IMPORT`, `MUTABLE_ATTRIBUTE` y
+  `RUNTIME_ANNOTATIONS`, y el informe los agrupa en «Olores de diseño detectados».
 - **`--run`** (`probe.py`). Un subproceso `python -I -B` por módulo de las marañas, antes y
   después, con las raíces de importación de la copia en `sys.path` y un tiempo máximo de 60 s
   (`PROBE_TIMEOUT_SECONDS`). Una regresión es un módulo que se importaba antes y ya no; se

@@ -5,7 +5,9 @@ import pytest
 
 from unskein import prove as prove_module
 from unskein.graph.proof import ProofReason, ProofVerdict
+from unskein.graph.steps import StepKind
 from unskein.parsers.rewrite import Rewritten
+from unskein.proof_facts import ProjectFacts
 from unskein.prove import ProofUnavailable, ProveOptions, prove_plan
 from unskein.untangle import UntangleOptions, build_untangle_plan, prepare_untangle
 
@@ -19,9 +21,46 @@ LAZY_CYCLE = {
         "def show():\n    return VALUE\n"
     ),
 }
-WHOLE_MODULE = {
-    "pkg/__init__.py": "import pkg.a\n",
-    "pkg/a.py": "import pkg\n\n\ndef f():\n    return pkg.a\n",
+BYPASS_BY_SYMBOL = {
+    "app/__init__.py": "from .errors import Boom\nfrom .user import ERRORS\n",
+    "app/errors.py": "class Boom(Exception):\n    pass\n",
+    "app/user.py": "import app\n\nERRORS = (app.Boom,)\n\n\ndef use():\n    return app\n",
+}
+WHOLE_FACADE = {
+    "pkg/__init__.py": "from .a import run\n\nsetting = 1\n",
+    "pkg/a.py": (
+        "import pkg\n\n\ndef run():\n    return pkg.setting\n\n\ndef whole():\n    return pkg\n"
+    ),
+}
+
+POSTPONE_CYCLE = {
+    "app/__init__.py": "",
+    "app/a.py": "from app.b import B\n\n\ndef make() -> B:\n    return B()\n",
+    "app/b.py": (
+        "from app.a import make\n\n\nclass B:\n    pass\n\n\ndef again():\n    return make()\n"
+    ),
+}
+
+BASE_SMELL = {
+    "app/__init__.py": "",
+    "app/base.py": (
+        "from app.child import Child\n\n\nclass Base:\n    kinds = (Child,)\n\n\nX = 1\nY = 2\n"
+    ),
+    "app/child.py": (
+        "from app.base import Base, X, Y\n\n\nclass Child(Base):\n    values = (X, Y)\n"
+    ),
+}
+RUNTIME_BASE_SMELL = {
+    "app/__init__.py": "",
+    "app/base.py": (
+        "from pydantic import BaseModel\nfrom app.child import Child\n\n\n"
+        "class Base:\n    def make(self) -> Child:\n        return Child()\n"
+    ),
+    "app/child.py": "from app.base import Base\n\n\nclass Child(Base):\n    pass\n",
+}
+SNAPSHOT_SMELL = {
+    "app/__init__.py": "from .conf import Settings\n\nmax_tokens = 100\n",
+    "app/conf.py": "import app\n\n\nclass Settings:\n    limit = app.max_tokens\n",
 }
 
 
@@ -64,13 +103,6 @@ def test_a_cut_that_needs_design_is_not_proven(make_project: MakeProject) -> Non
     assert {(c.verdict, c.reason) for c in proof.cuts} == {
         (ProofVerdict.NOT_PROVEN, ProofReason.NEEDS_DESIGN)
     }
-
-
-def test_a_bypass_on_a_whole_module_import_is_not_proven(make_project: MakeProject) -> None:
-    plan, proof = prove(make_project(WHOLE_MODULE))
-    reasons = {c.reason for c in proof.cuts}
-    assert reasons <= {ProofReason.WHOLE_MODULE_IMPORT, ProofReason.NEEDS_DESIGN}
-    assert all(c.verdict is ProofVerdict.NOT_PROVEN for c in proof.cuts)
 
 
 def test_a_cut_the_rewriter_refuses_carries_its_reason(make_project: MakeProject) -> None:
@@ -127,7 +159,7 @@ def edited_copy(root: Path, tmp_path: Path) -> Path:
     copy_root = tmp_path / "copy"
     prove_module.copy_project(context, copy_root)
     cuts = [cut for tangle in plan.tangles for cut in tangle.cuts]
-    applied, _ = prove_module._apply_cuts(context, cuts, copy_root)
+    applied, _ = prove_module._apply_cuts(context, cuts, copy_root, facts=ProjectFacts(context))
     assert len(applied) == 1
     return copy_root
 
@@ -168,3 +200,87 @@ def test_a_copy_failure_is_reported_as_unavailable(
     monkeypatch.setattr(prove_module.shutil, "copy2", fail)
     with pytest.raises(ProofUnavailable):
         prove(make_project(LAZY_CYCLE))
+
+
+def test_a_whole_module_facade_import_read_in_functions_is_proven_lazy(
+    make_project: MakeProject,
+) -> None:
+    plan, proof = prove(make_project(WHOLE_FACADE))
+    [cut] = plan.tangles[0].cuts
+    assert cut.step is StepKind.LAZY
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [(ProofVerdict.PROVEN, None)]
+    assert proof.tangles_after == 0
+
+
+def test_an_evaluated_annotation_cut_is_proven_by_postponing_annotations(
+    make_project: MakeProject,
+) -> None:
+    plan, proof = prove(make_project(POSTPONE_CYCLE))
+    [cut] = plan.tangles[0].cuts
+    assert (cut.source, cut.target, cut.step) == ("app.a", "app.b", StepKind.POSTPONE_ANNOTATIONS)
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [(ProofVerdict.PROVEN, None)]
+    assert proof.tangles_after == 0
+
+
+def test_an_import_time_read_through_the_facade_is_proven_by_a_direct_import(
+    make_project: MakeProject,
+) -> None:
+    plan, proof = prove(make_project(BYPASS_BY_SYMBOL))
+    [cut] = plan.tangles[0].cuts
+    assert (cut.source, cut.target, cut.step) == ("app.user", "app", StepKind.BYPASS_FACADE)
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [(ProofVerdict.PROVEN, None)]
+    assert proof.tangles_after == 0
+
+
+def test_a_name_that_something_reassigns_is_not_bypassed(make_project: MakeProject) -> None:
+    files = dict(BYPASS_BY_SYMBOL) | {"app/other.py": "import app\n\napp.Boom = None\n"}
+    _, proof = prove(make_project(files))
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [
+        (ProofVerdict.NOT_PROVEN, ProofReason.MUTABLE_ATTRIBUTE)
+    ]
+
+
+def test_a_base_that_imports_its_subclass_is_named_instead_of_needs_design(
+    make_project: MakeProject,
+) -> None:
+    _, proof = prove(make_project(BASE_SMELL))
+    [cut] = proof.cuts
+    assert (cut.source, cut.target) == ("app.base", "app.child")
+    assert (cut.verdict, cut.reason) == (ProofVerdict.NOT_PROVEN, ProofReason.BASE_KNOWS_SUBCLASS)
+    assert cut.detail == "Base <- Child"
+
+
+def test_a_setting_copied_at_import_is_named_instead_of_needs_design(
+    make_project: MakeProject,
+) -> None:
+    _, proof = prove(make_project(SNAPSHOT_SMELL))
+    [cut] = proof.cuts
+    assert (cut.verdict, cut.reason) == (ProofVerdict.NOT_PROVEN, ProofReason.CONFIG_SNAPSHOT)
+    assert cut.detail == "max_tokens"
+
+
+def test_a_base_that_imports_its_subclass_is_named_even_when_postponing_is_unsafe(
+    make_project: MakeProject,
+) -> None:
+    _, proof = prove(make_project(RUNTIME_BASE_SMELL))
+    [cut] = proof.cuts
+    assert (cut.source, cut.target) == ("app.base", "app.child")
+    assert (cut.verdict, cut.reason) == (ProofVerdict.NOT_PROVEN, ProofReason.BASE_KNOWS_SUBCLASS)
+
+
+def test_an_ancestor_that_replaces_itself_in_sys_modules_is_not_moved_as_already_loaded(
+    make_project: MakeProject,
+) -> None:
+    files = {
+        "pkg/__init__.py": (
+            "import sys\nfrom .a import FILTER\n\nsys.modules[__name__] = object()\n"
+        ),
+        "pkg/a.py": (
+            "import pkg\n\n\nclass Filter:\n    def run(self):\n        return pkg\n\n\n"
+            "FILTER = Filter()\n"
+        ),
+    }
+    _, proof = prove(make_project(files))
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [
+        (ProofVerdict.NOT_PROVEN, ProofReason.READ_AT_IMPORT)
+    ]

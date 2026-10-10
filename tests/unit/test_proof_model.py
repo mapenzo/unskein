@@ -36,3 +36,7 @@ def test_reason_values_are_their_lowercase_names() -> None:
 def test_cut_proof_is_frozen() -> None:
     with pytest.raises(AttributeError):
         proof(ProofVerdict.PROVEN).verdict = ProofVerdict.BROKEN  # type: ignore[misc]
+
+
+def test_no_reason_is_left_without_a_producer_for_the_whole_module_bypass() -> None:
+    assert "whole_module_import" not in {reason.value for reason in ProofReason}

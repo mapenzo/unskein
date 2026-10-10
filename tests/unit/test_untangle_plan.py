@@ -34,6 +34,14 @@ TYPE_ONLY = {
         "class B: ...\nclass C: ...\nclass D: ...\n"
     ),
 }
+STAR_FACADE = {
+    "app/__init__.py": "from .a import *\n\nVALUE = 1\n",
+    "app/a.py": "import app\n\n\ndef f():\n    return app.VALUE\n\n\ndef g():\n    return app\n",
+}
+STAR_FACADE_READING_ITS_NAME = {
+    "app/__init__.py": "from .a import *\n\nVALUE = 1\nCOPY = app\n",
+    "app/a.py": STAR_FACADE["app/a.py"],
+}
 
 
 def plan_for(root: Path, *, all_edges: bool = False) -> UntanglePlan:
@@ -128,7 +136,7 @@ def test_report_truncates_cuts_beyond_the_limit(
 
 @pytest.mark.parametrize(
     ("header", "expected"),
-    [("", StepKind.MOVE_SYMBOL), ("from __future__ import annotations\n", StepKind.LAZY)],
+    [("", StepKind.POSTPONE_ANNOTATIONS), ("from __future__ import annotations\n", StepKind.LAZY)],
     ids=["signature_evaluated_at_import", "signature_postponed"],
 )
 def test_lazy_needs_postponed_annotations_when_a_signature_reads_the_name(
@@ -419,3 +427,19 @@ def test_plan_advises_type_checking_when_annotations_are_postponed(
     plan = plan_for(make_project(files))
     [tangle] = plan.tangles
     assert [cut.step for cut in tangle.cuts] == [StepKind.TYPE_CHECKING]
+
+
+def test_a_package_star_importing_its_module_does_not_read_its_own_name(
+    make_project: MakeProject,
+) -> None:
+    [tangle] = plan_for(make_project(STAR_FACADE)).tangles
+    [cut] = tangle.cuts
+    assert (cut.source, cut.target, cut.step) == ("app.a", "app", StepKind.LAZY)
+
+
+def test_a_package_that_reads_its_own_name_after_a_star_keeps_the_cut_unproven(
+    make_project: MakeProject,
+) -> None:
+    [tangle] = plan_for(make_project(STAR_FACADE_READING_ITS_NAME)).tangles
+    [cut] = tangle.cuts
+    assert (cut.source, cut.target, cut.step) == ("app.a", "app", StepKind.BYPASS_FACADE)

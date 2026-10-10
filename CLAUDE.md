@@ -119,6 +119,7 @@ src/unskein/
 ├── scan.py                # orquestación: prepare_scan + execute_scan
 ├── untangle.py            # orquestación de `unskein untangle` (prepare + build del plan)
 ├── prove.py               # `untangle --prove`: aplica los cortes a una copia y los comprueba
+├── proof_facts.py         # hechos del proyecto original para la prueba (definidores, olores), perezosos
 ├── probe.py               # `--run`: importa módulos en subprocesos aislados
 ├── entry_points.py        # puntos de entrada de pyproject.toml (scripts)
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
@@ -156,6 +157,8 @@ src/unskein/
 │   ├── steps.py             # pasos de refactor y sus costes (choose_step)
 │   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
 │   ├── proof.py             # veredictos de `untangle --prove` (CutProof, ProofResult)
+│   ├── definers.py          # módulo que define un nombre que una fachada reexporta, solo si es estable
+│   ├── smells.py            # olores de diseño con nombre detrás de un corte (BASE_KNOWS_SUBCLASS, CONFIG_SNAPSHOT)
 │   ├── packages.py          # resumen por paquetes: Ca/Ce entre paquetes y dependencias
 │   └── percentile.py        # percentil por rango más cercano (compartido)
 ├── ai/
@@ -216,9 +219,10 @@ para paquetes Python distribuibles).
 - **Snippets de código en las recomendaciones de IA quedan para más adelante**
   (sin versión asignada). Hoy la IA solo da resumen + problemas señalados, sin
   proponer código de solución.
-- **`untangle --prove` nunca toca el proyecto.** Aplica los cortes (solo `LAZY` y
-  `TYPE_CHECKING`; el resto queda `NOT_PROVEN` con motivo, y `BYPASS_FACADE` no se reescribe
-  porque `pkg.X` puede reasignarse en ejecución) a una copia temporal, la reanaliza y,
+- **`untangle --prove` nunca toca el proyecto.** Aplica los cortes (`LAZY`,
+  `TYPE_CHECKING`, `POSTPONE_ANNOTATIONS` y `BYPASS_FACADE` por símbolo, solo clases y
+  funciones que el paquete reexporta una vez y que nada reasigna; el resto queda `NOT_PROVEN`
+  con motivo o con el olor de diseño que muestra) a una copia temporal, la reanaliza y,
   con `--run`, importa los módulos de la maraña antes y después en subprocesos aislados
   (`python -I -B`). `--run` es lo único de unskein que ejecuta código del proyecto analizado.
   La prueba nunca cambia el código de salida.
