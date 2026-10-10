@@ -136,9 +136,10 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
     one finding per module imported with `from x import *` outside a package facade, with
     the explicit import to write for each statement when unskein can prove it safe, and
     the reason when it cannot.
-  - **API leak** (only with `--api-leaks`): code outside a package that imports what the
-    package keeps internal, or goes around a facade that already offers the name, with the
-    import to write instead when unskein can prove it safe.
+  - **API leak** (only with `--api-leaks`, see "API leaks and `--api-leaks`"): code outside
+    a package that imports what the package keeps internal, or goes around a facade that
+    already offers the name, with the import to write instead when unskein can prove it safe,
+    and the reason when it cannot.
   - **Cycle between distributions**: distributions that import each other; it says which
     edge to cut.
 
@@ -153,7 +154,8 @@ folder-based naming, `[analysis] source_roots` turns the detection off.
   with it only those whose names cannot be known, because the module was not parsed or
   computes its `__all__`; relative
   imports beyond the top package, files too large, unparseable or too slow to parse,
-  re-export cycles or chains too long). A warning never stops the analysis.
+  re-export cycles or chains too long; an `[api]` contract declared while `--api-leaks` is off).
+  A warning never stops the analysis.
 
 Imports through a package's `__init__.py` are followed to the module that
 defines the name, so a cycle hidden behind a facade still shows up. That includes
@@ -238,6 +240,65 @@ How to read and use it:
 - **Cost**: it rereads the modules involved. On a project of about 2,900 modules the scan
   took 15 to 20 % longer; with the option off it costs nothing.
 - **Limits**: names read through `eval`, `globals()` or a computed `getattr` are not seen.
+
+## API leaks and `--api-leaks`
+
+A package has a public side and an internal one. When code outside it — another
+top-level package, another distribution, a script or a plugin — imports the internal
+side, the owner cannot refactor without breaking it. unskein reports those imports as
+the **API leak** finding. It is off by default; it adds about 0.05 s (around 2 %) to a
+scan of a project of 2,900 modules, because it resolves the module every import wrote
+and proves each fix.
+
+```
+unskein scan . --no-ai --api-leaks
+```
+
+You can also set `api_leaks = true` under `[analysis]` in `.unskein.toml`
+(`--no-api-leaks` overrides it).
+
+What counts as internal, in this order:
+
+1. `[api]` in `.unskein.toml`. The longest matching prefix between `public` and
+   `internal` decides a module.
+2. Otherwise, a module with a `_private` segment in its name.
+3. Otherwise it is public. Importing it is still reported as *bypassed* when a package
+   above it already offers the same name (`from lib.core.logger import Logger` when
+   `from lib import Logger` works).
+
+```toml
+[api]
+public = ["app.internal.contracts"]   # an exception inside an internal prefix
+internal = ["app.internal"]
+```
+
+Imports inside the same top-level package are never leaks (use `[layers]` for those).
+A statement that already goes through the facade (`from lib import Logger`) is never
+reported, even though the graph points at the module that defines the name. A private
+*name* taken from a public module (`from lib.util import _helper`) is not a leak: the
+rule is about modules.
+
+The report has one entry per module with each statement underneath:
+
+```
+- `lib._private` (internal by naming convention; 2 consuming modules; 2 statements from app 2)
+  - `app/a.py:2`: no safe fix: nothing offers `SECRET`; the owner decides
+- `lib.core.logger` (bypassed: a package above it offers the name; 1 consuming module; 1 statement from app 1)
+  - `app/a.py:1`: `from lib import Logger as L`
+```
+
+A fix such as ``from lib import Logger as L`` is shown only when unskein can prove it safe:
+the facade is an ancestor package (importing it loads nothing the original did not),
+re-exports that exact object, imports it without a `try`, binds the name once and does not
+import your module when it loads. Otherwise the entry says why: *nothing offers the name*
+(the owner decides: declare it public in `[api]`, or stop depending on it), *only a package
+that is not an ancestor offers it*, *the facade imports this module when it loads*, *the
+facade imports it inside a `try`*, *the facade binds the name again*, or *it imports a
+module, not a name*. unskein never edits files: copy the line. A statement that imports
+several names is judged name by name: move the ones with a fix and leave the rest.
+
+With `api_leaks` off and an `[api]` table declared, the report warns "`[api]` contract not
+checked", so a contract nothing enforces does not go unnoticed.
 
 ## Untangling: `untangle`
 
@@ -350,6 +411,10 @@ A module belongs to the layer with the longest matching prefix; an import from a
 layer into a higher one is reported as a layer violation. Modules in no layer are not
 checked, and without `[layers]` there is no layer rule.
 
+To declare which modules are public API and which are internal, use `[api]` (see "API leaks
+and `--api-leaks`"): `public` and `internal` are lists of module prefixes and the longest
+matching prefix decides.
+
 ## AI interpretation
 
 The AI step is optional and goes through LiteLLM, so it works with a local
@@ -447,7 +512,8 @@ From 500 files, parsing runs in parallel with up to 8 processes (tune
 are skipped with a warning, and in parallel parsing a file that takes more
 than 30 s is skipped too. `--verbose` prints the duration and the peak memory
 of the run, measured locally and never sent anywhere. `--star-fixes` adds work
-(15 to 20 % on a project of 2,900 modules) and is off by default.
+(15 to 20 % on a project of 2,900 modules) and is off by default; `--api-leaks` adds about
+2 % (0.05 s) and is off by default too.
 
 ## Troubleshooting
 

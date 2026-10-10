@@ -948,6 +948,42 @@ la segunda revisión en `wildcard_scenarios.py`).
   todo); no se ven `eval` de nombres calculados ni `importlib.import_module` con un nombre no
   literal. Coste en litellm: unos 0,5 s (releer 20 importadores y 40 módulos con estrellas).
 
+### Regla 13: fugas de API (`graph/leaks.py`)
+
+**Opcional** (`OptionalRules.api_leaks`, `--api-leaks`, `[analysis] api_leaks`; apagada por
+defecto): suma unos 0,05 s sobre 0,37 s de resolución y análisis en litellm (≈ 2 % de un análisis
+completo, dentro del ruido entre ejecuciones). Apagada, `ImportEdge.written` no se rellena
+(`ParseResult.api_leaks` lo decide en `resolve_indirection`), `analyze` no llama a
+`summarize_leaks` y, si `[api]` declara algo, sale `API_CONTRACT_IGNORED`.
+
+Una fuga es un import de **fuera** (otro primer segmento, o otra distribución con nombre) a un
+módulo que el paquete mantiene interno, o que rodea una fachada que ya ofrece el nombre.
+
+- **Módulo escrito**: el análisis trabaja con aristas ya resueltas (`from lib import x` apunta al
+  módulo que define `x`). `ImportEdge.written` guarda lo que el autor escribió cuando la
+  resolución cambia `target`; la clasificación usa `written or target`, así que quien ya pasa
+  por la fachada no es una fuga. `ImportEdge.alias` conserva el `as` del arreglo.
+- **Clasificación** (`classify_module`): el prefijo más largo de `[api]` entre `public` e
+  `internal` (por segmentos); si ninguno coincide, un segmento `_nombre` (no dunder) lo hace
+  interno; el resto es público. Un módulo `public` solo cuenta si un paquete **ancestro** público
+  re-exporta ese nombre (`_offers`, a partir del índice de re-exports): tipo `bypass`.
+- **Arreglo** (`_fix`), por sentencia y por nombre: `from <fachada> import <nombre>` con la
+  fachada ancestra más cercana. Seguro porque Python ejecuta el `__init__` de cada ancestro antes
+  de importar el submódulo. En este orden: `module_import` (no hay nombre), `no_public_path` o
+  `not_ancestor` (nadie lo ofrece / solo un paquete que no es ancestro), `guarded` (el re-export
+  está en un `try`), `rebound` (la fachada lo define o lo re-exporta desde dos módulos), `cycle`
+  (el consumidor es alcanzable desde la fachada por aristas `MODULE`: al cargarla ya lo importa).
+  Un test de propiedad aplica los arreglos con `ast` y ejecuta Python antes y después
+  (`tests/unit/test_api_leak_safety.py`, escenarios en `api_scenarios.py`); en litellm, los 36
+  arreglos aplicados en una copia dejan los 2.825 módulos listados importando igual.
+- `find_api_leaks`: un hallazgo `API_LEAK` por módulo escrito, evidencia `kind`, `reason`,
+  `consumers`, `roots`, `statements`, `fixed`, `no_fix`, `fixes` (para la IA, hasta 5) y
+  `fixes_total`. El informe lista todas las sentencias.
+- Límites: el acceso por atributo a un submódulo privado desde un paquete público
+  (`import lib` + `lib._x.f()`) se clasifica por el módulo escrito (`lib`); un nombre privado
+  tomado de un módulo público no es fuga; las fugas dentro del mismo paquete raíz las cubre
+  `[layers]`.
+
 ### Frontera nativa y regla 11 (`graph/native.py`)
 
 Antes, `resolve_indirection` lleva la protección de la fachada al importador: si un

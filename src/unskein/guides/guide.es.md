@@ -142,9 +142,10 @@ detección.
     `--star-fixes`»): un hallazgo por módulo importado con `from x import *` fuera de una
     fachada, con el import explícito que escribir en cada sentencia cuando unskein puede
     demostrar que es seguro, y el motivo cuando no puede.
-  - **Fuga de API** (solo con `--api-leaks`): código de fuera de un paquete que importa lo
-    que el paquete mantiene interno, o rodea una fachada que ya ofrece el nombre, con el
-    import que escribir en su lugar cuando unskein puede demostrar que es seguro.
+  - **Fuga de API** (solo con `--api-leaks`, ver «Fugas de API y `--api-leaks`»): código de
+    fuera de un paquete que importa lo que el paquete mantiene interno, o rodea una fachada que
+    ya ofrece el nombre, con el import que escribir en su lugar cuando unskein puede demostrar
+    que es seguro, y la razón cuando no puede.
   - **Ciclo entre distribuciones**: distribuciones que se importan entre sí; dice qué
     arista cortar.
 
@@ -158,8 +159,8 @@ detección.
   pudieron resolver (imports con asterisco fuera de las fachadas: sin analizar salvo que
   pases `--star-fixes`, y con ella solo los que no se pueden saber, porque el módulo no se
   pudo analizar o calcula su `__all__`; imports relativos fuera del paquete raíz, archivos demasiado grandes, no
-  analizables o demasiado lentos, ciclos o cadenas de re-exports demasiado largas). Una
-  advertencia nunca detiene el análisis.
+  analizables o demasiado lentos, ciclos o cadenas de re-exports demasiado largas; un contrato
+  `[api]` declarado con `--api-leaks` apagado). Una advertencia nunca detiene el análisis.
 
 Los imports a través del `__init__.py` de un paquete se siguen hasta el módulo
 que define el nombre, así que un ciclo escondido tras una fachada también
@@ -248,6 +249,64 @@ Cómo leerlo y usarlo:
 - **Coste**: vuelve a leer los módulos implicados. En un proyecto de unos 2.900 módulos el
   análisis tardó entre un 15 y un 20 % más; con la opción apagada no cuesta nada.
 - **Límites**: no ve los nombres leídos con `eval`, `globals()` o un `getattr` calculado.
+
+## Fugas de API y `--api-leaks`
+
+Un paquete tiene una parte pública y otra interna. Cuando código de fuera —otro paquete
+raíz, otra distribución, un script o un plugin— importa la parte interna, el dueño no
+puede refactorizar sin romperlo. unskein señala esos imports con el hallazgo **Fuga de
+API**. Está desactivado por defecto; añade unos 0,05 s (alrededor de un 2 %) a un análisis
+de un proyecto de 2.900 módulos, porque resuelve el módulo que escribió cada import y
+demuestra cada arreglo.
+
+```
+unskein scan . --no-ai --api-leaks
+```
+
+También puedes poner `api_leaks = true` en `[analysis]` de `.unskein.toml`
+(`--no-api-leaks` lo anula).
+
+Qué cuenta como interno, por orden:
+
+1. `[api]` en `.unskein.toml`. El prefijo más largo que coincida entre `public` e
+   `internal` decide un módulo.
+2. Si no, un módulo con un segmento `_privado` en su nombre.
+3. Si no, es público. Aun así, importarlo se señala como *rodeado* cuando un paquete por
+   encima ya ofrece el mismo nombre (`from lib.core.logger import Logger` cuando
+   `from lib import Logger` funciona).
+
+```toml
+[api]
+public = ["app.internal.contracts"]   # una excepción dentro de un prefijo interno
+internal = ["app.internal"]
+```
+
+Los imports dentro del mismo paquete raíz nunca son fugas (para eso está `[layers]`). Una
+sentencia que ya pasa por la fachada (`from lib import Logger`) nunca se señala, aunque el
+grafo apunte al módulo que define el nombre. Un *nombre* privado tomado de un módulo
+público (`from lib.util import _helper`) no es una fuga: la regla trata de módulos.
+
+El informe tiene una entrada por módulo con cada sentencia debajo:
+
+```
+- `lib._private` (interno por convención de nombre; 2 módulos consumidores; 2 sentencias desde app 2)
+  - `app/a.py:2`: sin arreglo seguro: ningún paquete ofrece `SECRET`; decide el dueño
+- `lib.core.logger` (rodeado: un paquete superior ofrece el nombre; 1 módulo consumidor; 1 sentencia desde app 1)
+  - `app/a.py:1`: `from lib import Logger as L`
+```
+
+Un arreglo como ``from lib import Logger as L`` solo aparece cuando unskein puede demostrar
+que es seguro: la fachada es un paquete ancestro (importarla no carga nada que no cargara
+el original), re-exporta ese mismo objeto, lo importa sin `try`, liga el nombre una sola vez
+y no importa tu módulo al cargarse. Si no, la entrada dice por qué: *ningún paquete ofrece
+el nombre* (decide el dueño: decláralo público en `[api]` o deja de depender de él), *solo lo
+ofrece un paquete que no es ancestro*, *la fachada importa este módulo al cargarse*, *la
+fachada lo importa dentro de un `try`*, *la fachada vuelve a ligar el nombre* o *importa un
+módulo, no un nombre*. unskein nunca edita archivos: copia la línea. Una sentencia con varios
+nombres se juzga nombre a nombre: mueve los que tienen arreglo y deja el resto.
+
+Con `api_leaks` apagado y una tabla `[api]` declarada, el informe avisa «Contrato `[api]` sin
+comprobar», para que un contrato que nada comprueba no pase desapercibido.
 
 ## Desenredar: `untangle`
 
@@ -363,6 +422,10 @@ Un módulo pertenece a la capa con el prefijo más largo que coincida; un import
 capa inferior a una superior se informa como violación de capas. Los módulos que no
 están en ninguna capa no se comprueban, y sin `[layers]` no hay regla de capas.
 
+Para declarar qué módulos son API pública y cuáles internos, usa `[api]` (ver «Fugas de API y
+`--api-leaks`»): `public` e `internal` son listas de prefijos de módulo y decide el prefijo más
+largo que coincida.
+
 ## Interpretación con IA
 
 El paso de IA es opcional y pasa por LiteLLM, así que funciona con un modelo
@@ -464,7 +527,8 @@ archivos de 5 MB o más se omiten con una advertencia, y en el parseo paralelo
 también se omite un archivo que tarde más de 30 s. `--verbose` muestra la
 duración y el pico de memoria, medidos en local y nunca enviados a ningún
 sitio. `--star-fixes` añade trabajo (entre un 15 y un 20 % en un proyecto de 2.900
-módulos) y está desactivada por defecto.
+módulos) y está desactivada por defecto; `--api-leaks` añade un 2 % (0,05 s) y también está
+desactivada por defecto.
 
 ## Problemas frecuentes
 

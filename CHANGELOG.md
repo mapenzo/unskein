@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Finding: API leak, opt in with `--api-leaks` (or `api_leaks = true` under `[analysis]`).
+  Code outside a package (another top-level package or distribution) that imports a module
+  the package keeps internal — declared in the new `[api]` table (`public` and `internal`
+  module prefixes, the longest match wins) or with a `_private` segment — or goes around a
+  facade that already offers the name. One finding per module with each statement underneath,
+  and `from facade import name` only when it is proven safe (an ancestor facade that
+  re-exports that object, unguarded, bound once, and that does not import the consumer when
+  it loads); otherwise the reason. New warning `api_contract_ignored` when `[api]` is declared
+  and the option is off. Adds about 2 % to a scan, so it is off by default.
 - Finding: wildcard import, opt in with `--star-fixes` (or `star_fixes = true` under
   `[analysis]`). One finding per module imported with `from x import *` outside a package
   facade, with the explicit import to write for each statement, given only when it can be
@@ -62,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `AnalysisConfig` groups its opt-in rules in `optional_rules` (`star_fixes`, `api_leaks`);
+  the keys of `.unskein.toml` do not change. Import edges record the alias a statement binds
+  (`ImportEdge.alias`).
 - Star imports of external modules no longer warn. Those of project modules outside a
   package facade are reported as "Star imports not analyzed" (new warning
   `star_not_analyzed`, which points to `--star-fixes`); with the option on, only the ones

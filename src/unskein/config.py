@@ -71,8 +71,8 @@ class OptionalRules:
             (rule 12). It rereads the modules involved, which costs about 15 to 20 % of a
             scan on a large project; star imports are then only reported.
         api_leaks: Whether imports that reach into what a package keeps internal are analyzed
-            (rule 13). It resolves the module every import wrote and proves each fix; the
-            measured cost is documented in the guide.
+            (rule 13). It resolves the module every import wrote and proves each fix, which
+            costs about 2 % of a scan on a large project (0.05 s on 2,900 modules).
     """
 
     star_fixes: bool = False

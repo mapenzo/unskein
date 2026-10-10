@@ -98,6 +98,15 @@ Architecture health: fair.
   Rust extension at all; tach sees it only once it is named in its configuration, and
   neither tach nor mypy tells the guarded import apart from the five that would raise
   `ImportError` without the extension.
+- **API leaks** (opt in with `--api-leaks`): code outside a package that imports what the
+  package keeps internal — a `_private` module or one you declare internal in `[api]` — or
+  goes around a facade that already offers the name. One finding per module, with the import
+  to write instead when unskein can prove it safe and the reason when it cannot. On litellm
+  it finds 6 internal modules (77 statements) and 16 bypassed facades (38 statements), proves
+  a fix for 36 of 115 statements and explains the other 79 (8 would be unsafe import cycles);
+  applying the fixes leaves every one of its 2,825 listed modules importing exactly as before.
+  ruff's `import-private-name` gives 2,547 findings on the same checkout, 2,477 of them inside
+  `litellm` itself, and no fix. It adds about 2 % to a scan and is off by default.
 - **Star imports** (opt in with `--star-fixes`): one finding per module imported with
   `from x import *` outside a package facade. For each statement it gives the explicit
   import to write when it can prove it safe, and says why otherwise. Without the option,
@@ -188,6 +197,7 @@ unskein scan . --min-severity medium           # hide low-severity findings
 unskein scan . -o report.md                    # also save the report as Markdown
 unskein scan . --lang es                       # informe en español
 unskein scan . --star-fixes                    # the explicit import for each `from x import *`
+unskein scan . --api-leaks                     # imports that reach into what a package keeps internal
 ```
 
 Paths in `.gitignore` are skipped automatically. To exclude code that *is* tracked in

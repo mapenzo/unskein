@@ -194,7 +194,8 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             "--api-leaks/--no-api-leaks",
             help=(
                 "Report imports that reach into what a package keeps internal, with the "
-                "import to write instead (default: no, or .unskein.toml)."
+                "import to write instead (default: no, or .unskein.toml; adds about 2% "
+                "to a large scan)."
             ),
             show_default=False,
         ),
