@@ -419,7 +419,16 @@ class _ImportCollector:
             self.bound_objects[binding.name].add(binding.refers_to)
         if self.index.is_external(name):
             self.edges.append(
-                ImportEdge(self.source, name, True, symbol, line, kind, is_guarded=is_guarded)
+                ImportEdge(
+                    self.source,
+                    name,
+                    True,
+                    symbol,
+                    line,
+                    kind,
+                    is_guarded=is_guarded,
+                    alias=_alias(binding, symbol),
+                )
             )
             return None
         target = self.index.closest_module(name)
@@ -442,6 +451,7 @@ class _ImportCollector:
                     kind,
                     is_guarded=is_guarded,
                     requested=requested,
+                    alias=_alias(binding, symbol),
                 )
             )
             if binding is not None and self.binds_package(
@@ -590,6 +600,21 @@ class _ImportCollector:
                 edge.escapes = usages[name].escapes or index in used_alone
 
 
+def _alias(binding: Binding | None, symbol: str | None) -> str | None:
+    """Return the name a from-import binds when it differs from the symbol.
+
+    Args:
+        binding: The name the statement binds, if it binds one.
+        symbol: The imported symbol, or None for a whole-module import.
+
+    Returns:
+        The alias, or None when the statement binds the symbol's own name.
+    """
+    if binding is None or symbol is None or binding.name == symbol:
+        return None
+    return binding.name
+
+
 def _split_chains(
     chains: Collection[str], entries: list[tuple[int, str]]
 ) -> tuple[dict[int, set[str]], set[int]]:
@@ -656,13 +681,13 @@ def parse_file(
     collector.attach_usage(tree)
     exports = module_exports(tree)
     reads: tuple[str, ...] = ()
-    if collector.wildcards and config.star_fixes:
+    if collector.wildcards and config.optional_rules.star_fixes:
         reads = collect_read_names(tree)
         if exports.declares_all:
             reads = tuple(sorted({*reads, *exports.names}))
     dynamic = (
         collect_dynamic_imports(tree)
-        if config.star_fixes and any(hint in source for hint in DYNAMIC_IMPORT_HINTS)
+        if config.optional_rules.star_fixes and any(hint in source for hint in DYNAMIC_IMPORT_HINTS)
         else ()
     )
     stars = StarImports(tuple(collector.wildcards), reads, dynamic)
@@ -827,7 +852,8 @@ class PythonAdapter(LanguageAdapter):
             module_distributions,
             layout.root,
             virtual=dict(sorted(virtual.items())),
-            star_fixes=self.config.star_fixes,
+            star_fixes=self.config.optional_rules.star_fixes,
+            api_leaks=self.config.optional_rules.api_leaks,
         )
 
     def parse_task(self, task: ParseTask, shared: ProjectIndex) -> FileParseResult:

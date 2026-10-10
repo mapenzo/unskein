@@ -1,6 +1,7 @@
 """Markdown report combining the deterministic analysis and the optional AI report."""
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 from unskein.ai.models import AIFailure, AIReport, Problem, Severity
 from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, DistributionSummary
 from unskein.graph.findings import Evidence, Finding, FindingKind
+from unskein.graph.leaks import ROOT_COUNT_SEPARATOR, LeakAction, LeakFix, import_name
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.graph.native import NativeModule
@@ -23,7 +25,7 @@ MAX_TANGLE_MEMBERS_SHOWN = 10
 MAX_HIDDEN_TANGLES_SHOWN = 10
 MAX_FINDINGS_PER_KIND = 10
 # Findings whose fix is meant to be copied are all listed.
-UNCAPPED_FINDINGS = frozenset({FindingKind.WILDCARD_IMPORT})
+UNCAPPED_FINDINGS = frozenset({FindingKind.WILDCARD_IMPORT, FindingKind.API_LEAK})
 MAX_PACKAGES_IN_TABLE = 15
 MAX_NATIVE_IN_TABLE = 15
 MAX_PACKAGE_EDGES_SHOWN = 10
@@ -1034,6 +1036,75 @@ def _wildcard_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     return "\n".join(lines)
 
 
+def _leak_fix_lines(fixes: Iterable[LeakFix], lang: Lang) -> list[str]:
+    """Render the fixes of one module: the names of a statement share one line.
+
+    Args:
+        fixes: The module's fixes, in file order.
+        lang: Report language.
+
+    Returns:
+        One indented Markdown list item per statement with a fix, and one per name without.
+    """
+    moved: dict[tuple[str, str], list[str]] = {}
+    entries: list[str | tuple[str, str]] = []
+    for fix in fixes:
+        if fix.action is LeakAction.FACADE_IMPORT:
+            key = (fix.location, str(fix.facade))
+            if key not in moved:
+                moved[key] = []
+                entries.append(key)
+            moved[key].append(import_name(fix))
+        else:
+            text = t(f"finding.api_leak.no_fix.{fix.reason}", lang, name=fix.symbol)
+            entries.append(f"  - `{fix.location}`: {text}")
+    lines = []
+    for entry in entries:
+        if isinstance(entry, str):
+            lines.append(entry)
+            continue
+        location, facade = entry
+        statement = f"from {facade} import {PART_SEPARATOR.join(moved[entry])}"
+        lines.append(f"  - `{location}`: {t('finding.api_leak.fix', lang, statement=statement)}")
+    return lines
+
+
+def _leak_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
+    """Render a finding of rule 13: the summary, then the fix of each statement.
+
+    Args:
+        finding: An ``API_LEAK`` finding.
+        result: The deterministic analysis, with the fixes.
+        lang: Report language.
+
+    Returns:
+        A multi-line Markdown list item.
+    """
+    (module,) = finding.modules
+    leak = next(entry for entry in result.leaks if entry.name == module)
+    roots = PART_SEPARATOR.join(
+        f"{root}{ROOT_COUNT_SEPARATOR}{count}" for root, count in leak.roots
+    )
+    statements = len(leak.fixes)
+    summary = DETAIL_SEPARATOR.join(
+        [
+            t(f"finding.api_leak.reason.{leak.reason}", lang),
+            t(
+                f"finding.api_leak.consumers.{_plural_key(leak.consumers)}",
+                lang,
+                count=leak.consumers,
+            ),
+            t(f"finding.api_leak.statements.{_plural_key(statements)}", lang, count=statements)
+            + " "
+            + t("finding.api_leak.roots", lang, roots=roots),
+        ]
+    )
+    lines = [f"- `{module}` ({summary})"]
+    # Every statement: the fix is meant to be copied.
+    lines += _leak_fix_lines(leak.fixes, lang)
+    return "\n".join(lines)
+
+
 def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """Render one finding as a list item with the numbers behind it.
 
@@ -1056,6 +1127,8 @@ def _finding_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
         return _native_finding_line(finding, result, lang)
     if finding.kind is FindingKind.WILDCARD_IMPORT:
         return _wildcard_line(finding, result, lang)
+    if finding.kind is FindingKind.API_LEAK:
+        return _leak_line(finding, result, lang)
     if finding.kind is FindingKind.UNSTABLE_DEPENDENCY:
         source, target = finding.modules
         return (

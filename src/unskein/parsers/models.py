@@ -33,6 +33,8 @@ class WarningCode(StrEnum):
             identifiers; it is ignored.
         STAR_NOT_ANALYZED: ``from x import *`` of a project module outside a package facade,
             not analyzed because ``star_fixes`` is off; the option computes the explicit import.
+        API_CONTRACT_IGNORED: ``[api]`` declares a contract but the API leak rule is off, so
+            nothing checks it; ``api_leaks`` turns it on.
     """
 
     STAR_IMPORT = "star_import"
@@ -50,6 +52,7 @@ class WarningCode(StrEnum):
     DUPLICATE_DISTRIBUTION_NAME = "duplicate_distribution_name"
     INVALID_MODULE_NAME = "invalid_module_name"
     STAR_NOT_ANALYZED = "star_not_analyzed"
+    API_CONTRACT_IGNORED = "api_contract_ignored"
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +178,10 @@ class ImportEdge:
             optional by contract.
         requested: Name the statement asked for when that module does not exist (``target``
             is then its closest existing ancestor); None otherwise.
+        alias: Name the statement binds when it differs from the imported symbol
+            (``from a import b as c`` gives ``c``); None otherwise.
+        written: Module the statement named when resolution pointed the edge at another
+            one; set only when ``api_leaks`` is on.
     """
 
     source: str
@@ -187,6 +194,8 @@ class ImportEdge:
     escapes: bool = False
     is_guarded: bool = False
     requested: str | None = None
+    alias: str | None = None
+    written: str | None = None
 
 
 class ManifestStyle(StrEnum):
@@ -364,6 +373,7 @@ class ParsePlan:
         virtual: Modules with no parsed file (namespace packages, compiled extensions,
             stubs), by name, sorted.
         star_fixes: Whether star imports are analyzed to compute their fix (rule 12).
+        api_leaks: Whether imports are checked for leaks into package internals (rule 13).
     """
 
     tasks: list[ParseTask]
@@ -375,6 +385,7 @@ class ParsePlan:
     project_root: Path | None = None
     virtual: dict[str, VirtualModule] = field(default_factory=dict)
     star_fixes: bool = False
+    api_leaks: bool = False
 
 
 @dataclass
@@ -395,6 +406,7 @@ class ParseResult:
         virtual: Modules with no parsed file (namespace packages, compiled extensions,
             stubs), by name, sorted.
         star_fixes: Whether star imports are analyzed to compute their fix (rule 12).
+        api_leaks: Whether imports are checked for leaks into package internals (rule 13).
     """
 
     modules: list[ModuleInfo]
@@ -407,6 +419,7 @@ class ParseResult:
     module_distributions: dict[str, str] = field(default_factory=dict)
     virtual: dict[str, VirtualModule] = field(default_factory=dict)
     star_fixes: bool = False
+    api_leaks: bool = False
 
     @classmethod
     def from_file_results(
@@ -436,6 +449,7 @@ class ParseResult:
             result.module_distributions = plan.module_distributions
             result.virtual = plan.virtual
             result.star_fixes = plan.star_fixes
+            result.api_leaks = plan.api_leaks
         for file_result in file_results:
             if file_result.module is not None:
                 module = file_result.module

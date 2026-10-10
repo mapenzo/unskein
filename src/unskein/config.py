@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from unskein.errors import ConfigError, ErrorKey
 
@@ -31,6 +31,7 @@ PROJECT_CONFIG_NAME = ".unskein.toml"
 USER_CONFIG_PATH = Path.home() / ".config" / "unskein" / "config.toml"
 
 LAYER_NAME_PATTERN = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*")
+OPTIONAL_RULE_NAMES = ("star_fixes", "api_leaks")
 
 
 @dataclass
@@ -61,6 +62,23 @@ class PipelineConfig:
     metrics: StageConfig = field(default_factory=lambda: StageConfig(max_workers=1))
 
 
+@dataclass(frozen=True, slots=True)
+class OptionalRules:
+    """Rules that need extra analysis and stay off unless asked for.
+
+    Attributes:
+        star_fixes: Whether star imports are analyzed to give the explicit import to write
+            (rule 12). It rereads the modules involved, which costs about 15 to 20 % of a
+            scan on a large project; star imports are then only reported.
+        api_leaks: Whether imports that reach into what a package keeps internal are analyzed
+            (rule 13). It resolves the module every import wrote and proves each fix, which
+            costs about 2 % of a scan on a large project (0.05 s on 2,900 modules).
+    """
+
+    star_fixes: bool = False
+    api_leaks: bool = False
+
+
 @dataclass
 class AnalysisConfig:
     """Settings that control discovery, parsing and parallelization.
@@ -79,9 +97,7 @@ class AnalysisConfig:
         source_roots: Directories module names are relative to; None auto-detects
             a ``src/`` layout. The project root is always the last fallback.
         include_tests: Whether test code is analyzed (excluded by default).
-        star_fixes: Whether star imports are analyzed to give the explicit import to write
-            (rule 12). Off by default: it rereads the modules involved, which costs about
-            15 to 20 % of a scan on a large project; star imports are then only reported.
+        optional_rules: Rules that are off by default because they cost extra analysis.
         pipeline: Per-stage concurrency settings.
     """
 
@@ -95,8 +111,21 @@ class AnalysisConfig:
     exclude: list[str] = field(default_factory=list)
     source_roots: list[str] | None = None
     include_tests: bool = False
-    star_fixes: bool = False
+    optional_rules: OptionalRules = field(default_factory=OptionalRules)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+
+
+@dataclass(frozen=True, slots=True)
+class ApiContract:
+    """The public surface a project declares in ``[api]``.
+
+    Attributes:
+        public: Module prefixes that are public API, even inside an internal prefix.
+        internal: Module prefixes outside code must not import from.
+    """
+
+    public: tuple[str, ...] = ()
+    internal: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -117,6 +146,7 @@ class FindingsConfig:
         entry_points: Module names or ``fnmatch`` patterns that are entry points
             and never count as orphans.
         layers: Layer names (package prefixes), highest first; empty means no layer rule.
+        api: The declared public surface; empty means only the naming convention decides.
     """
 
     enabled: bool = True
@@ -129,6 +159,7 @@ class FindingsConfig:
     package_depth: int | None = None
     entry_points: tuple[str, ...] = ()
     layers: tuple[str, ...] = ()
+    api: ApiContract = ApiContract()
 
 
 @dataclass
@@ -190,7 +221,8 @@ class TomlAnalysis(_TomlTable):
         exclude: Extra exclude patterns, added to the CLI ones.
         source_roots: See ``AnalysisConfig``.
         include_tests: See ``AnalysisConfig``.
-        star_fixes: See ``AnalysisConfig``.
+        star_fixes: See ``OptionalRules``.
+        api_leaks: See ``OptionalRules``.
     """
 
     parallel_threshold: int | None = None
@@ -204,6 +236,7 @@ class TomlAnalysis(_TomlTable):
     source_roots: list[str] | None = None
     include_tests: bool | None = None
     star_fixes: bool | None = None
+    api_leaks: bool | None = None
 
 
 class TomlFindings(_TomlTable):
@@ -267,6 +300,57 @@ class TomlLayers(_TomlTable):
         return order
 
 
+class TomlApi(_TomlTable):
+    """The ``[api]`` table: which modules are public and which are internal.
+
+    Attributes:
+        public: Module prefixes that are public API. The longest matching prefix between
+            ``public`` and ``internal`` decides a module.
+        internal: Module prefixes that are internal.
+    """
+
+    public: list[str] | None = None
+    internal: list[str] | None = None
+
+    @field_validator("public", "internal")
+    @classmethod
+    def _check_prefixes(cls, prefixes: list[str] | None) -> list[str] | None:
+        """Reject prefixes that are not dotted module names, and repeated ones.
+
+        The messages never echo the offending value, like every configuration error.
+
+        Args:
+            prefixes: Prefixes as written in the file.
+
+        Returns:
+            The same prefixes.
+
+        Raises:
+            ValueError: If a prefix is not a dotted module name or is listed twice.
+        """
+        if prefixes is None:
+            return None
+        if not all(LAYER_NAME_PATTERN.fullmatch(prefix) for prefix in prefixes):
+            raise ValueError("every prefix must be a dotted module name, such as app.core")
+        if len(set(prefixes)) != len(prefixes):
+            raise ValueError("a prefix is listed more than once")
+        return prefixes
+
+    @model_validator(mode="after")
+    def _check_disjoint(self) -> "TomlApi":
+        """Reject a prefix declared both public and internal.
+
+        Returns:
+            This table.
+
+        Raises:
+            ValueError: If one prefix appears in both lists.
+        """
+        if set(self.public or ()) & set(self.internal or ()):
+            raise ValueError("a prefix cannot be both public and internal")
+        return self
+
+
 class TomlConfig(_TomlTable):
     """A validated, merged ``.unskein.toml`` (all tables optional).
 
@@ -276,6 +360,7 @@ class TomlConfig(_TomlTable):
         analysis: The ``[analysis]`` table.
         findings: The ``[findings]`` table.
         layers: The ``[layers]`` table.
+        api: The ``[api]`` table.
     """
 
     general: TomlGeneral = TomlGeneral()
@@ -283,6 +368,7 @@ class TomlConfig(_TomlTable):
     analysis: TomlAnalysis = TomlAnalysis()
     findings: TomlFindings = TomlFindings()
     layers: TomlLayers = TomlLayers()
+    api: TomlApi = TomlApi()
 
 
 def read_toml_file(path: Path) -> dict:
@@ -360,6 +446,7 @@ class AnalysisFlags:
         include_tests: ``--include-tests`` / ``--no-include-tests``.
         follow_symlinks: ``--follow-symlinks`` / ``--no-follow-symlinks``.
         star_fixes: ``--star-fixes`` / ``--no-star-fixes``.
+        api_leaks: ``--api-leaks`` / ``--no-api-leaks``.
         encoding: ``--encoding`` fallback encoding.
     """
 
@@ -367,6 +454,7 @@ class AnalysisFlags:
     include_tests: bool | None = None
     follow_symlinks: bool | None = None
     star_fixes: bool | None = None
+    api_leaks: bool | None = None
     encoding: str | None = None
 
 
@@ -383,23 +471,30 @@ def resolve_analysis_config(toml: TomlConfig, flags: AnalysisFlags) -> AnalysisC
     Returns:
         The resolved analysis settings.
     """
-    from_toml = toml.analysis.model_dump(exclude_none=True, exclude={"exclude"})
+    from_toml = toml.analysis.model_dump(
+        exclude_none=True, exclude={"exclude", *OPTIONAL_RULE_NAMES}
+    )
     from_flags = {
         "include_tests": flags.include_tests,
         "follow_symlinks": flags.follow_symlinks,
-        "star_fixes": flags.star_fixes,
         "default_encoding": flags.encoding,
     }
     overrides = from_toml | {name: value for name, value in from_flags.items() if value is not None}
+    rules_from_toml = toml.analysis.model_dump(exclude_none=True, include=set(OPTIONAL_RULE_NAMES))
+    rules_from_flags = {name: getattr(flags, name) for name in OPTIONAL_RULE_NAMES}
+    rules = rules_from_toml | {
+        name: value for name, value in rules_from_flags.items() if value is not None
+    }
     exclude = [*(toml.analysis.exclude or []), *flags.exclude]
-    return AnalysisConfig(**overrides, exclude=exclude)
+    return AnalysisConfig(**overrides, exclude=exclude, optional_rules=OptionalRules(**rules))
 
 
 def resolve_findings_config(toml: TomlConfig, enabled: bool | None) -> FindingsConfig:
     """Resolve the findings settings with precedence flag > .unskein.toml > default.
 
-    Entry points and layers are the exceptions: entry points declared by the project's
-    distributions are added during analysis; layers come from ``[layers]``.
+    Entry points, layers and the API contract are the exceptions: entry points declared by
+    the project's distributions are added during analysis; layers come from ``[layers]`` and
+    the contract from ``[api]``.
 
     Args:
         toml: Validated, merged TOML configuration.
@@ -413,7 +508,8 @@ def resolve_findings_config(toml: TomlConfig, enabled: bool | None) -> FindingsC
         overrides["enabled"] = enabled
     entry_points = tuple(toml.findings.entry_points or ())
     layers = tuple(toml.layers.order or ())
-    return FindingsConfig(**overrides, entry_points=entry_points, layers=layers)
+    api = ApiContract(tuple(toml.api.public or ()), tuple(toml.api.internal or ()))
+    return FindingsConfig(**overrides, entry_points=entry_points, layers=layers, api=api)
 
 
 def resolve_ai_config(

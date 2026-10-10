@@ -49,6 +49,10 @@ class ScanOptions:
         follow_symlinks: Whether discovery follows symlinked directories; None
             when not given, so ``.unskein.toml`` decides.
         include_tests: Whether test code is analyzed; None when not given.
+        star_fixes: Whether star imports are analyzed for their fix (rule 12); None when
+            not given.
+        api_leaks: Whether imports of package internals are analyzed (rule 13); None when
+            not given.
         findings: Whether findings are shown; None when not given, so .unskein.toml decides.
         encoding: Fallback encoding for files whose encoding cannot be detected.
     """
@@ -62,6 +66,7 @@ class ScanOptions:
     follow_symlinks: bool | None = None
     include_tests: bool | None = None
     star_fixes: bool | None = None
+    api_leaks: bool | None = None
     findings: bool | None = None
     encoding: str | None = None
 
@@ -138,6 +143,7 @@ def prepare_scan(
         include_tests=options.include_tests,
         follow_symlinks=options.follow_symlinks,
         star_fixes=options.star_fixes,
+        api_leaks=options.api_leaks,
         encoding=options.encoding,
     )
     ai_config = None if options.no_ai else resolve_ai_config(toml, env, options.api_key)

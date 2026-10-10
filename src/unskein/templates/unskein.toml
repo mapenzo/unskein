@@ -45,6 +45,13 @@
 # listed as warnings.
 # star_fixes = false
 
+# Report imports that reach into what a package keeps internal (a `_private`
+# module, or one declared internal in [api]) or that go around a package facade
+# which already offers the name, with the import to write instead (finding
+# "API leak"). Off by default; it adds about 2 % to a scan of a large project.
+# See [api] below to declare your public surface.
+# api_leaks = false
+
 # Encoding for files that declare none and cannot be detected. Never
 # overrides a PEP 263 coding cookie or a BOM.
 # default_encoding = "utf-8"
@@ -101,3 +108,13 @@
 # an import from a lower layer into a higher one is reported as a finding.
 # Modules in no layer are not checked. Unset or empty: no layer rule.
 # order = ["app.web", "app.services", "app.core"]
+
+[api]
+# Your project's public surface, as module prefixes. The longest matching prefix
+# decides a module: `internal` means code outside the package root (or another
+# distribution) must not import it; `public` declares an exception inside an
+# internal prefix. Modules matching neither are internal only when a segment of
+# their name starts with an underscore. Used by the "API leak" finding
+# (api_leaks = true or --api-leaks).
+# public = ["app.internal.contracts"]
+# internal = ["app.internal"]

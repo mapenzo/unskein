@@ -34,7 +34,7 @@ from unskein.ai.prompts import (
     ground_report,
     shrink_context,
 )
-from unskein.config import AnalysisConfig
+from unskein.config import AnalysisConfig, OptionalRules
 from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
 from unskein.graph.packages import PackageEdge
@@ -43,17 +43,21 @@ from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.python_parser import PythonAdapter
 
 
-def analyze_fixture(root: Path, star_fixes: bool = False) -> AnalysisResult:
+def analyze_fixture(
+    root: Path, star_fixes: bool = False, api_leaks: bool = False
+) -> AnalysisResult:
     """Discover, parse, resolve and analyze a fixture project.
 
     Args:
         root: Fixture project directory.
         star_fixes: Whether star imports are analyzed for their fix.
+        api_leaks: Whether imports of package internals are analyzed.
 
     Returns:
         The analysis of the fixture.
     """
-    adapter = PythonAdapter(AnalysisConfig(star_fixes=star_fixes))
+    rules = OptionalRules(star_fixes=star_fixes, api_leaks=api_leaks)
+    adapter = PythonAdapter(AnalysisConfig(optional_rules=rules))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)))
 
@@ -738,3 +742,20 @@ def test_wildcard_findings_reach_the_context_with_their_fixes() -> None:
     summary = next(f for f in context.findings if f.kind == "wildcard_import")
     assert summary.evidence["fixes"].startswith("app/annot.py:1 from app.types import D")
     assert context.finding_counts["wildcard_import"] == 5
+
+
+API_ROOT = Path(__file__).parent.parent / "fixtures" / "api_project"
+
+
+def test_system_prompt_explains_api_leaks() -> None:
+    assert "api_leak" in SYSTEM_PROMPT
+
+
+def test_api_leak_findings_reach_the_prompt_with_their_fixes() -> None:
+    context = build_context(analyze_fixture(API_ROOT, api_leaks=True))
+    summary = next(f for f in context.findings if f.kind == "api_leak")
+    assert summary.evidence["kind"] == "internal"
+    assert any(
+        "from lib import" in f.evidence["fixes"] for f in context.findings if f.kind == "api_leak"
+    )
+    assert context.finding_counts["api_leak"] == 2

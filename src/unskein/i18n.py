@@ -75,6 +75,16 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Imports con asterisco sin analizar",
         Lang.EN: "Star imports not analyzed",
     },
+    "warning.api_contract_ignored": {
+        Lang.ES: "`[api]` declara un contrato, pero la regla de fugas de API está apagada: "
+        "`--api-leaks` la activa",
+        Lang.EN: "`[api]` declares a contract, but the API leak rule is off: `--api-leaks` "
+        "turns it on",
+    },
+    "warning_title.api_contract_ignored": {
+        Lang.ES: "Contrato `[api]` sin comprobar",
+        Lang.EN: "`[api]` contract not checked",
+    },
     "warning.relative_beyond_top": {
         Lang.ES: "El import relativo '{detail}' sube más allá del paquete raíz",
         Lang.EN: "Relative import '{detail}' goes beyond the top-level package",
@@ -914,6 +924,86 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         "uses nothing. Tests only count when they are analyzed: without `--include-tests` (the "
         "default), run the analysis with that option before applying the fixes, so names a "
         "test imports through the module are kept.",
+    },
+    "finding.api_leak.title": {Lang.ES: "Fuga de API", Lang.EN: "API leak"},
+    "finding.api_leak.explanation": {
+        Lang.ES: "Código de fuera del paquete (otro paquete raíz u otra distribución) importa un "
+        "módulo que el paquete mantiene interno —lo declara `[api]` o lleva un segmento "
+        "`_privado`— o rodea una fachada que ya ofrece el mismo nombre. Si el dueño lo "
+        "refactoriza, esos consumidores rompen. El arreglo, `from fachada import nombre`, solo "
+        "se da cuando se puede demostrar que es seguro; si no, se dice por qué.",
+        Lang.EN: "Code outside the package (another top-level package or distribution) imports a "
+        "module the package keeps internal —`[api]` declares it or a segment is `_private`— or "
+        "goes around a facade that already offers the same name. If the owner refactors it, "
+        "those consumers break. The fix, `from facade import name`, is given only when it can "
+        "be proven safe; otherwise the reason is shown.",
+    },
+    "finding.api_leak.recommendation": {
+        Lang.ES: "Si el módulo es API de verdad, decláralo con `public = [...]` en `[api]` (o "
+        "quita el `_`); si no, importa desde el paquete que lo ofrece o deja de depender de él.",
+        Lang.EN: "If the module is real API, declare it with `public = [...]` in `[api]` (or "
+        "drop the underscore); otherwise import from the package that offers it or stop "
+        "depending on it.",
+    },
+    "finding.api_leak.reason.declared": {
+        Lang.ES: "interno según `[api]`",
+        Lang.EN: "internal per `[api]`",
+    },
+    "finding.api_leak.reason.convention": {
+        Lang.ES: "interno por convención de nombre",
+        Lang.EN: "internal by naming convention",
+    },
+    "finding.api_leak.reason.facade": {
+        Lang.ES: "rodeado: un paquete superior ofrece el nombre",
+        Lang.EN: "bypassed: a package above it offers the name",
+    },
+    "finding.api_leak.consumers.one": {
+        Lang.ES: "{count} módulo consumidor",
+        Lang.EN: "{count} consuming module",
+    },
+    "finding.api_leak.consumers.other": {
+        Lang.ES: "{count} módulos consumidores",
+        Lang.EN: "{count} consuming modules",
+    },
+    "finding.api_leak.statements.one": {Lang.ES: "{count} sentencia", Lang.EN: "{count} statement"},
+    "finding.api_leak.statements.other": {
+        Lang.ES: "{count} sentencias",
+        Lang.EN: "{count} statements",
+    },
+    "finding.api_leak.roots": {Lang.ES: "desde {roots}", Lang.EN: "from {roots}"},
+    "finding.api_leak.fix": {Lang.ES: "`{statement}`", Lang.EN: "`{statement}`"},
+    "finding.api_leak.no_fix.no_public_path": {
+        Lang.ES: "sin arreglo seguro: ningún paquete ofrece `{name}`; decide el dueño",
+        Lang.EN: "no safe fix: nothing offers `{name}`; the owner decides",
+    },
+    "finding.api_leak.no_fix.not_ancestor": {
+        Lang.ES: "sin arreglo seguro: solo lo ofrece un paquete que no es ancestro del módulo",
+        Lang.EN: "no safe fix: only a package that is not an ancestor offers it",
+    },
+    "finding.api_leak.no_fix.cycle": {
+        Lang.ES: "sin arreglo seguro: la fachada importa a este módulo al cargarse",
+        Lang.EN: "no safe fix: the facade imports this module when it loads",
+    },
+    "finding.api_leak.no_fix.guarded": {
+        Lang.ES: "sin arreglo seguro: la fachada importa el nombre dentro de un `try`",
+        Lang.EN: "no safe fix: the facade imports the name inside a `try`",
+    },
+    "finding.api_leak.no_fix.rebound": {
+        Lang.ES: "sin arreglo seguro: la fachada vuelve a ligar el nombre",
+        Lang.EN: "no safe fix: the facade binds the name again",
+    },
+    "finding.api_leak.no_fix.conditional": {
+        Lang.ES: "sin arreglo seguro: la fachada importa el nombre dentro de un `if`, una "
+        "función o una clase",
+        Lang.EN: "no safe fix: the facade imports the name inside an `if`, a function or a class",
+    },
+    "finding.api_leak.no_fix.renamed": {
+        Lang.ES: "sin arreglo seguro: la fachada exporta otro objeto con ese nombre",
+        Lang.EN: "no safe fix: the facade exports a different object under that name",
+    },
+    "finding.api_leak.no_fix.module_import": {
+        Lang.ES: "sin arreglo seguro: importa un módulo, no un nombre",
+        Lang.EN: "no safe fix: it imports a module, not a name",
     },
     "finding.wildcard.importers.one": {Lang.ES: "{count} módulo", Lang.EN: "{count} module"},
     "finding.wildcard.importers.other": {Lang.ES: "{count} módulos", Lang.EN: "{count} modules"},

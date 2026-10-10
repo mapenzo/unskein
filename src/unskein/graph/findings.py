@@ -37,6 +37,8 @@ class FindingKind(StrEnum):
             place and imports it unguarded elsewhere.
         WILDCARD_IMPORT: A module imported with ``from x import *`` outside a facade; the
             fix lists the names each statement needs.
+        API_LEAK: Code outside a package imports a module the package keeps internal, or goes
+            around a facade that offers the name; the fix is given only when proven safe.
     """
 
     UNSTABLE_DEPENDENCY = "unstable_dependency"
@@ -51,6 +53,7 @@ class FindingKind(StrEnum):
     MISSING_MODULE = "missing_module"
     OPTIONAL_NATIVE_REQUIRED = "optional_native_required"
     WILDCARD_IMPORT = "wildcard_import"
+    API_LEAK = "api_leak"
 
 
 @dataclass(frozen=True, slots=True)

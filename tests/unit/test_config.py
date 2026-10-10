@@ -153,7 +153,7 @@ def test_star_fixes_is_off_by_default_and_the_flag_wins(
     config = resolve_analysis_config(
         toml_analysis(star_fixes=toml_value), AnalysisFlags(star_fixes=flag)
     )
-    assert config.star_fixes is expected
+    assert config.optional_rules.star_fixes is expected
 
 
 def test_encoding_flag_wins_over_toml() -> None:

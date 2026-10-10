@@ -188,6 +188,18 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
             show_default=False,
         ),
     ] = None,
+    api_leaks: Annotated[
+        bool | None,
+        typer.Option(
+            "--api-leaks/--no-api-leaks",
+            help=(
+                "Report imports that reach into what a package keeps internal, with the "
+                "import to write instead (default: no, or .unskein.toml; adds about 2% "
+                "to a large scan)."
+            ),
+            show_default=False,
+        ),
+    ] = None,
     findings: Annotated[
         bool | None,
         typer.Option(
@@ -212,6 +224,7 @@ def scan(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         follow_symlinks=follow_symlinks,
         include_tests=include_tests,
         star_fixes=star_fixes,
+        api_leaks=api_leaks,
         findings=findings,
         encoding=encoding,
     )

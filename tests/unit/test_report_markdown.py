@@ -7,7 +7,7 @@ import pathspec
 import pytest
 
 from unskein.ai.models import AIFailure, AIReport, Problem
-from unskein.config import AnalysisConfig, FindingsConfig
+from unskein.config import AnalysisConfig, FindingsConfig, OptionalRules
 from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import (
     IMPACT_BOTTLENECK_MODULES,
@@ -55,17 +55,19 @@ def _problem(severity: str) -> Problem:
     )
 
 
-def analyzed(root: Path, star_fixes: bool = False) -> AnalysisResult:
+def analyzed(root: Path, star_fixes: bool = False, api_leaks: bool = False) -> AnalysisResult:
     """Discover, parse, resolve and analyze a fixture project.
 
     Args:
         root: Fixture project directory.
         star_fixes: Whether star imports are analyzed for their fix.
+        api_leaks: Whether imports of package internals are analyzed.
 
     Returns:
         The analysis of the fixture.
     """
-    adapter = PythonAdapter(AnalysisConfig(star_fixes=star_fixes))
+    rules = OptionalRules(star_fixes=star_fixes, api_leaks=api_leaks)
+    adapter = PythonAdapter(AnalysisConfig(optional_rules=rules))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)))
 
@@ -1144,3 +1146,59 @@ def test_the_wildcard_explanation_says_names_are_kept_when_in_doubt() -> None:
     section = report.split("### Wildcard import")[1]
     assert "when in doubt" in section
     assert "read as its attributes" in section
+
+
+API_ROOT = Path(__file__).parent.parent / "fixtures" / "api_project"
+
+
+def test_the_api_leak_section_lists_each_module_and_each_statement() -> None:
+    report = render(API_ROOT, analyzed(API_ROOT, api_leaks=True))
+    section = report.split("### API leak (2)")[1].split("###")[0]
+    assert (
+        "- `lib._private` (internal by naming convention; 2 consuming modules; "
+        "2 statements from app 2)"
+    ) in section
+    assert "  - `app/a.py:2`: no safe fix: nothing offers `SECRET`; the owner decides" in section
+    assert "  - `app/b.py:2`: no safe fix: it imports a module, not a name" in section
+    assert (
+        "- `lib.core.logger` (bypassed: a package above it offers the name; "
+        "1 consuming module; 1 statement from app 1)"
+    ) in section
+    assert "  - `app/a.py:1`: `from lib import Logger as L`" in section
+
+
+def test_the_api_leak_section_is_in_spanish() -> None:
+    report = render(API_ROOT, analyzed(API_ROOT, api_leaks=True), Lang.ES)
+    assert "### Fuga de API (2)" in report
+    assert "`from lib import Logger as L`" in report
+    assert "sin arreglo seguro: importa un módulo, no un nombre" in report
+
+
+def test_a_project_without_leaks_has_no_section() -> None:
+    assert "API leak" not in render(STAR_ROOT, analyzed(STAR_ROOT, api_leaks=True))
+
+
+def test_every_api_leak_statement_is_listed_not_capped(make_project) -> None:
+    files = {
+        "lib/__init__.py": "",
+        "lib/_private.py": "SECRET = 1\n",
+        "app/__init__.py": "",
+        **{f"app/m{i}.py": "from lib._private import SECRET\n" for i in range(8)},
+    }
+    root = make_project(files)
+    section = render(root, analyzed(root, api_leaks=True)).split("### API leak (1)")[1]
+    assert section.count("  - `app/m") == 8
+
+
+def test_the_names_of_one_statement_share_a_single_fix_line(make_project) -> None:
+    files = {
+        "lib/__init__.py": "from lib.core.logger import Logger, Other\n",
+        "lib/core/__init__.py": "",
+        "lib/core/logger.py": "class Logger:\n    pass\n\n\nclass Other:\n    pass\n",
+        "app/__init__.py": "",
+        "app/a.py": "from lib.core.logger import Logger, Other as O\n",
+    }
+    root = make_project(files)
+    section = render(root, analyzed(root, api_leaks=True)).split("### API leak (1)")[1]
+    assert "  - `app/a.py:1`: `from lib import Logger, Other as O`" in section
+    assert section.count("  - `app/a.py:1`") == 1
