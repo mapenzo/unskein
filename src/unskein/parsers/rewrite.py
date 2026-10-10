@@ -662,6 +662,27 @@ def _plan_lazy(
     return edits
 
 
+def _typing_guard_available(ctx: _Context) -> bool:
+    """Tell whether the module already binds ``TYPE_CHECKING`` from the typing modules.
+
+    Args:
+        ctx: The module being rewritten.
+
+    Returns:
+        True when one plain ``from typing import TYPE_CHECKING`` is its only binding.
+    """
+    binding = name_binding(ctx.tree, TYPE_CHECKING_NAME)
+    if binding.sites != 1 or binding.in_block or binding.uncertain:
+        return False
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and node.level == 0
+        and node.module in TYPING_MODULES
+        and any(alias.name == TYPE_CHECKING_NAME and alias.asname is None for alias in node.names)
+        for node in ctx.tree.body
+    )
+
+
 def _plan_type_checking(
     ctx: _Context, statements: Sequence[ast.Import | ast.ImportFrom]
 ) -> list[_Edit] | RewriteRefusal:
@@ -674,7 +695,28 @@ def _plan_type_checking(
     Returns:
         The edits, or why the move is unsafe.
     """
-    raise NotImplementedError
+    names = _bound_names(statements)
+    refusal = _check_names(ctx, names)
+    if refusal is not None:
+        return refusal
+    reads = _scan_reads(ctx, names)
+    if reads.evaluated_annotation:
+        return RewriteRefusal.ANNOTATIONS_EVALUATED
+    if reads.at_import or reads.in_function:
+        return RewriteRefusal.READ_AT_RUNTIME
+    unbound = name_binding(ctx.tree, TYPE_CHECKING_NAME).sites == 0
+    if not unbound and not _typing_guard_available(ctx):
+        return RewriteRefusal.NAME_REUSED
+    add_import = unbound and not ctx.typing_import_added
+    edits: list[_Edit] = []
+    for index, node in enumerate(statements):
+        block = [f"if {TYPE_CHECKING_NAME}:{ctx.newline}"]
+        block += [INDENT + line for line in _statement_lines(ctx, node)]
+        if add_import and index == 0:
+            block.insert(0, TYPING_IMPORT + ctx.newline)
+        edits.append(_Edit(node.lineno - 1, node.end_lineno or node.lineno, tuple(block)))
+    ctx.typing_import_added = ctx.typing_import_added or add_import
+    return edits
 
 
 def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
