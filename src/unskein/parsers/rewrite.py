@@ -2,6 +2,7 @@
 
 import ast
 import io
+from collections import Counter
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -16,6 +17,11 @@ TYPING_MODULES = frozenset({"typing", "typing_extensions"})
 TYPING_IMPORT = f"from typing import {TYPE_CHECKING_NAME}"
 FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
 COMMENT_START = "#"
+STAR = "*"
+NAMESPACE_WRITERS = frozenset({"globals", "exec"})
+VARS_NAME = "vars"
+MODULE_NAME_VARIABLE = "__name__"
+MODULES_ATTRIBUTE = "modules"
 
 
 class RewriteRefusal(StrEnum):
@@ -274,7 +280,7 @@ def _locate(
         return RewriteRefusal.NESTED_IMPORT
     found.sort(key=lambda node: node.lineno)
     for node in found:
-        if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
+        if isinstance(node, ast.ImportFrom) and any(alias.name == STAR for alias in node.names):
             return RewriteRefusal.STAR_IMPORT
     if not all(_alone(ctx.text_lines, node) for node in found):
         return RewriteRefusal.MULTIPLE_STATEMENTS
@@ -361,19 +367,117 @@ def _exported(tree: ast.Module, names: Collection[str]) -> bool:
     return False
 
 
-def _check_names(ctx: _Context, names: Collection[str]) -> RewriteRefusal | None:
+def _reaches_the_module(node: ast.expr) -> bool:
+    """Tell whether an expression names the module itself or the table of loaded modules.
+
+    Args:
+        node: The argument of a ``vars`` call.
+
+    Returns:
+        True when ``__name__`` or ``sys.modules`` appears anywhere in it.
+    """
+    return any(
+        (isinstance(part, ast.Name) and part.id == MODULE_NAME_VARIABLE)
+        or (isinstance(part, ast.Attribute) and part.attr == MODULES_ATTRIBUTE)
+        for part in ast.walk(node)
+    )
+
+
+def _writes_namespace(tree: ast.Module) -> bool:
+    """Tell whether a call can bind module names that cannot be read from the source.
+
+    ``globals()``, ``exec`` and ``vars()`` without arguments reach the module namespace;
+    ``vars(obj)`` on another object does not, unless ``obj`` names the module itself. A
+    module object kept in another variable is not followed.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True when such a call exists anywhere in the module.
+    """
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        if node.func.id in NAMESPACE_WRITERS:
+            return True
+        if node.func.id == VARS_NAME and (not node.args or _reaches_the_module(node.args[0])):
+            return True
+    return False
+
+
+def _namespace_unreadable(tree: ast.Module) -> bool:
+    """Tell whether the module can bind names nobody can read from its source.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True for a star import inside a block or a call that writes the module namespace.
+    """
+    top = {id(node) for node in tree.body}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and id(node) not in top
+            and any(alias.name == STAR for alias in node.names)
+        ):
+            return True
+    return _writes_namespace(tree)
+
+
+def _sibling_imports(
+    tree: ast.Module, statements: Sequence[ast.Import | ast.ImportFrom], names: Collection[str]
+) -> Counter[str]:
+    """Count, per name, the other module-level ``import name.sub`` statements.
+
+    ``import pkg.sub`` binds the same package object that ``import pkg`` binds, so it keeps
+    the name alive when the plain import moves away.
+
+    Args:
+        tree: Parsed module.
+        statements: The statements being moved; they are not siblings of themselves.
+        names: Names the moved statements bind.
+
+    Returns:
+        How many such statements bind each name; a renamed one (``as``) does not count.
+    """
+    moved = {id(node) for node in statements}
+    found: Counter[str] = Counter()
+    for node in tree.body:
+        if id(node) in moved or not isinstance(node, ast.Import):
+            continue
+        for alias in node.names:
+            root, dot, _ = alias.name.partition(".")
+            if dot and alias.asname is None and root in names:
+                found[root] += 1
+    return found
+
+
+def _check_names(
+    ctx: _Context, statements: Sequence[ast.Import | ast.ImportFrom], names: Collection[str]
+) -> RewriteRefusal | None:
     """Refuse a move whose names are bound elsewhere or exported.
+
+    A name may also be bound by sibling ``import name.sub`` statements, and a module is
+    only uncertain when it can really write its namespace.
 
     Args:
         ctx: The module being rewritten.
+        statements: The located statements being moved.
         names: Names the moved statements bind.
 
     Returns:
         Why the move is unsafe, or None.
     """
+    moved = Counter(name for node in statements for name in _bound_names([node]))
+    siblings = _sibling_imports(ctx.tree, statements, names)
+    unreadable = _namespace_unreadable(ctx.tree)
     for name in names:
         binding = name_binding(ctx.tree, name)
-        if binding.sites != 1 or binding.in_block or binding.uncertain:
+        if binding.in_block or (binding.uncertain and unreadable):
+            return RewriteRefusal.NAME_REUSED
+        if moved[name] != 1 or binding.sites != 1 + siblings[name]:
             return RewriteRefusal.NAME_REUSED
     if _exported(ctx.tree, names):
         return RewriteRefusal.EXPORTED
@@ -519,17 +623,19 @@ class _ReadScanner(ast.NodeVisitor):
 # pylint: enable=invalid-name
 
 
-def _scan_reads(ctx: _Context, names: Collection[str]) -> _Reads:
+def _scan_reads(ctx: _Context, names: Collection[str], *, postpone: bool = False) -> _Reads:
     """Classify every read of the names in a module.
 
     Args:
         ctx: The module being rewritten.
         names: Names the moved statements bind.
+        postpone: Whether the move adds ``from __future__ import annotations``, so annotations
+            do not run.
 
     Returns:
         Where the module reads them.
     """
-    scanner = _ReadScanner(names, postponed=ctx.postponed)
+    scanner = _ReadScanner(names, postponed=ctx.postponed or postpone)
     scanner.visit(ctx.tree)
     return scanner.reads
 
@@ -613,19 +719,22 @@ def _runs_at_import(
     return False
 
 
-def _rebinds(function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection[str]) -> bool:
-    """Tell whether a function binds, deletes or declares any of the names.
+def _rebinds(scope: ast.AST, names: Collection[str], ignored: Collection[int] = ()) -> bool:
+    """Tell whether a scope binds, deletes or declares any of the names.
 
     A new local import would be overwritten by (or conflict with) such a binding.
 
     Args:
-        function: A function definition.
+        scope: A function, class or module.
         names: Names the moved import binds.
+        ignored: ``id`` of the nodes that do not count.
 
     Returns:
-        True when the function reuses one of the names.
+        True when the scope reuses one of the names.
     """
-    for node in ast.walk(function):
+    for node in ast.walk(scope):
+        if id(node) in ignored:
+            continue
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             hit = node.id in names
         elif isinstance(node, ast.arg):
@@ -645,6 +754,76 @@ def _rebinds(function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection
         if hit:
             return True
     return False
+
+
+def _is_plain_alias(alias: ast.alias, names: Collection[str]) -> bool:
+    """Tell whether an import alias binds one of the names without renaming it.
+
+    Args:
+        alias: An alias of an ``import`` statement.
+        names: Names of interest.
+
+    Returns:
+        True for ``import name`` or ``import name.sub`` without ``as``.
+    """
+    return alias.asname is None and alias.name.split(".")[0] in names
+
+
+def _own_imports(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection[str]
+) -> list[ast.Import]:
+    """List the plain imports of the names written in the function itself.
+
+    Args:
+        function: A function definition.
+        names: Names of interest.
+
+    Returns:
+        The statements, nested functions, classes and lambdas apart.
+    """
+    found: list[ast.Import] = []
+    stack: list[ast.AST] = list(function.body)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (*FUNCTIONS, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(node, ast.Import) and any(_is_plain_alias(a, names) for a in node.names):
+            found.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return found
+
+
+def _imports_locally(
+    function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection[str]
+) -> bool:
+    """Tell whether a function imports every name it reads before it reads it.
+
+    Such a function does not depend on the module-level import, so the move leaves it alone.
+
+    Args:
+        function: A function definition.
+        names: Names the moved import binds.
+
+    Returns:
+        True when every read of a name comes after the function's own plain import of it
+        and the function binds the names in no other way.
+    """
+    firsts: dict[str, tuple[int, int]] = {}
+    imports = _own_imports(function, names)
+    for node in imports:
+        end = (node.end_lineno or node.lineno, node.end_col_offset or 0)
+        for alias in node.names:
+            if _is_plain_alias(alias, names):
+                root = alias.name.split(".")[0]
+                firsts[root] = min(firsts.get(root, end), end)
+    ignored = {id(part) for node in imports for part in (node, *node.names)}
+    if not firsts or _rebinds(function, names, ignored):
+        return False
+    return all(
+        node.id in firsts and (node.lineno, node.col_offset) >= firsts[node.id]
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name) and node.id in names and isinstance(node.ctx, ast.Load)
+    )
 
 
 def _is_docstring(node: ast.stmt) -> bool:
@@ -698,34 +877,36 @@ def _indented(indent: str, line: str) -> str:
     return indent + line if line.strip() else line
 
 
-def _plan_lazy(
-    ctx: _Context, statements: Sequence[ast.Import | ast.ImportFrom]
+def _reader_edits(
+    ctx: _Context,
+    statements: Sequence[ast.Import | ast.ImportFrom],
+    names: Collection[str],
+    *,
+    loaded: set[str],
 ) -> list[_Edit] | RewriteRefusal:
-    """Plan moving some imports into every outermost function that reads their names.
+    """Plan inserting the statements into every function that needs them.
+
+    A function that already imports the names itself is left alone.
 
     Args:
         ctx: The module being rewritten.
         statements: The located import statements.
+        names: Names the statements bind.
+        loaded: Names and attributes loaded while the module is imported.
 
     Returns:
-        The edits, or why the move is unsafe.
+        The insertions, or why the move is unsafe.
     """
-    names = _bound_names(statements)
-    refusal = _check_names(ctx, names)
-    if refusal is not None:
-        return refusal
-    reads = _scan_reads(ctx, names)
-    if reads.at_import or reads.evaluated_annotation:
-        return RewriteRefusal.READ_AT_IMPORT
     readers = _outermost_readers(ctx.tree, names)
     if not readers:
         return RewriteRefusal.NO_READER
-    if any(_rebinds(reader, names) for reader in readers):
+    needy = [reader for reader in readers if not _imports_locally(reader, names)]
+    if any(_rebinds(reader, names) for reader in needy):
         return RewriteRefusal.NAME_REUSED
-    if _runs_at_import(ctx.tree, readers, reads.import_names):
+    if _runs_at_import(ctx.tree, needy, loaded):
         return RewriteRefusal.READ_AT_IMPORT
     edits: list[_Edit] = []
-    for reader in readers:
+    for reader in needy:
         anchor = _anchor(ctx, reader)
         if isinstance(anchor, RewriteRefusal):
             return anchor
@@ -733,8 +914,37 @@ def _plan_lazy(
         for node in statements:
             moved = tuple(_indented(indent, line) for line in _statement_lines(ctx, node))
             edits.append(_Edit(index, index, moved))
-    edits += [_Edit(node.lineno - 1, node.end_lineno or node.lineno, ()) for node in statements]
     return edits
+
+
+def _plan_lazy(
+    ctx: _Context,
+    statements: Sequence[ast.Import | ast.ImportFrom],
+    *,
+    postpone: bool = False,
+) -> list[_Edit] | RewriteRefusal:
+    """Plan moving some imports into every outermost function that reads their names.
+
+    Args:
+        ctx: The module being rewritten.
+        statements: The located import statements.
+        postpone: Whether the move adds ``from __future__ import annotations``.
+
+    Returns:
+        The edits, or why the move is unsafe.
+    """
+    names = _bound_names(statements)
+    refusal = _check_names(ctx, statements, names)
+    if refusal is not None:
+        return refusal
+    reads = _scan_reads(ctx, names, postpone=postpone)
+    if reads.at_import or reads.evaluated_annotation:
+        return RewriteRefusal.READ_AT_IMPORT
+    inserted = _reader_edits(ctx, statements, names, loaded=reads.import_names)
+    if isinstance(inserted, RewriteRefusal):
+        return inserted
+    removals = [_Edit(node.lineno - 1, node.end_lineno or node.lineno, ()) for node in statements]
+    return inserted + removals
 
 
 def _typing_guard_available(ctx: _Context, before_line: int) -> bool:
@@ -761,22 +971,26 @@ def _typing_guard_available(ctx: _Context, before_line: int) -> bool:
 
 
 def _plan_type_checking(
-    ctx: _Context, statements: Sequence[ast.Import | ast.ImportFrom]
+    ctx: _Context,
+    statements: Sequence[ast.Import | ast.ImportFrom],
+    *,
+    postpone: bool = False,
 ) -> list[_Edit] | RewriteRefusal:
     """Plan moving some imports under ``if TYPE_CHECKING:`` where they are.
 
     Args:
         ctx: The module being rewritten.
         statements: The located import statements.
+        postpone: Whether the move adds ``from __future__ import annotations``.
 
     Returns:
         The edits, or why the move is unsafe.
     """
     names = _bound_names(statements)
-    refusal = _check_names(ctx, names)
+    refusal = _check_names(ctx, statements, names)
     if refusal is not None:
         return refusal
-    reads = _scan_reads(ctx, names)
+    reads = _scan_reads(ctx, names, postpone=postpone)
     if reads.evaluated_annotation:
         return RewriteRefusal.ANNOTATIONS_EVALUATED
     if reads.at_import or reads.in_function:
