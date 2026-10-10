@@ -132,3 +132,10 @@ def test_a_postponed_cycle_imports_after_the_move_on_every_python(tmp_path: Path
     (tmp_path / "pk" / "a.py").write_text(new)
     assert run_import(tmp_path, "pk.a").returncode == 0
     assert run_import(tmp_path, "pk.b").returncode == 0
+
+
+def test_refuses_a_guard_that_would_come_before_its_own_import() -> None:
+    source = (
+        FUTURE + "from pk.b import B\nfrom typing import TYPE_CHECKING\n\n\ndef use(x: B): ...\n"
+    )
+    assert guard(source, 2) == (source, RewriteRefusal.NAME_REUSED)

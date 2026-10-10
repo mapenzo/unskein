@@ -210,3 +210,47 @@ def test_a_rewrite_that_does_not_parse_is_discarded(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(rewrite, "_plan_lazy", lambda ctx, statements: [broken])
     source = "import json\n\n\ndef f():\n    return json\n"
     assert lazy(source) == (source, RewriteRefusal.UNREADABLE)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import dep\ng = lambda: dep.f()\n\n\ndef h():\n    return dep.VALUE\n",
+        "import dep\n\n\ndef h(cb=lambda: dep.f()):\n    return dep.VALUE\n",
+        "import dep\n\n\nclass C:\n    g = staticmethod(lambda: dep.f())\n"
+        "\n\ndef h():\n    return dep.V\n",
+    ],
+    ids=["module_lambda", "default_lambda", "class_lambda"],
+)
+def test_refuses_when_a_lambda_outside_the_readers_reads_the_name(source: str) -> None:
+    assert lazy(source) == (source, RewriteRefusal.READ_AT_IMPORT)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import dep\n__all__ = ['use']\n__all__.append('dep')\n\n"
+        "\ndef use():\n    return dep.f()\n",
+        "import dep\n__all__ = ['use']\n__all__.extend(['dep'])\n\n"
+        "\ndef use():\n    return dep.f()\n",
+        "import dep\n__all__ = [n for n in dir()]\n\n\ndef use():\n    return dep.f()\n",
+    ],
+    ids=["append", "extend", "computed"],
+)
+def test_refuses_when_all_is_changed_or_computed(source: str) -> None:
+    assert lazy(source) == (source, RewriteRefusal.EXPORTED)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import dep\n\n\ndef use():\n    return dep.f()\n\n\nRESULT = use()\n",
+        "import dep\n\n\nclass C:\n    def run(self):\n"
+        "        return dep.f()\n\n\nVALUE = C().run()\n",
+        "import dep\n\n\nclass C:\n    def __init__(self):\n"
+        "        self.x = dep.f()\n\n\nOBJ = C()\n",
+    ],
+    ids=["function_called", "method_called", "class_instantiated"],
+)
+def test_refuses_a_reader_that_runs_while_the_module_loads(source: str) -> None:
+    assert lazy(source) == (source, RewriteRefusal.READ_AT_IMPORT)

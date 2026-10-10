@@ -35,7 +35,7 @@ class ProofReason(StrEnum):
         READ_AT_RUNTIME: The names are read in a function, where a guard would not exist.
         NO_READER: Nothing reads the imported names, so there is nowhere to move it.
         NAME_REUSED: A function that reads the name also binds it, or it is rebound.
-        EXPORTED: The name is part of the module's ``__all__`` or is imported by others.
+        EXPORTED: The name is in ``__all__``, or ``__all__`` cannot be read statically.
         INLINE_BODY: The statement sits in a one-line compound statement.
         UNREADABLE: The edited file would not parse, so the edit was discarded.
         EDGE_REMAINS: The cut was applied and the re-analysis still sees the dependency.
@@ -102,7 +102,7 @@ class RunProof:
 
     Attributes:
         modules: How many modules were imported before and after.
-        importable: How many of them still import after the cuts.
+        importable: How many of them imported before the cuts (only those can regress).
         regressions: Modules that imported before and not after, tied to an edited file.
         unattributed: Regressions whose traceback names no edited file.
         seconds: Wall-clock time of the run layer.

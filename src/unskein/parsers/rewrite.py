@@ -3,7 +3,7 @@
 import ast
 import io
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from unskein.parsers.exports import name_binding
@@ -132,12 +132,15 @@ class _Reads:
         in_function: A read inside a function or lambda body.
         evaluated_annotation: An annotation that runs at import and mentions a name.
         in_annotation: An annotation that never runs (postponed, quoted or local).
+        import_names: Every name and attribute loaded while the module is imported, which
+            is how a function defined here can run before the import cut matters.
     """
 
     at_import: bool = False
     in_function: bool = False
     evaluated_annotation: bool = False
     in_annotation: bool = False
+    import_names: set[str] = field(default_factory=set)
 
 
 def _split_lines(source: str) -> list[str]:
@@ -317,21 +320,43 @@ def _all_value(node: ast.stmt) -> ast.expr | None:
     return None
 
 
+def _changes_all(node: ast.AST) -> bool:
+    """Tell whether a node calls a method on ``__all__`` (``append``, ``extend``…).
+
+    Args:
+        node: Any node.
+
+    Returns:
+        True for ``__all__.<method>(...)``.
+    """
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == ALL_NAME
+    )
+
+
 def _exported(tree: ast.Module, names: Collection[str]) -> bool:
-    """Tell whether a literal ``__all__`` of the module lists any of the names.
+    """Tell whether ``__all__`` lists any of the names, or cannot be read statically.
 
     Args:
         tree: Parsed module.
         names: Names to look for.
 
     Returns:
-        True when an assignment to ``__all__`` mentions one of them.
+        True when a literal ``__all__`` mentions one of them, or when ``__all__`` is
+        computed or changed by a method call (its content is then unknown).
     """
+    if any(_changes_all(node) for node in ast.walk(tree)):
+        return True
     for node in tree.body:
         value = _all_value(node)
-        if value is not None and any(
-            isinstance(part, ast.Constant) and part.value in names for part in ast.walk(value)
-        ):
+        if value is None:
+            continue
+        if not isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+            return True
+        if any(not isinstance(part, ast.Constant) or part.value in names for part in value.elts):
             return True
     return False
 
@@ -413,11 +438,25 @@ class _ReadScanner(ast.NodeVisitor):
         Args:
             node: A name.
         """
-        if node.id in self.names and isinstance(node.ctx, ast.Load):
+        if not isinstance(node.ctx, ast.Load):
+            return
+        if not self._in_function:
+            self.reads.import_names.add(node.id)
+        if node.id in self.names:
             if self._in_function:
                 self.reads.in_function = True
             else:
                 self.reads.at_import = True
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        """Record an attribute loaded while the module is imported, then visit its value.
+
+        Args:
+            node: An attribute access.
+        """
+        if not self._in_function:
+            self.reads.import_names.add(node.attr)
+        self.generic_visit(node)
 
     def _visit_arguments(self, arguments: ast.arguments) -> None:
         """Visit defaults like any code and annotations by when they run.
@@ -451,15 +490,19 @@ class _ReadScanner(ast.NodeVisitor):
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_Lambda(self, node: ast.Lambda) -> None:
-        """Visit the defaults as current code and the body as function code.
+        """Visit the defaults as current code; a lambda outside any function counts as a read.
+
+        A lambda defined at module or class level is not a function the move can reach, so
+        a name read in its body must stay importable there.
 
         Args:
             node: A lambda.
         """
         self._visit_arguments(node.args)
-        outer, self._in_function = self._in_function, True
+        if not self._in_function:
+            self.reads.at_import |= self._mentions(node.body)
+            return
         self.visit(node.body)
-        self._in_function = outer
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         """Visit an annotated assignment; local annotations never run.
@@ -538,6 +581,36 @@ def _outermost_readers(
 
     visit(tree)
     return found
+
+
+def _runs_at_import(
+    tree: ast.Module, readers: Sequence[ast.FunctionDef | ast.AsyncFunctionDef], loaded: set[str]
+) -> bool:
+    """Tell whether some reader may run while the module loads.
+
+    A reader runs at import when its name, or the name of a class that holds it, is loaded
+    at module level (a call, an instantiation, a decorator). Calls through other functions
+    are not followed.
+
+    Args:
+        tree: Parsed module.
+        readers: The functions that read the moved names.
+        loaded: Names and attributes loaded while the module is imported.
+
+    Returns:
+        True when a reader, or the class around it, is mentioned at import time.
+    """
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for reader in readers:
+        labels = {reader.name}
+        node: ast.AST | None = parents.get(reader)
+        while node is not None:
+            if isinstance(node, ast.ClassDef):
+                labels.add(node.name)
+            node = parents.get(node)
+        if labels & loaded:
+            return True
+    return False
 
 
 def _rebinds(function: ast.FunctionDef | ast.AsyncFunctionDef, names: Collection[str]) -> bool:
@@ -649,6 +722,8 @@ def _plan_lazy(
         return RewriteRefusal.NO_READER
     if any(_rebinds(reader, names) for reader in readers):
         return RewriteRefusal.NAME_REUSED
+    if _runs_at_import(ctx.tree, readers, reads.import_names):
+        return RewriteRefusal.READ_AT_IMPORT
     edits: list[_Edit] = []
     for reader in readers:
         anchor = _anchor(ctx, reader)
@@ -662,11 +737,12 @@ def _plan_lazy(
     return edits
 
 
-def _typing_guard_available(ctx: _Context) -> bool:
+def _typing_guard_available(ctx: _Context, before_line: int) -> bool:
     """Tell whether the module already binds ``TYPE_CHECKING`` from the typing modules.
 
     Args:
         ctx: The module being rewritten.
+        before_line: The first line a guard would be written on; the binding must come first.
 
     Returns:
         True when one plain ``from typing import TYPE_CHECKING`` is its only binding.
@@ -678,6 +754,7 @@ def _typing_guard_available(ctx: _Context) -> bool:
         isinstance(node, ast.ImportFrom)
         and node.level == 0
         and node.module in TYPING_MODULES
+        and node.lineno < before_line
         and any(alias.name == TYPE_CHECKING_NAME and alias.asname is None for alias in node.names)
         for node in ctx.tree.body
     )
@@ -705,7 +782,7 @@ def _plan_type_checking(
     if reads.at_import or reads.in_function:
         return RewriteRefusal.READ_AT_RUNTIME
     unbound = name_binding(ctx.tree, TYPE_CHECKING_NAME).sites == 0
-    if not unbound and not _typing_guard_available(ctx):
+    if not unbound and not _typing_guard_available(ctx, statements[0].lineno):
         return RewriteRefusal.NAME_REUSED
     add_import = unbound and not ctx.typing_import_added
     edits: list[_Edit] = []

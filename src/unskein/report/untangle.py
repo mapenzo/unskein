@@ -56,7 +56,7 @@ def render_untangle(
     proofs = {(cut.source, cut.target): cut for cut in proof.cuts} if proof is not None else None
     shown = plan.tangles[:max_tangles]
     for index, tangle in enumerate(shown, start=1):
-        lines += ["", *_tangle(tangle, index, root, lang, proofs=proofs)]
+        lines += ["", *_tangle(tangle, index, root, lang=lang, proofs=proofs)]
     if len(plan.tangles) > len(shown):
         lines += [
             "",
@@ -115,8 +115,8 @@ def _tangle(
     tangle: TanglePlan,
     index: int,
     root: Path,
-    lang: Lang,
     *,
+    lang: Lang,
     proofs: dict[tuple[str, str], CutProof] | None,
 ) -> list[str]:
     """Build one tangle's section: its members and its cuts.

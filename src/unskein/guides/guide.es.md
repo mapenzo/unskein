@@ -399,6 +399,16 @@ importan ni antes de los cortes (faltan dependencias, datos o servicios) se cuen
 pueden mostrar una regresión; elige con `--python RUTA` el intérprete que tiene las
 dependencias del proyecto.
 
+Lo que la prueba no ve: código que lee el nombre movido por cadena o por módulo (`eval`,
+`getattr(sys.modules[...])`, otro módulo haciendo `m.dep`), bibliotecas que leen anotaciones
+en ejecución (modelos de pydantic, `functools.singledispatch`, `typing.get_type_hints`)
+cuando sus nombres salen del módulo, y una función que solo se ejecuta al cargar el módulo a
+través de otras funciones (las llamadas e instanciaciones directas al importar se rechazan;
+las cadenas de llamadas no se siguen). `--run` detecta las que fallan al importar; las demás
+fallan más tarde, así que ejecuta tus tests. Cuando un módulo deja de importarse y ningún
+archivo editado sale en el traceback, el resumen lo cuenta aparte y los cortes siguen
+«Probado»: lee esa línea antes de fiarte de la tabla.
+
 La prueba nunca cambia el código de salida. Lee el grafo de imports, no el comportamiento:
 un corte probado significa que la dependencia ya no está y, con `--run`, que los módulos
 siguen cargando; no ejecuta tus tests.

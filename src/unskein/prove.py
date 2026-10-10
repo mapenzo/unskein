@@ -168,7 +168,6 @@ def copy_project(context: ScanContext, destination: Path, *, whole_tree: bool = 
                 ignore=shutil.ignore_patterns(*SKIPPED_DIRECTORIES),
                 dirs_exist_ok=True,
             )
-            return
         wanted: set[Path] = set()
         for path in files:
             wanted.add(path)
@@ -201,7 +200,7 @@ def _refused(cuts: list[Cut], reason: ProofReason) -> dict[Edge, CutProof]:
 
 
 def _rewrite_file(
-    context: ScanContext, path: Path, cuts: list[Cut], copy_root: Path
+    context: ScanContext, path: Path, cuts: list[Cut], *, copy_root: Path
 ) -> tuple[list[Cut], dict[Edge, CutProof]]:
     """Apply the cuts of one file to its copy, all in one pass.
 
@@ -271,7 +270,7 @@ def _apply_cuts(
             settled.update(_refused([cut], reason or ProofReason.UNREADABLE))
     applied: dict[Path, list[Cut]] = {}
     for path, file_cuts in by_file.items():
-        done, refused = _rewrite_file(context, path, file_cuts, copy_root)
+        done, refused = _rewrite_file(context, path, file_cuts, copy_root=copy_root)
         if done:
             applied[path] = done
         settled.update(refused)

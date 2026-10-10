@@ -387,6 +387,16 @@ caches) so data files read at import exist. Modules that do not import even befo
 (missing dependencies, data or services) are counted and cannot show a regression; pick the
 interpreter that has the project's dependencies with `--python PATH`.
 
+What the proof does not see: code that reads the moved name by string or by module
+(`eval`, `getattr(sys.modules[...])`, another module doing `m.dep`), libraries that read
+annotations at run time (pydantic models, `functools.singledispatch`,
+`typing.get_type_hints`) when their names move out of the module, and a function that
+only runs while the module loads through other functions (direct calls and instantiations
+at import time are refused; chains of calls are not followed). `--run` catches the ones
+that fail while importing; the others fail later, so run your tests. When a module stops
+importing but no edited file is in the traceback, the summary counts it apart and the
+cuts stay "Proven": read that line before trusting the table.
+
 The proof never changes the exit code. It reads the import graph, not behavior: a proven
 cut means the dependency is gone and, with `--run`, that the modules still load; it does not
 run your tests.

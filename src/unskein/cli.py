@@ -267,7 +267,10 @@ def untangle(  # pylint: disable=too-many-arguments,too-many-positional-argument
     ] = False,
     python: Annotated[
         Path | None,
-        typer.Option("--python", help="Interpreter for --run (default: the one running unskein)."),
+        typer.Option(
+            "--python",
+            help="Interpreter for --run (default: the one running unskein); ignored without it.",
+        ),
     ] = None,
     output: Annotated[
         Path | None, typer.Option("--output", "-o", help="Also save the Markdown plan here.")
