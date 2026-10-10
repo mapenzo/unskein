@@ -430,6 +430,7 @@ def expand_package_access(
     modules: frozenset[str],
     index: ReExportIndex,
     guarded: frozenset[tuple[str, str]] = frozenset(),
+    record_written: bool = False,
 ) -> tuple[list[ImportEdge], list[ParseWarning]]:
     """Replace the import of a package by one edge per module its attributes come from.
 
@@ -442,6 +443,8 @@ def expand_package_access(
         modules: Names of the project modules.
         index: Re-export index built by `build_reexport_index`.
         guarded: Guarded re-exports: an edge whose every chain goes through one is guarded.
+        record_written: Whether to keep the module the statement named on each replacement
+            edge.
 
     Returns:
         The replacement edges, one per distinct defining module and in module order
@@ -469,6 +472,7 @@ def expand_package_access(
             accessed=(),
             escapes=False,
             is_guarded=edge.is_guarded or target not in unguarded,
+            written=edge.target if record_written and target != edge.target else None,
         )
         for target, found in sorted(symbols.items())
     ]
@@ -528,7 +532,11 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
                 continue
             if edge.symbol_name is None:
                 expanded, edge_warnings = expand_package_access(
-                    edge, modules=module_names, index=index, guarded=guarded
+                    edge,
+                    modules=module_names,
+                    index=index,
+                    guarded=guarded,
+                    record_written=result.api_leaks,
                 )
                 imports.extend(expanded)
                 warnings.update(dict.fromkeys(edge_warnings))
@@ -539,6 +547,13 @@ def resolve_indirection(result: ParseResult) -> ParseResult:
                 is_guarded = edge.is_guarded or passes_guard(
                     edge.target, edge.symbol_name, index, guarded
                 )
-                imports.append(replace(edge, target=target, is_guarded=is_guarded))
+                imports.append(
+                    replace(
+                        edge,
+                        target=target,
+                        is_guarded=is_guarded,
+                        written=edge.target if result.api_leaks and target != edge.target else None,
+                    )
+                )
         modules.append(replace(module, imports=imports))
     return replace(result, modules=modules, warnings=list(warnings))

@@ -419,7 +419,16 @@ class _ImportCollector:
             self.bound_objects[binding.name].add(binding.refers_to)
         if self.index.is_external(name):
             self.edges.append(
-                ImportEdge(self.source, name, True, symbol, line, kind, is_guarded=is_guarded)
+                ImportEdge(
+                    self.source,
+                    name,
+                    True,
+                    symbol,
+                    line,
+                    kind,
+                    is_guarded=is_guarded,
+                    alias=_alias(binding, symbol),
+                )
             )
             return None
         target = self.index.closest_module(name)
@@ -442,6 +451,7 @@ class _ImportCollector:
                     kind,
                     is_guarded=is_guarded,
                     requested=requested,
+                    alias=_alias(binding, symbol),
                 )
             )
             if binding is not None and self.binds_package(
@@ -588,6 +598,21 @@ class _ImportCollector:
                 edge = self.edges[index]
                 edge.accessed = tuple(sorted(chains[index]))
                 edge.escapes = usages[name].escapes or index in used_alone
+
+
+def _alias(binding: Binding | None, symbol: str | None) -> str | None:
+    """Return the name a from-import binds when it differs from the symbol.
+
+    Args:
+        binding: The name the statement binds, if it binds one.
+        symbol: The imported symbol, or None for a whole-module import.
+
+    Returns:
+        The alias, or None when the statement binds the symbol's own name.
+    """
+    if binding is None or symbol is None or binding.name == symbol:
+        return None
+    return binding.name
 
 
 def _split_chains(

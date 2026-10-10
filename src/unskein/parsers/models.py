@@ -175,6 +175,10 @@ class ImportEdge:
             optional by contract.
         requested: Name the statement asked for when that module does not exist (``target``
             is then its closest existing ancestor); None otherwise.
+        alias: Name the statement binds when it differs from the imported symbol
+            (``from a import b as c`` gives ``c``); None otherwise.
+        written: Module the statement named when resolution pointed the edge at another
+            one; set only when ``api_leaks`` is on.
     """
 
     source: str
@@ -187,6 +191,8 @@ class ImportEdge:
     escapes: bool = False
     is_guarded: bool = False
     requested: str | None = None
+    alias: str | None = None
+    written: str | None = None
 
 
 class ManifestStyle(StrEnum):
