@@ -3,7 +3,7 @@
 import ast
 import io
 from collections import Counter
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -661,6 +661,44 @@ class _ReadScanner(ast.NodeVisitor):
             self.visit(node.value)
 
 
+class _AttributeScanner(_ReadScanner):
+    """Find the attributes read at import time through some names, with their nodes.
+
+    Attributes:
+        attributes: Every ``name.attr`` load that runs while the module is imported.
+    """
+
+    def __init__(self, names: Collection[str], *, postponed: bool) -> None:
+        """Start a scan at module level.
+
+        Args:
+            names: The names to track.
+            postponed: Whether the module postpones annotations.
+        """
+        super().__init__(names, postponed=postponed)
+        self.attributes: list[ast.Attribute] = []
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        """Record ``name.attr`` loads; anything else is scanned like any read.
+
+        Args:
+            node: An attribute access.
+        """
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in self.names
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.value.ctx, ast.Load)
+        ):
+            if self._in_function:
+                self.reads.in_function = True
+            else:
+                self.attributes.append(node)
+                self.reads.import_names.add(node.attr)
+            return
+        super().visit_Attribute(node)
+
+
 # pylint: enable=invalid-name
 
 
@@ -679,6 +717,21 @@ def _scan_reads(ctx: _Context, names: Collection[str], *, postpone: bool = False
     scanner = _ReadScanner(names, postponed=ctx.postponed or postpone)
     scanner.visit(ctx.tree)
     return scanner.reads
+
+
+def import_time_attributes(tree: ast.Module, names: Collection[str]) -> frozenset[str]:
+    """List the attributes a module reads at import time through some names.
+
+    Args:
+        tree: Parsed module.
+        names: Names bound to a package, e.g. the ones ``import pkg`` binds.
+
+    Returns:
+        The attribute names (``pkg.X`` gives ``X``) read while the module is imported.
+    """
+    scanner = _AttributeScanner(names, postponed=postpones_annotations(tree))
+    scanner.visit(tree)
+    return frozenset(node.attr for node in scanner.attributes)
 
 
 def _reads_in_body(
@@ -1119,7 +1172,129 @@ def _plan_move(ctx: _Context, move: Move, *, future_ok: bool) -> list[_Edit] | R
         return RewriteRefusal.RUNTIME_ANNOTATIONS
     if move.kind is MoveKind.LAZY:
         return _plan_lazy(ctx, statements, postpone=postpone)
-    return _plan_type_checking(ctx, statements, postpone=postpone)
+    if move.kind is MoveKind.TYPE_CHECKING:
+        return _plan_type_checking(ctx, statements, postpone=postpone)
+    return _plan_bypass(ctx, statements, dict(move.definers))
+
+
+def _in_use(tree: ast.Module, name: str) -> bool:
+    """Tell whether a module binds or loads a bare name anywhere.
+
+    Args:
+        tree: Parsed module.
+        name: The name.
+
+    Returns:
+        True when adding a module-level import of that name could capture or shadow a use.
+    """
+    return _rebinds(tree, {name}) or any(
+        isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load)
+        for node in ast.walk(tree)
+    )
+
+
+def _replace_spans(
+    ctx: _Context, spans: Sequence[tuple[ast.expr, str]]
+) -> list[_Edit] | RewriteRefusal:
+    """Plan replacing some single-line expressions by new text.
+
+    Args:
+        ctx: The module being rewritten.
+        spans: ``(expression, new text)`` pairs.
+
+    Returns:
+        One line edit per touched line, or ``UNREADABLE`` when an expression spans lines.
+    """
+    by_line: dict[int, list[tuple[int, int, str]]] = {}
+    for node, text in spans:
+        if node.end_lineno != node.lineno or node.end_col_offset is None:
+            return RewriteRefusal.UNREADABLE
+        by_line.setdefault(node.lineno, []).append((node.col_offset, node.end_col_offset, text))
+    edits = []
+    for line, found in by_line.items():
+        data = ctx.text_lines[line - 1].encode()
+        for start, end, text in sorted(found, reverse=True):
+            data = data[:start] + text.encode() + data[end:]
+        edits.append(_Edit(line - 1, line, (data.decode(),)))
+    return edits
+
+
+def _definer_imports(ctx: _Context, pairs: Mapping[str, str]) -> tuple[str, ...]:
+    """Write the direct imports that replace reads through a package.
+
+    Args:
+        ctx: The module being rewritten.
+        pairs: Attribute name to the module that defines it.
+
+    Returns:
+        One ``from module import a, b`` line per defining module, in module order.
+    """
+    by_module: dict[str, list[str]] = {}
+    for name, module in pairs.items():
+        by_module.setdefault(module, []).append(name)
+    return tuple(
+        f"from {module} import {', '.join(sorted(found))}{ctx.newline}"
+        for module, found in sorted(by_module.items())
+    )
+
+
+def _plan_bypass(
+    ctx: _Context,
+    statements: Sequence[ast.Import | ast.ImportFrom],
+    definers: Mapping[str, str],
+) -> list[_Edit] | RewriteRefusal:
+    """Plan replacing ``pkg.X`` reads at import time by direct imports of ``X``.
+
+    Reads inside functions keep ``pkg``: the package import moves into those functions
+    like a lazy import.
+
+    Args:
+        ctx: The module being rewritten.
+        statements: The located ``import pkg`` statements.
+        definers: Attribute name to the module that defines it, for every attribute the
+            caller proved stable.
+
+    Returns:
+        The edits, or why the rewrite is unsafe.
+    """
+    plain = all(
+        isinstance(node, ast.Import) and len(node.names) == 1 and "." not in node.names[0].name
+        for node in statements
+    )
+    if not plain:
+        return RewriteRefusal.UNREADABLE
+    names = _bound_names(statements)
+    refusal = _check_names(ctx, statements, names)
+    if refusal is not None:
+        return refusal
+    scanner = _AttributeScanner(names, postponed=ctx.postponed)
+    scanner.visit(ctx.tree)
+    reads = scanner.reads
+    if reads.at_import or reads.evaluated_annotation:
+        return RewriteRefusal.READ_AT_IMPORT
+    if reads.in_annotation:
+        return RewriteRefusal.UNREADABLE
+    wanted = sorted({node.attr for node in scanner.attributes})
+    if not wanted and not reads.in_function:
+        return RewriteRefusal.NO_READER
+    if not set(wanted) <= set(definers):
+        return RewriteRefusal.MUTABLE_ATTRIBUTE
+    if any(_in_use(ctx.tree, attribute) for attribute in wanted):
+        return RewriteRefusal.NAME_REUSED
+    spans = _replace_spans(ctx, [(node, node.attr) for node in scanner.attributes])
+    if isinstance(spans, RewriteRefusal):
+        return spans
+    inserted: list[_Edit] = []
+    if reads.in_function:
+        found = _reader_edits(ctx, statements, names, loaded=reads.import_names)
+        if isinstance(found, RewriteRefusal):
+            return found
+        inserted = found
+    imports = _definer_imports(ctx, {attribute: definers[attribute] for attribute in wanted})
+    first, *rest = statements
+    replaced = [_Edit(first.lineno - 1, first.end_lineno or first.lineno, imports)]
+    replaced += [_Edit(node.lineno - 1, node.end_lineno or node.lineno, ()) for node in rest]
+    return spans + inserted + replaced
 
 
 def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
@@ -1143,6 +1318,7 @@ def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
     future = _future_edit(ctx) if any(move.postpone for move in moves) else None
     outcomes: dict[Move, RewriteRefusal | None] = {}
     claimed: set[int] = set()
+    touched: set[int] = set()
     edits: list[_Edit] = []
     postponing = False
     for move in moves:
@@ -1155,6 +1331,11 @@ def rewrite_source(source: str, moves: Sequence[Move]) -> Rewritten:
         if isinstance(planned, RewriteRefusal):
             outcomes[move] = planned
             continue
+        spans = {index for edit in planned for index in range(edit.start, edit.stop)}
+        if move.kind is MoveKind.BYPASS and spans & touched:
+            outcomes[move] = RewriteRefusal.MULTIPLE_STATEMENTS
+            continue
+        touched |= spans
         outcomes[move] = None
         edits.extend(planned)
         claimed.update(move.lines)

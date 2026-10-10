@@ -24,8 +24,6 @@ class ProofReason(StrEnum):
     Attributes:
         NEEDS_DESIGN: The step needs a design decision (move a symbol, extract a module,
             restructure a package), not a mechanical edit.
-        WHOLE_MODULE_IMPORT: BYPASS_FACADE on ``import pkg``: replacing ``pkg.X`` by a
-            direct import changes behavior when the attribute is reassigned at run time.
         NO_DEFINER: BYPASS_FACADE names symbols, but no module of the project defines them.
         STAR_IMPORT: The statement is ``from x import *``, whose names are not written.
         NESTED_IMPORT: The import is not at module level.
@@ -47,7 +45,6 @@ class ProofReason(StrEnum):
     """
 
     NEEDS_DESIGN = "needs_design"
-    WHOLE_MODULE_IMPORT = "whole_module_import"
     NO_DEFINER = "no_definer"
     STAR_IMPORT = "star_import"
     NESTED_IMPORT = "nested_import"

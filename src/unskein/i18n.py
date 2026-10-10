@@ -664,11 +664,6 @@ _PROOF: dict[str, dict[Lang, str]] = {
         Lang.ES: "requiere diseño",
         Lang.EN: "needs design",
     },
-    "untangle.proof.reason.whole_module_import": {
-        Lang.ES: "import del módulo entero: reescribir sus atributos puede cambiar el "
-        "comportamiento",
-        Lang.EN: "whole-module import: rewriting its attributes can change behavior",
-    },
     "untangle.proof.reason.no_definer": {
         Lang.ES: "ningún módulo del proyecto define esos nombres",
         Lang.EN: "no project module defines those names",

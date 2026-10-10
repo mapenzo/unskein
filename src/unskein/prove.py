@@ -1,5 +1,6 @@
 """Prove an untangle plan: apply its cuts to a copy of the project and check each one."""
 
+import ast
 import dataclasses
 import shutil
 import sys
@@ -27,6 +28,7 @@ from unskein.parsers.layout import MANIFEST_NAMES
 from unskein.parsers.rewrite import Move, MoveKind, rewrite_source
 from unskein.pipeline import worker_count
 from unskein.probe import PROBE_TIMEOUT_SECONDS, ProbeJob, import_roots, run_probes
+from unskein.proof_facts import ProjectFacts
 from unskein.scan import ScanContext, discover_project, parse_sources, resolve_parsed
 from unskein.untangle import untangle_scope
 
@@ -94,8 +96,8 @@ def _planned_refusal(cut: Cut) -> ProofReason | None:
     """
     if cut.step in DESIGN_STEPS:
         return ProofReason.NEEDS_DESIGN
-    if cut.step is StepKind.BYPASS_FACADE:
-        return ProofReason.NO_DEFINER if cut.evidence.symbols else ProofReason.WHOLE_MODULE_IMPORT
+    if cut.step is StepKind.BYPASS_FACADE and cut.evidence.symbols:
+        return ProofReason.NO_DEFINER
     if cut.evidence.file_path is None or not cut.evidence.lines:
         return ProofReason.UNREADABLE
     return None
@@ -198,17 +200,21 @@ def _refused(cuts: list[Cut], reason: ProofReason) -> dict[Edge, CutProof]:
     }
 
 
-def _move_for(cut: Cut) -> Move:
+def _move_for(cut: Cut, tree: ast.Module, facts: ProjectFacts) -> Move:
     """Build the rewrite move that applies a cut.
 
     Args:
         cut: A cut whose step can be rewritten.
+        tree: Syntax tree of the importing module.
+        facts: Project facts; the definer index is only built for a bypass.
 
     Returns:
         The move; a postponing cut also adds ``from __future__ import annotations``, and
         goes under ``TYPE_CHECKING`` only when every read is an annotation.
     """
     evidence = cut.evidence
+    if cut.step is StepKind.BYPASS_FACADE:
+        return Move(MoveKind.BYPASS, evidence.lines, definers=facts.definers_read(cut, tree))
     postpone = cut.step is StepKind.POSTPONE_ANNOTATIONS
     type_only = cut.step is StepKind.TYPE_CHECKING or (
         postpone and evidence.contexts <= DEFERRED_CONTEXTS
@@ -218,7 +224,7 @@ def _move_for(cut: Cut) -> Move:
 
 
 def _rewrite_file(
-    context: ScanContext, path: Path, cuts: list[Cut], *, copy_root: Path
+    context: ScanContext, path: Path, cuts: list[Cut], *, copy_root: Path, facts: ProjectFacts
 ) -> tuple[list[Cut], dict[Edge, CutProof]]:
     """Apply the cuts of one file to its copy, all in one pass.
 
@@ -227,6 +233,7 @@ def _rewrite_file(
         path: The original file.
         cuts: The cuts whose import statements live in it.
         copy_root: Root of the copy.
+        facts: Project facts shared by every file.
 
     Returns:
         The cuts that were applied, and the verdicts of those that were refused.
@@ -242,7 +249,11 @@ def _rewrite_file(
         return [], _refused(cuts, ProofReason.UNREADABLE)
     if relative is None:
         return [], _refused(cuts, ProofReason.UNREADABLE)
-    moves = [_move_for(cut) for cut in cuts]
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return [], _refused(cuts, ProofReason.UNREADABLE)
+    moves = [_move_for(cut, tree, facts) for cut in cuts]
     result = rewrite_source(text, moves)
     applied: list[Cut] = []
     refused: dict[Edge, CutProof] = {}
@@ -262,7 +273,7 @@ def _rewrite_file(
 
 
 def _apply_cuts(
-    context: ScanContext, cuts: list[Cut], copy_root: Path
+    context: ScanContext, cuts: list[Cut], copy_root: Path, *, facts: ProjectFacts
 ) -> tuple[dict[Path, list[Cut]], dict[Edge, CutProof]]:
     """Apply every cut that can be applied mechanically to the copy.
 
@@ -270,6 +281,7 @@ def _apply_cuts(
         context: A prepared scan.
         cuts: Every cut of the plan.
         copy_root: Root of the copy.
+        facts: Project facts shared by every file.
 
     Returns:
         The cuts that were applied, grouped by the original file they edit, and the
@@ -288,7 +300,7 @@ def _apply_cuts(
             settled.update(_refused([cut], reason or ProofReason.UNREADABLE))
     applied: dict[Path, list[Cut]] = {}
     for path, file_cuts in by_file.items():
-        done, refused = _rewrite_file(context, path, file_cuts, copy_root=copy_root)
+        done, refused = _rewrite_file(context, path, file_cuts, copy_root=copy_root, facts=facts)
         if done:
             applied[path] = done
         settled.update(refused)
@@ -507,7 +519,7 @@ def prove_plan(context: ScanContext, plan: UntanglePlan, options: ProveOptions) 
             base = Path(workspace)
             copy_root = base / COPY_DIR / context.root.resolve().name
             copy_project(context, copy_root, whole_tree=python is not None)
-            applied, verdicts = _apply_cuts(context, cuts, copy_root)
+            applied, verdicts = _apply_cuts(context, cuts, copy_root, facts=ProjectFacts(context))
             scope, modules = _reanalyze(context, copy_root, all_edges=plan.all_edges)
             for done in applied.values():
                 for cut in done:

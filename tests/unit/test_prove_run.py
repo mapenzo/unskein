@@ -21,6 +21,11 @@ CYCLE_THAT_IMPORTS = {
     "app/a.py": "import app.b\n\n\ndef fa():\n    return app.b.fb\n",
     "app/b.py": "import app.a\n\n\ndef fb():\n    return app.a.fa\n",
 }
+BYPASS_BY_SYMBOL = {
+    "app/__init__.py": "from .errors import Boom\nfrom .user import ERRORS\n",
+    "app/errors.py": "class Boom(Exception):\n    pass\n",
+    "app/user.py": "import app\n\nERRORS = (app.Boom,)\n\n\ndef use():\n    return app\n",
+}
 
 
 def prove_run(root: Path, **kwargs):
@@ -116,3 +121,10 @@ def test_the_run_copies_data_files_that_modules_read_when_imported(
     assert proof.run is not None
     assert proof.run.importable == proof.run.modules == 2
     assert proof.run.regressions == () and proof.run.unattributed == ()
+
+
+def test_a_bypass_by_symbol_keeps_every_module_importable(make_project: MakeProject) -> None:
+    proof = prove_run(make_project(BYPASS_BY_SYMBOL))
+    assert proof.run is not None
+    assert proof.run.regressions == () and proof.run.importable == proof.run.modules
+    assert [c.verdict for c in proof.cuts] == [ProofVerdict.PROVEN]

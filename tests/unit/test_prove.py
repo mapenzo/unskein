@@ -7,6 +7,7 @@ from unskein import prove as prove_module
 from unskein.graph.proof import ProofReason, ProofVerdict
 from unskein.graph.steps import StepKind
 from unskein.parsers.rewrite import Rewritten
+from unskein.proof_facts import ProjectFacts
 from unskein.prove import ProofUnavailable, ProveOptions, prove_plan
 from unskein.untangle import UntangleOptions, build_untangle_plan, prepare_untangle
 
@@ -20,9 +21,10 @@ LAZY_CYCLE = {
         "def show():\n    return VALUE\n"
     ),
 }
-WHOLE_MODULE = {
-    "pkg/__init__.py": "import pkg.a\n",
-    "pkg/a.py": "import pkg\n\n\ndef f():\n    return pkg.a\n",
+BYPASS_BY_SYMBOL = {
+    "app/__init__.py": "from .errors import Boom\nfrom .user import ERRORS\n",
+    "app/errors.py": "class Boom(Exception):\n    pass\n",
+    "app/user.py": "import app\n\nERRORS = (app.Boom,)\n\n\ndef use():\n    return app\n",
 }
 WHOLE_FACADE = {
     "pkg/__init__.py": "from .a import run\n\nsetting = 1\n",
@@ -81,13 +83,6 @@ def test_a_cut_that_needs_design_is_not_proven(make_project: MakeProject) -> Non
     }
 
 
-def test_a_bypass_on_a_whole_module_import_is_not_proven(make_project: MakeProject) -> None:
-    plan, proof = prove(make_project(WHOLE_MODULE))
-    reasons = {c.reason for c in proof.cuts}
-    assert reasons <= {ProofReason.WHOLE_MODULE_IMPORT, ProofReason.NEEDS_DESIGN}
-    assert all(c.verdict is ProofVerdict.NOT_PROVEN for c in proof.cuts)
-
-
 def test_a_cut_the_rewriter_refuses_carries_its_reason(make_project: MakeProject) -> None:
     files = {
         "app/__init__.py": "",
@@ -142,7 +137,7 @@ def edited_copy(root: Path, tmp_path: Path) -> Path:
     copy_root = tmp_path / "copy"
     prove_module.copy_project(context, copy_root)
     cuts = [cut for tangle in plan.tangles for cut in tangle.cuts]
-    applied, _ = prove_module._apply_cuts(context, cuts, copy_root)
+    applied, _ = prove_module._apply_cuts(context, cuts, copy_root, facts=ProjectFacts(context))
     assert len(applied) == 1
     return copy_root
 
@@ -203,3 +198,21 @@ def test_an_evaluated_annotation_cut_is_proven_by_postponing_annotations(
     assert (cut.source, cut.target, cut.step) == ("app.a", "app.b", StepKind.POSTPONE_ANNOTATIONS)
     assert [(p.verdict, p.reason) for p in proof.cuts] == [(ProofVerdict.PROVEN, None)]
     assert proof.tangles_after == 0
+
+
+def test_an_import_time_read_through_the_facade_is_proven_by_a_direct_import(
+    make_project: MakeProject,
+) -> None:
+    plan, proof = prove(make_project(BYPASS_BY_SYMBOL))
+    [cut] = plan.tangles[0].cuts
+    assert (cut.source, cut.target, cut.step) == ("app.user", "app", StepKind.BYPASS_FACADE)
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [(ProofVerdict.PROVEN, None)]
+    assert proof.tangles_after == 0
+
+
+def test_a_name_that_something_reassigns_is_not_bypassed(make_project: MakeProject) -> None:
+    files = dict(BYPASS_BY_SYMBOL) | {"app/other.py": "import app\n\napp.Boom = None\n"}
+    _, proof = prove(make_project(files))
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [
+        (ProofVerdict.NOT_PROVEN, ProofReason.MUTABLE_ATTRIBUTE)
+    ]
