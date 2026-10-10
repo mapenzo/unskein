@@ -17,7 +17,8 @@ class StepKind(StrEnum):
             import (postponed or quoted); import them under ``if TYPE_CHECKING:``.
         BYPASS_FACADE: The dependency goes to a package's ``__init__.py``; import from the
             module that defines the name instead (not offered when the facade defines every
-            imported name itself).
+            imported name itself). A whole-module import that is only read inside functions
+            gets LAZY instead.
         LAZY: The names are only read inside functions (or in annotations too, when the
             module postpones them); import them there.
         MOVE_SYMBOL: One or two symbols are imported; move them out of the cycle.
@@ -108,15 +109,22 @@ def _lazy_applies(evidence: ImportEvidence) -> bool:
 def _bypass_applies(evidence: ImportEvidence, own_names: Collection[str]) -> bool:
     """Tell whether the imported names can come from somewhere other than the facade.
 
+    A whole-module import (no symbols) is bypassed only when moving it into the functions
+    that read it is not enough: replacing every ``pkg.X`` by a direct import cannot be
+    proven when ``X`` is state that something reassigns, and the lazy step removes the same
+    import-time dependency with one edit.
+
     Args:
         evidence: What the dependency imports by name.
         own_names: Names the facade defines itself (not re-exports nor submodules).
 
     Returns:
-        False only when names are imported and the facade defines every one of them;
-        a whole-module import (no symbols) can always be bypassed.
+        False when names are imported and the facade defines every one of them, or when a
+        whole-module import is only read after import time; True otherwise.
     """
-    return not evidence.symbols or not set(evidence.symbols) <= set(own_names)
+    if not evidence.symbols:
+        return not _lazy_applies(evidence)
+    return not set(evidence.symbols) <= set(own_names)
 
 
 def _applicable_steps(

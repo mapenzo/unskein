@@ -105,3 +105,12 @@ def test_bypass_is_not_offered_for_names_the_facade_defines(
     found: ImportEvidence, expected: StepKind
 ) -> None:
     assert choose_step("pkg.a", "pkg", found, facades=FACADES) is expected
+
+
+def test_a_whole_module_import_read_only_in_functions_is_lazy_not_bypass() -> None:
+    assert choose_step("app.a", "pkg", evidence({F}, ()), facades=FACADES) is StepKind.LAZY
+
+
+def test_a_whole_module_import_read_at_import_stays_a_bypass() -> None:
+    found = evidence({M, F}, ())
+    assert choose_step("app.a", "pkg", found, facades=FACADES) is StepKind.BYPASS_FACADE

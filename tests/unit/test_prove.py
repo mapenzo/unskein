@@ -5,6 +5,7 @@ import pytest
 
 from unskein import prove as prove_module
 from unskein.graph.proof import ProofReason, ProofVerdict
+from unskein.graph.steps import StepKind
 from unskein.parsers.rewrite import Rewritten
 from unskein.prove import ProofUnavailable, ProveOptions, prove_plan
 from unskein.untangle import UntangleOptions, build_untangle_plan, prepare_untangle
@@ -22,6 +23,12 @@ LAZY_CYCLE = {
 WHOLE_MODULE = {
     "pkg/__init__.py": "import pkg.a\n",
     "pkg/a.py": "import pkg\n\n\ndef f():\n    return pkg.a\n",
+}
+WHOLE_FACADE = {
+    "pkg/__init__.py": "from .a import run\n\nsetting = 1\n",
+    "pkg/a.py": (
+        "import pkg\n\n\ndef run():\n    return pkg.setting\n\n\ndef whole():\n    return pkg\n"
+    ),
 }
 
 
@@ -168,3 +175,13 @@ def test_a_copy_failure_is_reported_as_unavailable(
     monkeypatch.setattr(prove_module.shutil, "copy2", fail)
     with pytest.raises(ProofUnavailable):
         prove(make_project(LAZY_CYCLE))
+
+
+def test_a_whole_module_facade_import_read_in_functions_is_proven_lazy(
+    make_project: MakeProject,
+) -> None:
+    plan, proof = prove(make_project(WHOLE_FACADE))
+    [cut] = plan.tangles[0].cuts
+    assert cut.step is StepKind.LAZY
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [(ProofVerdict.PROVEN, None)]
+    assert proof.tangles_after == 0
