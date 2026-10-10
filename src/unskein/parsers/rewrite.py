@@ -112,12 +112,16 @@ class Move:
         postpone: Whether the module also gets ``from __future__ import annotations``.
         definers: For a bypass, ``(attribute, defining module)`` of every attribute the
             module reads at import time through the moved name.
+        already_loaded: Whether the imported module is an ancestor package of this one, which
+            Python has loaded before this module runs, so a plain ``import`` of it has no
+            effect to delay.
     """
 
     kind: MoveKind
     lines: tuple[int, ...]
     postpone: bool = False
     definers: tuple[tuple[str, str], ...] = ()
+    already_loaded: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -977,6 +981,7 @@ def _reader_edits(
     names: Collection[str],
     *,
     loaded: set[str],
+    effectless: bool = False,
 ) -> list[_Edit] | RewriteRefusal:
     """Plan inserting the statements into every function that needs them.
 
@@ -987,6 +992,8 @@ def _reader_edits(
         statements: The located import statements.
         names: Names the statements bind.
         loaded: Names and attributes loaded while the module is imported.
+        effectless: Whether running the import later changes nothing, so a function that
+            may run while the module loads can still receive it.
 
     Returns:
         The insertions, or why the move is unsafe.
@@ -997,7 +1004,7 @@ def _reader_edits(
     needy = [reader for reader in readers if not _imports_locally(reader, names)]
     if any(_rebinds(reader, names) for reader in needy):
         return RewriteRefusal.NAME_REUSED
-    if _runs_at_import(ctx.tree, needy, loaded):
+    if not effectless and _runs_at_import(ctx.tree, needy, loaded):
         return RewriteRefusal.READ_AT_IMPORT
     edits: list[_Edit] = []
     for reader in needy:
@@ -1011,11 +1018,28 @@ def _reader_edits(
     return edits
 
 
+def _is_effectless(statements: Sequence[ast.Import | ast.ImportFrom], move: Move) -> bool:
+    """Tell whether delaying the statements cannot change what importing does.
+
+    Args:
+        statements: The located import statements.
+        move: The move; it says whether the imported module is an ancestor package.
+
+    Returns:
+        True for an ancestor package imported by single-name ``import name`` statements only.
+    """
+    return move.already_loaded and all(
+        isinstance(node, ast.Import) and len(node.names) == 1 and "." not in node.names[0].name
+        for node in statements
+    )
+
+
 def _plan_lazy(
     ctx: _Context,
     statements: Sequence[ast.Import | ast.ImportFrom],
     *,
     postpone: bool = False,
+    effectless: bool = False,
 ) -> list[_Edit] | RewriteRefusal:
     """Plan moving some imports into every outermost function that reads their names.
 
@@ -1023,6 +1047,7 @@ def _plan_lazy(
         ctx: The module being rewritten.
         statements: The located import statements.
         postpone: Whether the move adds ``from __future__ import annotations``.
+        effectless: Whether running the imports later changes nothing.
 
     Returns:
         The edits, or why the move is unsafe.
@@ -1034,7 +1059,9 @@ def _plan_lazy(
     reads = _scan_reads(ctx, names, postpone=postpone)
     if reads.at_import or reads.evaluated_annotation:
         return RewriteRefusal.READ_AT_IMPORT
-    inserted = _reader_edits(ctx, statements, names, loaded=reads.import_names)
+    inserted = _reader_edits(
+        ctx, statements, names, loaded=reads.import_names, effectless=effectless
+    )
     if isinstance(inserted, RewriteRefusal):
         return inserted
     removals = [_Edit(node.lineno - 1, node.end_lineno or node.lineno, ()) for node in statements]
@@ -1171,10 +1198,14 @@ def _plan_move(ctx: _Context, move: Move, *, future_ok: bool) -> list[_Edit] | R
     if postpone and _reads_annotations_at_run_time(ctx.tree):
         return RewriteRefusal.RUNTIME_ANNOTATIONS
     if move.kind is MoveKind.LAZY:
-        return _plan_lazy(ctx, statements, postpone=postpone)
+        return _plan_lazy(
+            ctx, statements, postpone=postpone, effectless=_is_effectless(statements, move)
+        )
     if move.kind is MoveKind.TYPE_CHECKING:
         return _plan_type_checking(ctx, statements, postpone=postpone)
-    return _plan_bypass(ctx, statements, dict(move.definers))
+    return _plan_bypass(
+        ctx, statements, dict(move.definers), effectless=_is_effectless(statements, move)
+    )
 
 
 def _in_use(tree: ast.Module, name: str) -> bool:
@@ -1242,6 +1273,8 @@ def _plan_bypass(
     ctx: _Context,
     statements: Sequence[ast.Import | ast.ImportFrom],
     definers: Mapping[str, str],
+    *,
+    effectless: bool = False,
 ) -> list[_Edit] | RewriteRefusal:
     """Plan replacing ``pkg.X`` reads at import time by direct imports of ``X``.
 
@@ -1253,6 +1286,7 @@ def _plan_bypass(
         statements: The located ``import pkg`` statements.
         definers: Attribute name to the module that defines it, for every attribute the
             caller proved stable.
+        effectless: Whether running the ``import pkg`` statements later changes nothing.
 
     Returns:
         The edits, or why the rewrite is unsafe.
@@ -1286,7 +1320,9 @@ def _plan_bypass(
         return spans
     inserted: list[_Edit] = []
     if reads.in_function:
-        found = _reader_edits(ctx, statements, names, loaded=reads.import_names)
+        found = _reader_edits(
+            ctx, statements, names, loaded=reads.import_names, effectless=effectless
+        )
         if isinstance(found, RewriteRefusal):
             return found
         inserted = found

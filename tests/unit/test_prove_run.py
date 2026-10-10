@@ -128,3 +128,21 @@ def test_a_bypass_by_symbol_keeps_every_module_importable(make_project: MakeProj
     assert proof.run is not None
     assert proof.run.regressions == () and proof.run.importable == proof.run.modules
     assert [c.verdict for c in proof.cuts] == [ProofVerdict.PROVEN]
+
+
+ANCESTOR_INSTANTIATED = {
+    "pkg/__init__.py": "from .a import FILTER\n\nsetting = 1\n",
+    "pkg/a.py": (
+        "import pkg\n\n\nclass Filter:\n    def run(self):\n        return pkg.setting\n\n\n"
+        "FILTER = Filter()\n"
+    ),
+}
+
+
+def test_an_ancestor_package_import_is_proven_even_if_its_reader_class_is_built_at_import(
+    make_project: MakeProject,
+) -> None:
+    proof = prove_run(make_project(ANCESTOR_INSTANTIATED))
+    assert [(c.verdict, c.reason) for c in proof.cuts] == [(ProofVerdict.PROVEN, None)]
+    assert proof.run is not None
+    assert proof.run.regressions == () and proof.run.importable == proof.run.modules

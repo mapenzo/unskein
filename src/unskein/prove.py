@@ -26,6 +26,7 @@ from unskein.graph.untangle import Cut, Edge, UntanglePlan
 from unskein.parsers.discovery import detect_encoding
 from unskein.parsers.layout import MANIFEST_NAMES
 from unskein.parsers.rewrite import Move, MoveKind, rewrite_source
+from unskein.parsers.usage import MODULE_SEPARATOR
 from unskein.pipeline import worker_count
 from unskein.probe import PROBE_TIMEOUT_SECONDS, ProbeJob, import_roots, run_probes
 from unskein.proof_facts import ProjectFacts
@@ -225,6 +226,28 @@ def _refused(cuts: list[Cut], reason: ProofReason) -> dict[Edge, CutProof]:
     }
 
 
+def _imports_ancestor(cut: Cut, tree: ast.Module) -> bool:
+    """Tell whether the cut's statement imports a package that contains the importer.
+
+    The statement decides, not the cut: ``import pkg`` also yields cuts toward
+    ``pkg.sub`` when the module reads ``pkg.sub.x``, and moving it is equally harmless.
+
+    Args:
+        cut: A cut of the plan.
+        tree: Syntax tree of the importing module.
+
+    Returns:
+        True when a ``import name`` statement on the cut's lines names a package that is a
+        proper prefix of the importing module.
+    """
+    return any(
+        isinstance(node, ast.Import)
+        and node.lineno in cut.evidence.lines
+        and any(cut.source.startswith(alias.name + MODULE_SEPARATOR) for alias in node.names)
+        for node in tree.body
+    )
+
+
 def _move_for(cut: Cut, tree: ast.Module, facts: ProjectFacts) -> Move:
     """Build the rewrite move that applies a cut.
 
@@ -234,18 +257,25 @@ def _move_for(cut: Cut, tree: ast.Module, facts: ProjectFacts) -> Move:
         facts: Project facts; the definer index is only built for a bypass.
 
     Returns:
-        The move; a postponing cut also adds ``from __future__ import annotations``, and
+        The move, which knows when the imported module is an ancestor package of the importer;
+        a postponing cut also adds ``from __future__ import annotations``, and
         goes under ``TYPE_CHECKING`` only when every read is an annotation.
     """
     evidence = cut.evidence
+    ancestor = _imports_ancestor(cut, tree)
     if cut.step is StepKind.BYPASS_FACADE:
-        return Move(MoveKind.BYPASS, evidence.lines, definers=facts.definers_read(cut, tree))
+        return Move(
+            MoveKind.BYPASS,
+            evidence.lines,
+            definers=facts.definers_read(cut, tree),
+            already_loaded=ancestor,
+        )
     postpone = cut.step is StepKind.POSTPONE_ANNOTATIONS
     type_only = cut.step is StepKind.TYPE_CHECKING or (
         postpone and evidence.contexts <= DEFERRED_CONTEXTS
     )
     kind = MoveKind.TYPE_CHECKING if type_only else MoveKind.LAZY
-    return Move(kind, evidence.lines, postpone=postpone)
+    return Move(kind, evidence.lines, postpone=postpone, already_loaded=ancestor)
 
 
 def _rewrite_file(
