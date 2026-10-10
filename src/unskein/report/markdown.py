@@ -9,7 +9,7 @@ from pathlib import Path
 from unskein.ai.models import AIFailure, AIReport, Problem, Severity
 from unskein.graph.distributions import EDGE_ARROW, LIST_SEPARATOR, DistributionSummary
 from unskein.graph.findings import Evidence, Finding, FindingKind
-from unskein.graph.leaks import LeakAction, LeakFix
+from unskein.graph.leaks import ROOT_COUNT_SEPARATOR, LeakAction, LeakFix, import_name
 from unskein.graph.metrics import HIGH_COUPLING_PERCENTILE, AnalysisResult
 from unskein.graph.missing import FIX_IMPORT_FROM, PAIR_SEPARATOR
 from unskein.graph.native import NativeModule
@@ -1054,7 +1054,7 @@ def _leak_fix_lines(fixes: Iterable[LeakFix], lang: Lang) -> list[str]:
             if key not in moved:
                 moved[key] = []
                 entries.append(key)
-            moved[key].append(fix.symbol if fix.alias is None else f"{fix.symbol} as {fix.alias}")
+            moved[key].append(import_name(fix))
         else:
             text = t(f"finding.api_leak.no_fix.{fix.reason}", lang, name=fix.symbol)
             entries.append(f"  - `{fix.location}`: {text}")
@@ -1082,7 +1082,9 @@ def _leak_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     """
     (module,) = finding.modules
     leak = next(entry for entry in result.leaks if entry.name == module)
-    roots = PART_SEPARATOR.join(f"{root} {count}" for root, count in leak.roots)
+    roots = PART_SEPARATOR.join(
+        f"{root}{ROOT_COUNT_SEPARATOR}{count}" for root, count in leak.roots
+    )
     statements = len(leak.fixes)
     summary = DETAIL_SEPARATOR.join(
         [

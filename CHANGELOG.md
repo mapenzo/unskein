@@ -14,9 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the package keeps internal — declared in the new `[api]` table (`public` and `internal`
   module prefixes, the longest match wins) or with a `_private` segment — or goes around a
   facade that already offers the name. One finding per module with each statement underneath,
-  and `from facade import name` only when it is proven safe (an ancestor facade that
-  re-exports that object, unguarded, bound once, and that does not import the consumer when
-  it loads); otherwise the reason. New warning `api_contract_ignored` when `[api]` is declared
+  and `from facade import name` only when it is proven safe (a plain `from x import name`
+  statement; an ancestor facade that re-exports that object at module level, without a
+  guard, a rename or a second binding anywhere on the way, with no submodule of that name,
+  and that does not import the consumer when it loads); otherwise the reason. A facade that
+  only imports the name under `TYPE_CHECKING`, inside a function or under another name is not
+  an offer, so going around it is no bypass. New warning `api_contract_ignored` when `[api]` is declared
   and the option is off. Adds about 2 % to a scan, so it is off by default.
 - Finding: wildcard import, opt in with `--star-fixes` (or `star_fixes = true` under
   `[analysis]`). One finding per module imported with `from x import *` outside a package

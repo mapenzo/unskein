@@ -283,19 +283,28 @@ The report has one entry per module with each statement underneath:
 ```
 - `lib._private` (internal by naming convention; 2 consuming modules; 2 statements from app 2)
   - `app/a.py:2`: no safe fix: nothing offers `SECRET`; the owner decides
+  - `app/b.py:2`: no safe fix: it imports a module, not a name
 - `lib.core.logger` (bypassed: a package above it offers the name; 1 consuming module; 1 statement from app 1)
   - `app/a.py:1`: `from lib import Logger as L`
 ```
 
 A fix such as ``from lib import Logger as L`` is shown only when unskein can prove it safe:
-the facade is an ancestor package (importing it loads nothing the original did not),
-re-exports that exact object, imports it without a `try`, binds the name once and does not
-import your module when it loads. Otherwise the entry says why: *nothing offers the name*
-(the owner decides: declare it public in `[api]`, or stop depending on it), *only a package
-that is not an ancestor offers it*, *the facade imports this module when it loads*, *the
-facade imports it inside a `try`*, *the facade binds the name again*, or *it imports a
-module, not a name*. unskein never edits files: copy the line. A statement that imports
-several names is judged name by name: move the ones with a fix and leave the rest.
+the statement is a plain `from x import name`; the facade is an ancestor package (importing it
+loads nothing the original did not); every module the name passes through imports it with one
+plain `from x import name` directly in its body — not in an `if`, a function or a class, not
+under another name, not rebound, deleted or written through `globals()` — and no submodule of
+the facade has that name; the facade does not import your module while it loads. Otherwise the
+entry says why: *nothing offers the name* (the owner decides: declare it public in `[api]`, or
+stop depending on it), *only a package that is not an ancestor offers it*, *the facade imports
+this module when it loads*, *the facade imports it inside a `try`*, *inside an `if`, a function
+or a class*, *under another name*, *the facade binds the name again*, or *it imports a module,
+not a name*. A facade that only imports the name conditionally or under another name does not
+offer it, so going around it is no leak. unskein never edits files: copy the line. A statement
+that imports several names is judged name by name: move the ones with a fix and leave the rest.
+
+What it cannot see: names a facade serves from a module-level `__getattr__` (lazy loading), a
+function the facade calls while loading that imports your module, `importlib` calls, and code
+elsewhere that assigns an attribute of the facade (`lib.Name = ...`).
 
 With `api_leaks` off and an `[api]` table declared, the report warns "`[api]` contract not
 checked", so a contract nothing enforces does not go unnoticed.

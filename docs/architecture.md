@@ -968,18 +968,32 @@ módulo que el paquete mantiene interno, o que rodea una fachada que ya ofrece e
   interno; el resto es público. Un módulo `public` solo cuenta si un paquete **ancestro** público
   re-exporta ese nombre (`_offers`, a partir del índice de re-exports): tipo `bypass`.
 - **Arreglo** (`_fix`), por sentencia y por nombre: `from <fachada> import <nombre>` con la
-  fachada ancestra más cercana. Seguro porque Python ejecuta el `__init__` de cada ancestro antes
-  de importar el submódulo. En este orden: `module_import` (no hay nombre), `no_public_path` o
-  `not_ancestor` (nadie lo ofrece / solo un paquete que no es ancestro), `guarded` (el re-export
-  está en un `try`), `rebound` (la fachada lo define o lo re-exporta desde dos módulos), `cycle`
-  (el consumidor es alcanzable desde la fachada por aristas `MODULE`: al cargarla ya lo importa).
+  fachada ancestra pública más cercana. Seguro porque Python ejecuta el `__init__` de cada
+  ancestro antes de importar el submódulo. En este orden: `module_import` (la línea no es un
+  `from <escrito> import <nombre>` normal: `import a.b as c` con `c.nombre` también da aristas
+  con símbolo, y reescribir su línea quitaría la ligadura), `no_public_path` o `not_ancestor`
+  (nadie lo ofrece / solo un paquete que no es ancestro; el `__init__` del propio consumidor no
+  cuenta), `guarded` (el re-export está en un `try`), el estado de **cada módulo por el que pasa
+  el nombre**, tanto en el camino de la fachada como en el del módulo escrito (`_hop_status` con
+  `parsers.exports.name_binding`: un único `from x import nombre` directo en el cuerpo, sin
+  renombrar, sin otra ligadura —`for`, `with`, `except as`, `match`, morsa, `del`, `global`,
+  estrella que lo traiga dos veces— ni escritura del espacio de nombres): `conditional`, `renamed`
+  o `rebound`; un submódulo de la fachada con ese nombre (`rebound`: al importarlo se
+  sobrescribe); y `cycle` (el consumidor es alcanzable desde la fachada por aristas `MODULE`: al
+  cargarla ya lo importa). Una fachada que solo ofrece el nombre de forma `conditional`,
+  `renamed` o `rebound` **no ofrece ese objeto** y rodearla no es un `bypass`
+  (`BYPASS_REASONS`: solo `guarded` y `cycle` siguen contando).
   Un test de propiedad aplica los arreglos con `ast` y ejecuta Python antes y después
-  (`tests/unit/test_api_leak_safety.py`, escenarios en `api_scenarios.py`); en litellm, los 36
-  arreglos aplicados en una copia dejan los 2.825 módulos listados importando igual.
+  (`tests/unit/test_api_leak_safety.py`, 46 escenarios en `api_scenarios.py`, 31 de ellos los de
+  la revisión final); en litellm, los 26 arreglos aplicados en una copia dejan importando igual los
+  2.642 módulos que se pueden importar (los otros 183 fallan igual por dependencias que faltan).
 - `find_api_leaks`: un hallazgo `API_LEAK` por módulo escrito, evidencia `kind`, `reason`,
   `consumers`, `roots`, `statements`, `fixed`, `no_fix`, `fixes` (para la IA, hasta 5) y
   `fixes_total`. El informe lista todas las sentencias.
-- Límites: el acceso por atributo a un submódulo privado desde un paquete público
+- Límites: los nombres que una fachada sirve desde un `__getattr__` (carga perezosa, como
+  `litellm.CustomLogger`) no son ofertas; una función que la fachada llama al cargarse y que
+  importa al consumidor, `importlib` y un `lib.Nombre = …` desde otro módulo no se siguen. El
+  acceso por atributo a un submódulo privado desde un paquete público
   (`import lib` + `lib._x.f()`) se clasifica por el módulo escrito (`lib`); un nombre privado
   tomado de un módulo público no es fuga; las fugas dentro del mismo paquete raíz las cubre
   `[layers]`.

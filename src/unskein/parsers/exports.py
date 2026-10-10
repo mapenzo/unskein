@@ -362,3 +362,61 @@ def _loose_bindings(
         if any(f"{writer}(" in source for writer in NAMESPACE_WRITERS):
             uncertain |= NAMESPACE_WRITER_CALL.search(source) is not None
     return loose, uncertain
+
+
+@dataclass(frozen=True, slots=True)
+class NameBinding:
+    """Where a module binds one name at module level.
+
+    Attributes:
+        sites: Statements that bind, delete or loosely rebind it, blocks included (function
+            and class bodies bind nothing in the module).
+        plain_import: Whether a statement directly in the module body is a
+            ``from x import name`` that keeps the name.
+        renamed: Whether a statement directly in the body binds it from another name
+            (``from x import other as name``).
+        in_block: Whether some binding sits inside a block (``if``, ``try``, ``with``…).
+        uncertain: Whether the module can bind names nobody can read (``globals()``,
+            ``vars()``, ``exec`` or a star import inside a block).
+    """
+
+    sites: int
+    plain_import: bool
+    renamed: bool
+    in_block: bool
+    uncertain: bool
+
+
+def name_binding(tree: ast.Module, name: str) -> NameBinding:
+    """Describe every way a module binds one name at module level.
+
+    Args:
+        tree: Parsed module.
+        name: The name to look for.
+
+    Returns:
+        Its binding sites; a ``for``/``with``/``except … as``/``match``/walrus/``global``
+        binding counts as one site, and so does ``del name``.
+    """
+    statements = list(_module_level_statements(tree))
+    top = {id(node) for node in tree.body}
+    loose, uncertain = _loose_bindings(tree, statements, None)
+    sites = 0
+    plain_import = renamed = in_block = False
+    for node in statements:
+        count = sum(1 for bound in _bound_names(node) if bound == name)
+        if isinstance(node, ast.Delete):
+            count += sum(1 for t in node.targets if isinstance(t, ast.Name) and t.id == name)
+        if not count:
+            continue
+        sites += count
+        if id(node) not in top:
+            in_block = True
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if (alias.asname or alias.name) == name:
+                    plain_import |= alias.name == name
+                    renamed |= alias.name != name
+    if name in loose:
+        sites += 1
+    return NameBinding(sites, plain_import, renamed, in_block, uncertain)

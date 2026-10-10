@@ -102,9 +102,10 @@ Architecture health: fair.
   package keeps internal — a `_private` module or one you declare internal in `[api]` — or
   goes around a facade that already offers the name. One finding per module, with the import
   to write instead when unskein can prove it safe and the reason when it cannot. On litellm
-  it finds 6 internal modules (77 statements) and 16 bypassed facades (38 statements), proves
-  a fix for 36 of 115 statements and explains the other 79 (8 would be unsafe import cycles);
-  applying the fixes leaves every one of its 2,825 listed modules importing exactly as before.
+  it finds 6 internal modules (77 statements) and 14 bypassed facades (25 statements), proves
+  a fix for 26 of 102 statements and explains the other 76 (5 would be unsafe import cycles);
+  applying the fixes leaves each of the 2,642 modules that can be imported there importing
+  exactly as before (the other 183 fail for missing dependencies before and after).
   ruff's `import-private-name` gives 2,547 findings on the same checkout, 2,477 of them inside
   `litellm` itself, and no fix. It adds about 2 % to a scan and is off by default.
 - **Star imports** (opt in with `--star-fixes`): one finding per module imported with

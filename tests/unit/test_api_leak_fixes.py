@@ -52,14 +52,90 @@ def test_a_guarded_reexport_gets_no_fix(make_project) -> None:
 
 def test_a_rebound_name_gets_no_fix(make_project) -> None:
     files = {
+        "lib/_hidden.py": "class Hidden:\n    pass\n",
         "lib/__init__.py": (
-            "from lib.core.logger import Logger\n\n\ndef wrap(cls):\n    return cls\n\n\n"
-            "Logger = wrap(Logger)\n"
+            "from lib._hidden import Hidden\n\n\ndef wrap(cls):\n    return cls\n\n\n"
+            "Hidden = wrap(Hidden)\n"
         ),
-        "app/a.py": "from lib.core.logger import Logger\n",
+        "app/a.py": "from lib._hidden import Hidden\n",
     }
     (fix,) = _fixes(make_project, files)
     assert (fix.action, fix.reason) == (LeakAction.NO_FIX, LeakNoFix.REBOUND)
+
+
+@pytest.mark.parametrize(
+    ("facade", "reason"),
+    [
+        (
+            "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n"
+            "    from lib._hidden import Hidden\n",
+            LeakNoFix.CONDITIONAL,
+        ),
+        ("def f():\n    from lib._hidden import Hidden\n", LeakNoFix.CONDITIONAL),
+        ("from lib._hidden import Other as Hidden\n", LeakNoFix.RENAMED),
+        ("from lib._hidden import Hidden\n\ndel Hidden\n", LeakNoFix.REBOUND),
+        ("from lib._hidden import Hidden\nimport json as Hidden\n", LeakNoFix.REBOUND),
+        (
+            "from lib._hidden import Hidden\n\ntry:\n    1 / 0\n"
+            "except ZeroDivisionError as Hidden:\n    pass\n",
+            LeakNoFix.REBOUND,
+        ),
+        ("from lib._hidden import Hidden\n\nglobals()['Hidden'] = 1\n", LeakNoFix.REBOUND),
+        ("from lib._hidden import *\nfrom lib.other import *\n", LeakNoFix.REBOUND),
+    ],
+)
+def test_a_facade_that_does_not_plainly_offer_the_name_gets_the_reason(
+    make_project, facade: str, reason: LeakNoFix
+) -> None:
+    files = {
+        "lib/_hidden.py": "class Hidden:\n    pass\n\n\nclass Other:\n    pass\n",
+        "lib/other.py": "class Hidden:\n    pass\n",
+        "lib/__init__.py": facade,
+        "app/a.py": "from lib._hidden import Hidden\n",
+    }
+    (fix,) = _fixes(make_project, files)
+    assert (fix.action, fix.reason) == (LeakAction.NO_FIX, reason)
+
+
+@pytest.mark.parametrize(
+    "facade",
+    [
+        "from typing import TYPE_CHECKING\n\nif TYPE_CHECKING:\n"
+        "    from lib.core.logger import Logger\n",
+        "from lib.core.logger import Other as Logger\n",
+        "from lib.core.logger import Logger\n\ndel Logger\n",
+    ],
+)
+def test_a_facade_that_does_not_really_offer_the_name_is_no_bypass(
+    make_project, facade: str
+) -> None:
+    files = {"lib/__init__.py": facade, "app/a.py": "from lib.core.logger import Logger\n"}
+    assert _fixes(make_project, files) == []
+
+
+def test_a_submodule_with_the_name_of_the_export_gets_no_fix(make_project) -> None:
+    files = {
+        "lib/_impl.py": "def util():\n    return 1\n",
+        "lib/util.py": "X = 1\n",
+        "lib/__init__.py": "from lib._impl import util\n",
+        "app/a.py": "from lib._impl import util\n",
+    }
+    (fix,) = _fixes(make_project, files)
+    assert (fix.action, fix.reason) == (LeakAction.NO_FIX, LeakNoFix.REBOUND)
+
+
+def test_the_consumers_own_package_is_not_an_offer(make_project) -> None:
+    files = {"app/__init__.py": "from lib._private import SECRET\n"}
+    (fix,) = _fixes(make_project, files)
+    assert (fix.action, fix.reason) == (LeakAction.NO_FIX, LeakNoFix.NO_PUBLIC_PATH)
+
+
+def test_a_whole_module_import_read_through_an_attribute_is_never_reported(make_project) -> None:
+    files = {
+        "lib/core/__init__.py": "from lib.core.logger import Logger\n",
+        "app/a.py": "import lib.core as c\nprint(c.Logger)\n",
+    }
+    assert _fixes(make_project, files) == []
 
 
 def test_a_facade_that_imports_the_consumer_gets_no_fix(make_project) -> None:

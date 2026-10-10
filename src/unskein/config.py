@@ -62,7 +62,7 @@ class PipelineConfig:
     metrics: StageConfig = field(default_factory=lambda: StageConfig(max_workers=1))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class OptionalRules:
     """Rules that need extra analysis and stay off unless asked for.
 
@@ -115,7 +115,7 @@ class AnalysisConfig:
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ApiContract:
     """The public surface a project declares in ``[api]``.
 
@@ -481,7 +481,7 @@ def resolve_analysis_config(toml: TomlConfig, flags: AnalysisFlags) -> AnalysisC
     }
     overrides = from_toml | {name: value for name, value in from_flags.items() if value is not None}
     rules_from_toml = toml.analysis.model_dump(exclude_none=True, include=set(OPTIONAL_RULE_NAMES))
-    rules_from_flags = {"star_fixes": flags.star_fixes, "api_leaks": flags.api_leaks}
+    rules_from_flags = {name: getattr(flags, name) for name in OPTIONAL_RULE_NAMES}
     rules = rules_from_toml | {
         name: value for name, value in rules_from_flags.items() if value is not None
     }

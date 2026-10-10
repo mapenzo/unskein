@@ -992,6 +992,15 @@ _FINDINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "sin arreglo seguro: la fachada vuelve a ligar el nombre",
         Lang.EN: "no safe fix: the facade binds the name again",
     },
+    "finding.api_leak.no_fix.conditional": {
+        Lang.ES: "sin arreglo seguro: la fachada importa el nombre dentro de un `if`, una "
+        "función o una clase",
+        Lang.EN: "no safe fix: the facade imports the name inside an `if`, a function or a class",
+    },
+    "finding.api_leak.no_fix.renamed": {
+        Lang.ES: "sin arreglo seguro: la fachada exporta otro objeto con ese nombre",
+        Lang.EN: "no safe fix: the facade exports a different object under that name",
+    },
     "finding.api_leak.no_fix.module_import": {
         Lang.ES: "sin arreglo seguro: importa un módulo, no un nombre",
         Lang.EN: "no safe fix: it imports a module, not a name",

@@ -1,5 +1,6 @@
 """Rule 13: code outside a package imports what the package keeps internal."""
 
+import ast
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -10,6 +11,8 @@ import networkx as nx
 
 from unskein.config import ApiContract
 from unskein.graph.findings import Evidence, Finding, FindingKind
+from unskein.parsers.discovery import parse_source
+from unskein.parsers.exports import name_binding
 from unskein.parsers.indirection import (
     ReExportIndex,
     build_reexport_index,
@@ -19,12 +22,13 @@ from unskein.parsers.indirection import (
     star_exports,
 )
 from unskein.parsers.layout import relative_path
-from unskein.parsers.models import STAR_EXPORT, ImportEdge, ModuleInfo, ParseResult
+from unskein.parsers.models import ImportEdge, ModuleInfo, ParseResult
 
 MAX_FIXES_SHOWN = 5
 FIX_SEPARATOR = "; "
 ROOT_SEPARATOR = "; "
 ROOT_COUNT_SEPARATOR = " "
+ALIAS_KEYWORD = " as "
 SEGMENT_SEPARATOR = "."
 LINE_SEPARATOR = ":"
 PRIVATE_PREFIX = "_"
@@ -93,7 +97,10 @@ class LeakNoFix(StrEnum):
         NOT_ANCESTOR: Only a package that is not an ancestor offers it.
         CYCLE: The facade imports the consumer when it loads.
         GUARDED: The facade imports the name inside a ``try`` for import errors.
-        REBOUND: The facade binds the name more than once.
+        REBOUND: The facade (or a module on the way to the definition) binds the name more
+            than once, deletes it, or writes its namespace in a way that cannot be read.
+        CONDITIONAL: The facade imports the name inside an ``if``, a function or a class body.
+        RENAMED: The facade exports a different object under that name.
         MODULE_IMPORT: The statement imports a module, not a name.
     """
 
@@ -102,7 +109,13 @@ class LeakNoFix(StrEnum):
     CYCLE = "cycle"
     GUARDED = "guarded"
     REBOUND = "rebound"
+    CONDITIONAL = "conditional"
+    RENAMED = "renamed"
     MODULE_IMPORT = "module_import"
+
+
+# Reasons that still leave the facade offering the same object: it is a bypass all the same.
+BYPASS_REASONS = frozenset({LeakNoFix.GUARDED, LeakNoFix.CYCLE})
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,9 +181,11 @@ class _Use:
     facades: tuple[str, ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class _Context:
-    """What proving a fix needs, computed once per project.
+    """What proving a fix needs: facts computed once per project, and two caches.
+
+    The caches (``trees`` and ``reach``) are filled on demand while fixes are proven.
 
     Attributes:
         modules: Parsed modules by name.
@@ -180,9 +195,10 @@ class _Context:
         index: Re-export index.
         guarded: Guarded re-exports.
         offers: Packages that offer each (defining module, name), nearest ancestor first.
-        rebound: (facade, name) pairs the facade binds more than once.
+        star_count: How many star imports of each (module, name) bring the name in.
         import_graph: Dependencies that exist when modules are imported.
-        reach: Cache of what each facade imports when it loads.
+        trees: Source of each module read again, by name; None when it cannot be read.
+        reach: What each facade imports when it loads.
     """
 
     modules: Mapping[str, ModuleInfo]
@@ -192,8 +208,9 @@ class _Context:
     index: ReExportIndex
     guarded: frozenset[tuple[str, str]]
     offers: Mapping[tuple[str, str], tuple[str, ...]]
-    rebound: frozenset[tuple[str, str]]
+    star_count: Counter[tuple[str, str]]
     import_graph: nx.DiGraph
+    trees: dict[str, ast.Module | None] = field(default_factory=dict)
     reach: dict[str, frozenset[str]] = field(default_factory=dict)
 
 
@@ -294,28 +311,6 @@ def _offers(index: ReExportIndex) -> dict[tuple[str, str], tuple[str, ...]]:
     }
 
 
-def _rebound(result: ParseResult) -> frozenset[tuple[str, str]]:
-    """Find the (facade, name) pairs a facade binds more than once.
-
-    Args:
-        result: Parsed project.
-
-    Returns:
-        Pairs re-exported from two different modules, or re-exported and also defined.
-    """
-    origins: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for re_export in result.re_exports:
-        if re_export.symbol_name != STAR_EXPORT:
-            pair = (re_export.exporting_module, re_export.symbol_name)
-            origins[pair].add(re_export.original_module)
-    pairs = {pair for pair, found in origins.items() if len(found) > 1}
-    for module in result.modules:
-        pairs.update(
-            (module.name, name) for name in module.defined_names if (module.name, name) in origins
-        )
-    return frozenset(pairs)
-
-
 def _context(result: ParseResult, import_graph: nx.DiGraph, api: ApiContract) -> _Context:
     """Build the shared context of a project.
 
@@ -329,6 +324,9 @@ def _context(result: ParseResult, import_graph: nx.DiGraph, api: ApiContract) ->
     """
     stars = star_exports(result.modules, result.re_exports)
     index = build_reexport_index(result.re_exports, stars)
+    star_count: Counter[tuple[str, str]] = Counter()
+    for (module, _), names in stars.items():
+        star_count.update((module, name) for name in names)
     return _Context(
         modules={module.name: module for module in result.modules},
         names=frozenset(module.name for module in result.modules) | frozenset(result.virtual),
@@ -337,7 +335,7 @@ def _context(result: ParseResult, import_graph: nx.DiGraph, api: ApiContract) ->
         index=index,
         guarded=guarded_reexports(result.re_exports, stars),
         offers=_offers(index),
-        rebound=_rebound(result),
+        star_count=star_count,
         import_graph=import_graph,
     )
 
@@ -364,13 +362,18 @@ def _is_consumer(importer: ModuleInfo, written: str, context: _Context) -> bool:
     )
 
 
-def _facades(edge: ImportEdge, written: str, context: _Context) -> tuple[str, ...]:
+def _facades(
+    edge: ImportEdge, written: str, context: _Context, *, importer: str
+) -> tuple[str, ...]:
     """List the public ancestor packages of a module that offer the imported name.
+
+    The importer's own package never counts: its import of the name is the leak itself.
 
     Args:
         edge: The import edge.
         written: Module the statement named.
         context: Shared context.
+        importer: Module that holds the statement.
 
     Returns:
         The packages, nearest first; empty for a whole-module import.
@@ -381,7 +384,9 @@ def _facades(edge: ImportEdge, written: str, context: _Context) -> tuple[str, ..
     return tuple(
         exporter
         for exporter in exporters
-        if written.startswith(exporter + SEGMENT_SEPARATOR) and _is_public(exporter, context.api)
+        if exporter != importer
+        and written.startswith(exporter + SEGMENT_SEPARATOR)
+        and _is_public(exporter, context.api)
     )
 
 
@@ -404,7 +409,7 @@ def _use(importer: ModuleInfo, edge: ImportEdge, context: _Context) -> _Use | No
     verdict = classify_module(written, context.api)
     if verdict is ApiVerdict.DECLARED_PUBLIC:
         return None
-    facades = _facades(edge, written, context)
+    facades = _facades(edge, written, context, importer=importer.name)
     if verdict is ApiVerdict.PUBLIC and not facades:
         return None
     return _Use(importer, edge, written, facades)
@@ -462,13 +467,134 @@ def _no_fix(use: _Use, context: _Context, reason: LeakNoFix) -> LeakFix:
     )
 
 
+def _tree(module: str, context: _Context) -> ast.Module | None:
+    """Read a project module again, once.
+
+    Args:
+        module: Dotted module name.
+        context: Shared context; caches the tree.
+
+    Returns:
+        Its syntax tree, or None when it is not a parsed module or cannot be read any more.
+    """
+    if module not in context.trees:
+        info = context.modules.get(module)
+        context.trees[module] = parse_source(info.file_path, None) if info else None
+    return context.trees[module]
+
+
+def _is_plain_from_import(use: _Use, context: _Context) -> bool:
+    """Tell whether the statement is a ``from <written> import <name>`` the fix can rewrite.
+
+    Whole-module imports read through an attribute (``import lib.core as c`` and ``c.Name``)
+    give edges with a symbol too; replacing their line would drop the binding they create.
+
+    Args:
+        use: The use.
+        context: Shared context.
+
+    Returns:
+        True when the line holds that statement, binding the name the edge records.
+    """
+    tree = _tree(use.importer.name, context)
+    if tree is None:
+        return False
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.lineno == use.edge.line_number
+            and node.level == 0
+            and node.module == use.written
+        ):
+            for alias in node.names:
+                bound = None if alias.asname in (None, alias.name) else alias.asname
+                if alias.name == use.edge.symbol_name and bound == use.edge.alias:
+                    return True
+    return False
+
+
+def _hop_status(module: str, symbol: str, context: _Context) -> LeakNoFix | None:
+    """Prove that a module binds a re-exported name exactly once, unconditionally.
+
+    Args:
+        module: A package or module the name passes through.
+        symbol: The re-exported name.
+        context: Shared context.
+
+    Returns:
+        None when it is a single plain ``from x import name`` directly in the module body
+        (or the only star import that brings the name), else the reason it is not.
+    """
+    tree = _tree(module, context)
+    if tree is None:
+        return LeakNoFix.REBOUND
+    binding = name_binding(tree, symbol)
+    stars = context.star_count[(module, symbol)]
+    total = binding.sites + stars
+    if binding.uncertain or total > 1:
+        return LeakNoFix.REBOUND
+    if total == 0:
+        return LeakNoFix.CONDITIONAL
+    if stars == 1 or binding.plain_import:
+        return None
+    if binding.renamed:
+        return LeakNoFix.RENAMED
+    return LeakNoFix.CONDITIONAL if binding.in_block else LeakNoFix.REBOUND
+
+
+def _path(start: str, symbol: str, target: str, context: _Context) -> list[str]:
+    """List the modules a name passes through from ``start`` down to its definition.
+
+    Args:
+        start: Module the name is imported from.
+        symbol: The name.
+        target: Module that defines it.
+        context: Shared context.
+
+    Returns:
+        ``start`` and every re-exporting module after it, up to but not including ``target``.
+    """
+    modules: list[str] = []
+    module = start
+    while module != target and module not in modules and (module, symbol) in context.index:
+        modules.append(module)
+        module = context.index[(module, symbol)]
+    return modules
+
+
+def _chain_status(use: _Use, facade: str, context: _Context) -> LeakNoFix | None:
+    """Check every module between the consumer's import and the facade's import.
+
+    The name the consumer gets today comes through the written module's own chain and the
+    name the fix would give through the facade's; both must lead to the one definition.
+
+    Args:
+        use: The use.
+        facade: The package the fix would import from.
+        context: Shared context.
+
+    Returns:
+        The first reason a module on either path is not a plain single binding, or None.
+    """
+    symbol = str(use.edge.symbol_name)
+    paths = [_path(facade, symbol, use.edge.target, context)]
+    if use.written != use.edge.target:
+        paths.append(_path(use.written, symbol, use.edge.target, context))
+    for module in (module for path in paths for module in path):
+        status = _hop_status(module, symbol, context)
+        if status is not None:
+            return status
+    return None
+
+
 def _fix(use: _Use, context: _Context) -> LeakFix:
     """Prove the fix of one statement or say why there is none.
 
-    The fix is ``from <facade> import <name>`` and needs, in this order: a name (not a
-    module), a public ancestor package that re-exports it, no guard around that re-export,
-    no second binding of the name there, and a facade that does not import the consumer
-    when it loads.
+    The fix is ``from <facade> import <name>`` and needs, in this order: a statement that
+    is a plain ``from … import name``, a public ancestor package that re-exports it, no
+    guard around that re-export, every module the name passes through binding it exactly
+    once and unconditionally without renaming it, no submodule of the facade with that
+    name, and a facade that does not import the consumer when it loads.
 
     Args:
         use: The use.
@@ -478,17 +604,24 @@ def _fix(use: _Use, context: _Context) -> LeakFix:
         The fix, or the entry with its reason.
     """
     symbol = use.edge.symbol_name
-    if symbol is None:
+    if symbol is None or not _is_plain_from_import(use, context):
         return _no_fix(use, context, LeakNoFix.MODULE_IMPORT)
     if not use.facades:
-        offered = context.offers.get((use.edge.target, symbol), ())
+        offered = [
+            exporter
+            for exporter in context.offers.get((use.edge.target, symbol), ())
+            if exporter != use.importer.name
+        ]
         reason = LeakNoFix.NOT_ANCESTOR if offered else LeakNoFix.NO_PUBLIC_PATH
         return _no_fix(use, context, reason)
     facade = use.facades[0]
     if passes_guard(facade, symbol, context.index, context.guarded):
         return _no_fix(use, context, LeakNoFix.GUARDED)
-    if (facade, symbol) in context.rebound:
-        return _no_fix(use, context, LeakNoFix.REBOUND)
+    status = _chain_status(use, facade, context)
+    if status is None and f"{facade}{SEGMENT_SEPARATOR}{symbol}" in context.names:
+        status = LeakNoFix.REBOUND
+    if status is not None:
+        return _no_fix(use, context, status)
     if use.importer.name in _reachable(facade, context):
         return _no_fix(use, context, LeakNoFix.CYCLE)
     return LeakFix(
@@ -501,12 +634,12 @@ def _fix(use: _Use, context: _Context) -> LeakFix:
     )
 
 
-def _module(name: str, uses: list[_Use], context: _Context) -> LeakModule:
-    """Summarize every use of one written module.
+def _module(name: str, fixes: list[LeakFix], context: _Context) -> LeakModule:
+    """Summarize every statement that imports one written module.
 
     Args:
         name: The written module.
-        uses: Its uses.
+        fixes: The fix, or reason for none, of each statement.
         context: Shared context.
 
     Returns:
@@ -519,19 +652,32 @@ def _module(name: str, uses: list[_Use], context: _Context) -> LeakModule:
         kind = LeakKind.INTERNAL
         declared = verdict is ApiVerdict.DECLARED_INTERNAL
         reason = LeakReason.DECLARED if declared else LeakReason.CONVENTION
-    fixes = tuple(
-        sorted((_fix(use, context) for use in uses), key=lambda f: (f.location, f.symbol or ""))
-    )
-    roots = Counter(_root_of(use.importer.name) for use in uses)
+    ordered = tuple(sorted(fixes, key=lambda fix: (fix.location, fix.symbol or "")))
+    roots = Counter(_root_of(fix.importer) for fix in ordered)
     return LeakModule(
         name,
         kind,
         reason,
-        len({use.importer.name for use in uses}),
+        len({fix.importer for fix in ordered}),
         tuple(sorted(roots.items(), key=lambda item: (-item[1], item[0]))),
-        fixes,
-        sum(1 for fix in fixes if fix.action is LeakAction.FACADE_IMPORT),
+        ordered,
+        sum(1 for fix in ordered if fix.action is LeakAction.FACADE_IMPORT),
     )
+
+
+def _is_bypass(fix: LeakFix) -> bool:
+    """Tell whether a statement really goes around a facade that offers the same object.
+
+    A facade that only imports the name under ``TYPE_CHECKING``, in a function, under another
+    name, or that rebinds it does not offer that object, so importing around it is no bypass.
+
+    Args:
+        fix: The fix, or the reason for none, of a statement into a public module.
+
+    Returns:
+        True when the fix exists, or is withheld only for a guard or an import cycle.
+    """
+    return fix.action is LeakAction.FACADE_IMPORT or fix.reason in BYPASS_REASONS
 
 
 def summarize_leaks(
@@ -548,19 +694,35 @@ def summarize_leaks(
         One entry per written module: internal ones first, then by consumers, then by name.
     """
     context = _context(result, import_graph, api)
-    grouped: dict[str, list[_Use]] = defaultdict(list)
+    grouped: dict[str, list[LeakFix]] = defaultdict(list)
     seen: set[tuple[str, int | None, str, str | None]] = set()
     for module in result.modules:
         for edge in module.imports:
             use = _use(module, edge, context)
             key = (module.name, edge.line_number, edge.written or edge.target, edge.symbol_name)
-            if use is not None and key not in seen:
-                seen.add(key)
-                grouped[use.written].append(use)
-    leaks = [_module(name, uses, context) for name, uses in grouped.items()]
+            if use is None or key in seen:
+                continue
+            seen.add(key)
+            fix = _fix(use, context)
+            is_public = classify_module(use.written, context.api) is ApiVerdict.PUBLIC
+            if not is_public or _is_bypass(fix):
+                grouped[use.written].append(fix)
+    leaks = [_module(name, fixes, context) for name, fixes in grouped.items()]
     return sorted(
         leaks, key=lambda leak: (leak.kind is not LeakKind.INTERNAL, -leak.consumers, leak.name)
     )
+
+
+def import_name(fix: LeakFix) -> str:
+    """Render the name a fix imports, with the alias the statement binds.
+
+    Args:
+        fix: A fix with a symbol.
+
+    Returns:
+        ``symbol`` or ``symbol as alias``.
+    """
+    return f"{fix.symbol}{ALIAS_KEYWORD}{fix.alias}" if fix.alias else str(fix.symbol)
 
 
 def _fix_summary(fix: LeakFix) -> str:
@@ -574,8 +736,7 @@ def _fix_summary(fix: LeakFix) -> str:
     """
     if fix.action is LeakAction.NO_FIX:
         return f"{fix.location} {fix.action} ({fix.reason})"
-    name = fix.symbol if fix.alias is None else f"{fix.symbol} as {fix.alias}"
-    return f"{fix.location} from {fix.facade} import {name}"
+    return f"{fix.location} from {fix.facade} import {import_name(fix)}"
 
 
 def find_api_leaks(leaks: Iterable[LeakModule]) -> list[Finding]:

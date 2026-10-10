@@ -291,19 +291,29 @@ El informe tiene una entrada por módulo con cada sentencia debajo:
 ```
 - `lib._private` (interno por convención de nombre; 2 módulos consumidores; 2 sentencias desde app 2)
   - `app/a.py:2`: sin arreglo seguro: ningún paquete ofrece `SECRET`; decide el dueño
+  - `app/b.py:2`: sin arreglo seguro: importa un módulo, no un nombre
 - `lib.core.logger` (rodeado: un paquete superior ofrece el nombre; 1 módulo consumidor; 1 sentencia desde app 1)
   - `app/a.py:1`: `from lib import Logger as L`
 ```
 
 Un arreglo como ``from lib import Logger as L`` solo aparece cuando unskein puede demostrar
-que es seguro: la fachada es un paquete ancestro (importarla no carga nada que no cargara
-el original), re-exporta ese mismo objeto, lo importa sin `try`, liga el nombre una sola vez
-y no importa tu módulo al cargarse. Si no, la entrada dice por qué: *ningún paquete ofrece
-el nombre* (decide el dueño: decláralo público en `[api]` o deja de depender de él), *solo lo
-ofrece un paquete que no es ancestro*, *la fachada importa este módulo al cargarse*, *la
-fachada lo importa dentro de un `try`*, *la fachada vuelve a ligar el nombre* o *importa un
-módulo, no un nombre*. unskein nunca edita archivos: copia la línea. Una sentencia con varios
-nombres se juzga nombre a nombre: mueve los que tienen arreglo y deja el resto.
+que es seguro: la sentencia es un `from x import nombre` normal; la fachada es un paquete
+ancestro (importarla no carga nada que no cargara el original); cada módulo por el que pasa el
+nombre lo importa con un único `from x import nombre` directamente en su cuerpo —no en un `if`,
+una función o una clase, no con otro nombre, ni vuelto a ligar, borrado o escrito con
+`globals()`—, y ningún submódulo de la fachada se llama igual; y la fachada no importa tu módulo
+mientras se carga. Si no, la entrada dice por qué: *ningún paquete ofrece el nombre* (decide el
+dueño: decláralo público en `[api]` o deja de depender de él), *solo lo ofrece un paquete que no
+es ancestro*, *la fachada importa este módulo al cargarse*, *la fachada lo importa dentro de un
+`try`*, *dentro de un `if`, una función o una clase*, *con otro nombre*, *la fachada vuelve a
+ligar el nombre* o *importa un módulo, no un nombre*. Una fachada que solo importa el nombre de
+forma condicional o con otro nombre no lo ofrece, así que rodearla no es una fuga. unskein nunca
+edita archivos: copia la línea. Una sentencia con varios nombres se juzga nombre a nombre: mueve
+los que tienen arreglo y deja el resto.
+
+Lo que no ve: los nombres que una fachada sirve desde un `__getattr__` del módulo (carga
+perezosa), una función que la fachada llama al cargarse y que importa tu módulo, las llamadas a
+`importlib`, y el código que asigna un atributo de la fachada (`lib.Nombre = ...`).
 
 Con `api_leaks` apagado y una tabla `[api]` declarada, el informe avisa «Contrato `[api]` sin
 comprobar», para que un contrato que nada comprueba no pase desapercibido.
