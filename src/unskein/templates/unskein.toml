@@ -45,6 +45,12 @@
 # listed as warnings.
 # star_fixes = false
 
+# Report imports that reach into what a package keeps internal (a `_private`
+# module, or one declared internal in [api]) or that go around a package facade
+# which already offers the name, with the import to write instead (finding
+# "API leak"). Off by default; see [api] below to declare your public surface.
+# api_leaks = false
+
 # Encoding for files that declare none and cannot be detected. Never
 # overrides a PEP 263 coding cookie or a BOM.
 # default_encoding = "utf-8"

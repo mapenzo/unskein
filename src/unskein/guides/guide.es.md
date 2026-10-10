@@ -181,6 +181,7 @@ unskein scan [RUTA] [opciones]
 | `--findings` / `--no-findings` | Muestra u oculta la sección de hallazgos (se muestra por defecto). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Sigue carpetas enlazadas (desactivado por defecto). |
 | `--star-fixes` / `--no-star-fixes` | Calcula el import explícito de cada `from x import *` (desactivado por defecto; ver «Imports con asterisco»). |
+| `--api-leaks` / `--no-api-leaks` | Señala los imports que entran en lo que un paquete mantiene interno, con el import que escribir en su lugar (desactivado por defecto). |
 | `--encoding NOMBRE` | Encoding de reserva para archivos que no declaran ninguno. |
 | `--lang es\|en` | Idioma del informe. |
 | `-o`, `--output ARCHIVO` | Guarda también el informe Markdown en un archivo. |

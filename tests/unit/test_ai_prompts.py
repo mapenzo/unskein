@@ -34,7 +34,7 @@ from unskein.ai.prompts import (
     ground_report,
     shrink_context,
 )
-from unskein.config import AnalysisConfig
+from unskein.config import AnalysisConfig, OptionalRules
 from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import AnalysisResult, analyze, compute_coupling
 from unskein.graph.packages import PackageEdge
@@ -53,7 +53,7 @@ def analyze_fixture(root: Path, star_fixes: bool = False) -> AnalysisResult:
     Returns:
         The analysis of the fixture.
     """
-    adapter = PythonAdapter(AnalysisConfig(star_fixes=star_fixes))
+    adapter = PythonAdapter(AnalysisConfig(optional_rules=OptionalRules(star_fixes=star_fixes)))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)))
 

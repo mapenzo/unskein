@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pathspec
 
-from unskein.config import AnalysisConfig, FindingsConfig
+from unskein.config import AnalysisConfig, FindingsConfig, OptionalRules
 from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.graph.stars import WildcardAction, WildcardFix, WildcardReason
@@ -16,7 +16,7 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "star_project"
 
 def _analyzed(root: Path = FIXTURE, config: FindingsConfig | None = None) -> AnalysisResult:
     """Discover, parse, resolve and analyze a project."""
-    adapter = PythonAdapter(AnalysisConfig(star_fixes=True))
+    adapter = PythonAdapter(AnalysisConfig(optional_rules=OptionalRules(star_fixes=True)))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)), config)
 

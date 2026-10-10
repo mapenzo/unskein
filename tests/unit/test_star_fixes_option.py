@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pathspec
 
-from unskein.config import AnalysisConfig
+from unskein.config import AnalysisConfig, OptionalRules
 from unskein.graph.findings import FindingKind
 from unskein.graph.metrics import analyze
 from unskein.i18n import Lang
@@ -16,7 +16,7 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "star_project"
 
 def _analyzed(star_fixes: bool):
     """Discover, parse, resolve and analyze the star fixture."""
-    adapter = PythonAdapter(AnalysisConfig(star_fixes=star_fixes))
+    adapter = PythonAdapter(AnalysisConfig(optional_rules=OptionalRules(star_fixes=star_fixes)))
     files = sorted(adapter.discover_files(FIXTURE, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, FIXTURE)))
 

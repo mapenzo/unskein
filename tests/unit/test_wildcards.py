@@ -5,7 +5,7 @@ from pathlib import Path
 import pathspec
 import pytest
 
-from unskein.config import AnalysisConfig
+from unskein.config import AnalysisConfig, OptionalRules
 from unskein.parsers.exports import module_exports, module_surface
 from unskein.parsers.indirection import resolve_indirection
 from unskein.parsers.models import WarningCode
@@ -18,7 +18,7 @@ FIXTURE = Path(__file__).parent.parent / "fixtures" / "star_project"
 
 def _parse(root: Path = FIXTURE):
     """Discover and parse a project, before re-export resolution."""
-    adapter = PythonAdapter(AnalysisConfig(star_fixes=True))
+    adapter = PythonAdapter(AnalysisConfig(optional_rules=OptionalRules(star_fixes=True)))
     return adapter.parse(sorted(adapter.discover_files(root, pathspec.PathSpec([]))), root)
 
 

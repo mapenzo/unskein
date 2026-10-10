@@ -7,7 +7,7 @@ import pathspec
 import pytest
 
 from unskein.ai.models import AIFailure, AIReport, Problem
-from unskein.config import AnalysisConfig, FindingsConfig
+from unskein.config import AnalysisConfig, FindingsConfig, OptionalRules
 from unskein.graph.findings import Finding, FindingKind
 from unskein.graph.metrics import (
     IMPACT_BOTTLENECK_MODULES,
@@ -65,7 +65,7 @@ def analyzed(root: Path, star_fixes: bool = False) -> AnalysisResult:
     Returns:
         The analysis of the fixture.
     """
-    adapter = PythonAdapter(AnalysisConfig(star_fixes=star_fixes))
+    adapter = PythonAdapter(AnalysisConfig(optional_rules=OptionalRules(star_fixes=star_fixes)))
     files = sorted(adapter.discover_files(root, pathspec.PathSpec([])))
     return analyze(resolve_indirection(adapter.parse(files, root)))
 

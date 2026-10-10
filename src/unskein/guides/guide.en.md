@@ -175,6 +175,7 @@ unskein scan [PATH] [options]
 | `--findings` / `--no-findings` | Show or hide the findings section (shown by default). |
 | `--follow-symlinks` / `--no-follow-symlinks` | Follow symlinked folders (off by default). |
 | `--star-fixes` / `--no-star-fixes` | Work out the explicit import for each `from x import *` (off by default; see "Star imports"). |
+| `--api-leaks` / `--no-api-leaks` | Report imports that reach into what a package keeps internal, with the import to write instead (off by default). |
 | `--encoding NAME` | Fallback encoding for files that declare none. |
 | `--lang es\|en` | Report language. |
 | `-o`, `--output FILE` | Also save the Markdown report to a file. |

@@ -364,6 +364,7 @@ class ParsePlan:
         virtual: Modules with no parsed file (namespace packages, compiled extensions,
             stubs), by name, sorted.
         star_fixes: Whether star imports are analyzed to compute their fix (rule 12).
+        api_leaks: Whether imports are checked for leaks into package internals (rule 13).
     """
 
     tasks: list[ParseTask]
@@ -375,6 +376,7 @@ class ParsePlan:
     project_root: Path | None = None
     virtual: dict[str, VirtualModule] = field(default_factory=dict)
     star_fixes: bool = False
+    api_leaks: bool = False
 
 
 @dataclass
@@ -395,6 +397,7 @@ class ParseResult:
         virtual: Modules with no parsed file (namespace packages, compiled extensions,
             stubs), by name, sorted.
         star_fixes: Whether star imports are analyzed to compute their fix (rule 12).
+        api_leaks: Whether imports are checked for leaks into package internals (rule 13).
     """
 
     modules: list[ModuleInfo]
@@ -407,6 +410,7 @@ class ParseResult:
     module_distributions: dict[str, str] = field(default_factory=dict)
     virtual: dict[str, VirtualModule] = field(default_factory=dict)
     star_fixes: bool = False
+    api_leaks: bool = False
 
     @classmethod
     def from_file_results(
@@ -436,6 +440,7 @@ class ParseResult:
             result.module_distributions = plan.module_distributions
             result.virtual = plan.virtual
             result.star_fixes = plan.star_fixes
+            result.api_leaks = plan.api_leaks
         for file_result in file_results:
             if file_result.module is not None:
                 module = file_result.module
