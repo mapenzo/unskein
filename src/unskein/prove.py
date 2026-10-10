@@ -87,7 +87,12 @@ class ProofUnavailable(Exception):
 
 
 SMELLABLE_REASONS = frozenset(
-    {ProofReason.NEEDS_DESIGN, ProofReason.READ_AT_IMPORT, ProofReason.MUTABLE_ATTRIBUTE}
+    {
+        ProofReason.NEEDS_DESIGN,
+        ProofReason.READ_AT_IMPORT,
+        ProofReason.MUTABLE_ATTRIBUTE,
+        ProofReason.RUNTIME_ANNOTATIONS,
+    }
 )
 
 

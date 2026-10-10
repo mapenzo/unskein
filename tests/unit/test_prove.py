@@ -50,6 +50,14 @@ BASE_SMELL = {
         "from app.base import Base, X, Y\n\n\nclass Child(Base):\n    values = (X, Y)\n"
     ),
 }
+RUNTIME_BASE_SMELL = {
+    "app/__init__.py": "",
+    "app/base.py": (
+        "from pydantic import BaseModel\nfrom app.child import Child\n\n\n"
+        "class Base:\n    def make(self) -> Child:\n        return Child()\n"
+    ),
+    "app/child.py": "from app.base import Base\n\n\nclass Child(Base):\n    pass\n",
+}
 SNAPSHOT_SMELL = {
     "app/__init__.py": "from .conf import Settings\n\nmax_tokens = 100\n",
     "app/conf.py": "import app\n\n\nclass Settings:\n    limit = app.max_tokens\n",
@@ -249,3 +257,12 @@ def test_a_setting_copied_at_import_is_named_instead_of_needs_design(
     [cut] = proof.cuts
     assert (cut.verdict, cut.reason) == (ProofVerdict.NOT_PROVEN, ProofReason.CONFIG_SNAPSHOT)
     assert cut.detail == "max_tokens"
+
+
+def test_a_base_that_imports_its_subclass_is_named_even_when_postponing_is_unsafe(
+    make_project: MakeProject,
+) -> None:
+    _, proof = prove(make_project(RUNTIME_BASE_SMELL))
+    [cut] = proof.cuts
+    assert (cut.source, cut.target) == ("app.base", "app.child")
+    assert (cut.verdict, cut.reason) == (ProofVerdict.NOT_PROVEN, ProofReason.BASE_KNOWS_SUBCLASS)
