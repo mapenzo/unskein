@@ -1188,3 +1188,17 @@ def test_every_api_leak_statement_is_listed_not_capped(make_project) -> None:
     root = make_project(files)
     section = render(root, analyzed(root, api_leaks=True)).split("### API leak (1)")[1]
     assert section.count("  - `app/m") == 8
+
+
+def test_the_names_of_one_statement_share_a_single_fix_line(make_project) -> None:
+    files = {
+        "lib/__init__.py": "from lib.core.logger import Logger, Other\n",
+        "lib/core/__init__.py": "",
+        "lib/core/logger.py": "class Logger:\n    pass\n\n\nclass Other:\n    pass\n",
+        "app/__init__.py": "",
+        "app/a.py": "from lib.core.logger import Logger, Other as O\n",
+    }
+    root = make_project(files)
+    section = render(root, analyzed(root, api_leaks=True)).split("### API leak (1)")[1]
+    assert "  - `app/a.py:1`: `from lib import Logger, Other as O`" in section
+    assert section.count("  - `app/a.py:1`") == 1

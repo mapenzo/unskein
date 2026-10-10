@@ -1,6 +1,7 @@
 """Markdown report combining the deterministic analysis and the optional AI report."""
 
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -1035,22 +1036,37 @@ def _wildcard_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     return "\n".join(lines)
 
 
-def _leak_fix_line(fix: LeakFix, lang: Lang) -> str:
-    """Render the fix of one statement, or the reason it has none.
+def _leak_fix_lines(fixes: Iterable[LeakFix], lang: Lang) -> list[str]:
+    """Render the fixes of one module: the names of a statement share one line.
 
     Args:
-        fix: The fix.
+        fixes: The module's fixes, in file order.
         lang: Report language.
 
     Returns:
-        One indented Markdown list item.
+        One indented Markdown list item per statement with a fix, and one per name without.
     """
-    if fix.action is LeakAction.FACADE_IMPORT:
-        name = fix.symbol if fix.alias is None else f"{fix.symbol} as {fix.alias}"
-        text = t("finding.api_leak.fix", lang, statement=f"from {fix.facade} import {name}")
-    else:
-        text = t(f"finding.api_leak.no_fix.{fix.reason}", lang, name=fix.symbol)
-    return f"  - `{fix.location}`: {text}"
+    moved: dict[tuple[str, str], list[str]] = {}
+    entries: list[str | tuple[str, str]] = []
+    for fix in fixes:
+        if fix.action is LeakAction.FACADE_IMPORT:
+            key = (fix.location, str(fix.facade))
+            if key not in moved:
+                moved[key] = []
+                entries.append(key)
+            moved[key].append(fix.symbol if fix.alias is None else f"{fix.symbol} as {fix.alias}")
+        else:
+            text = t(f"finding.api_leak.no_fix.{fix.reason}", lang, name=fix.symbol)
+            entries.append(f"  - `{fix.location}`: {text}")
+    lines = []
+    for entry in entries:
+        if isinstance(entry, str):
+            lines.append(entry)
+            continue
+        location, facade = entry
+        statement = f"from {facade} import {PART_SEPARATOR.join(moved[entry])}"
+        lines.append(f"  - `{location}`: {t('finding.api_leak.fix', lang, statement=statement)}")
+    return lines
 
 
 def _leak_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
@@ -1083,7 +1099,7 @@ def _leak_line(finding: Finding, result: AnalysisResult, lang: Lang) -> str:
     )
     lines = [f"- `{module}` ({summary})"]
     # Every statement: the fix is meant to be copied.
-    lines += [_leak_fix_line(fix, lang) for fix in leak.fixes]
+    lines += _leak_fix_lines(leak.fixes, lang)
     return "\n".join(lines)
 
 
