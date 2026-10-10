@@ -158,17 +158,14 @@ def prepare_scan(
     )
 
 
-def parse_sources(context: ScanContext) -> ParseResult:
-    """Discover and parse the project's Python files, with imports as written.
-
-    Projects with at least ``parallel_threshold`` files are parsed in a process
-    pool; smaller ones sequentially.
+def discover_project(context: ScanContext) -> list[Path]:
+    """Discover the project's files: sources, plus the stubs and binaries that prove modules.
 
     Args:
         context: A prepared scan.
 
     Returns:
-        The parse result before re-exports and package access are resolved.
+        The sorted paths.
 
     Raises:
         UnskeinError: If the path is not a directory or holds no Python files.
@@ -187,7 +184,26 @@ def parse_sources(context: ScanContext) -> ParseResult:
     if not sources:
         raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})
     logger.debug("Discovered %d Python files under %s", sources, root)
-    return parse_all(files, adapter, root, config)
+    return files
+
+
+def parse_sources(context: ScanContext) -> ParseResult:
+    """Discover and parse the project's Python files, with imports as written.
+
+    Projects with at least ``parallel_threshold`` files are parsed in a process
+    pool; smaller ones sequentially.
+
+    Args:
+        context: A prepared scan.
+
+    Returns:
+        The parse result before re-exports and package access are resolved.
+
+    Raises:
+        UnskeinError: If the path is not a directory or holds no Python files.
+    """
+    files = discover_project(context)
+    return parse_all(files, PythonAdapter(context.analysis), context.root, context.analysis)
 
 
 def parse_project(context: ScanContext) -> ParseResult:
