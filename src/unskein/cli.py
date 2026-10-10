@@ -17,11 +17,14 @@ from unskein import __version__
 from unskein import config as config_module
 from unskein.ai.models import AIReport, Severity
 from unskein.errors import ErrorKey, ExitCode, UnskeinError
+from unskein.graph.proof import ProofResult
+from unskein.graph.untangle import UntanglePlan
 from unskein.guide import usage_guide
 from unskein.i18n import Lang, detect_lang, t, translate_error
 from unskein.init_config import save_user_config, write_config
 from unskein.logging_setup import setup_logging
 from unskein.perf import PerformanceStats, measure
+from unskein.prove import ProofUnavailable, ProveOptions, prove_plan
 from unskein.report.markdown import ReportContext, render_report
 from unskein.report.untangle import render_untangle
 from unskein.scan import (
@@ -246,6 +249,29 @@ def untangle(  # pylint: disable=too-many-arguments,too-many-positional-argument
     max_tangles: Annotated[
         int, typer.Option("--max-tangles", min=1, help="Tangles to detail, largest first.")
     ] = DEFAULT_MAX_TANGLES,
+    prove: Annotated[
+        bool,
+        typer.Option(
+            "--prove",
+            help="Apply the cuts to a copy and check that they remove the import "
+            "(LAZY and TYPE_CHECKING; nothing is executed).",
+        ),
+    ] = False,
+    run: Annotated[
+        bool,
+        typer.Option(
+            "--run",
+            help="With --prove, also import the tangle's modules before and after in "
+            "isolated subprocesses. Runs the analyzed project's code.",
+        ),
+    ] = False,
+    python: Annotated[
+        Path | None,
+        typer.Option(
+            "--python",
+            help="Interpreter for --run (default: the one running unskein); ignored without it.",
+        ),
+    ] = None,
     output: Annotated[
         Path | None, typer.Option("--output", "-o", help="Also save the Markdown plan here.")
     ] = None,
@@ -254,7 +280,15 @@ def untangle(  # pylint: disable=too-many-arguments,too-many-positional-argument
     ] = None,
 ) -> None:
     """Plan which imports to cut to undo each tangle, with the step and its evidence."""
-    options = UntangleOptions(path=path, lang=lang, all_edges=all_edges, max_tangles=max_tangles)
+    options = UntangleOptions(
+        path=path,
+        lang=lang,
+        all_edges=all_edges,
+        max_tangles=max_tangles,
+        prove=prove,
+        run=run,
+        python=python,
+    )
     try:
         code = _run_untangle(options, output)
     except Exception:  # pylint: disable=broad-exception-caught  # any bug -> exit 3
@@ -380,10 +414,11 @@ def _run_scan(options: ScanOptions, output: Path | None, verbose: bool) -> ExitC
 
 
 def _run_untangle(options: UntangleOptions, output: Path | None) -> ExitCode:
-    """Prepare and build the plan, print it and pick the exit code.
+    """Prepare and build the plan, prove it when asked, print it and pick the exit code.
 
     Expected errors become translated messages (exit code 1); anything else
-    propagates to ``untangle`` (exit code 3).
+    propagates to ``untangle`` (exit code 3). A proof that cannot be built (disk,
+    permissions) is reported inside the plan and never changes the exit code.
 
     Args:
         options: What the user asked for.
@@ -398,15 +433,44 @@ def _run_untangle(options: UntangleOptions, output: Path | None) -> ExitCode:
         _print_to_stderr(translate_error(e, detect_lang(options.lang)), style="red")
         return ExitCode.USAGE_ERROR
     try:
+        if options.run and not options.prove:
+            raise UnskeinError(ErrorKey.RUN_NEEDS_PROVE)
         plan = build_untangle_plan(context, all_edges=options.all_edges)
+        proof, unavailable = _prove(context, plan, options) if options.prove else (None, None)
     except UnskeinError as e:
         _print_to_stderr(translate_error(e, context.lang), style="red")
         return ExitCode.USAGE_ERROR
-    report = render_untangle(plan, context.root, context.lang, max_tangles=options.max_tangles)
+    report = render_untangle(
+        plan, context.root, context.lang, max_tangles=options.max_tangles, proof=proof
+    )
+    if unavailable is not None:
+        report += f"\n{t('untangle.proof.unavailable', context.lang, detail=unavailable)}\n"
     if output:
         output.write_text(report, encoding="utf-8")
     Console().print(Markdown(report))
     return ExitCode.OK
+
+
+def _prove(
+    context: ScanContext, plan: UntanglePlan, options: UntangleOptions
+) -> tuple[ProofResult | None, str | None]:
+    """Prove the plan, or say why it could not be proven.
+
+    Args:
+        context: A prepared scan.
+        plan: The untangle plan.
+        options: What the user asked for.
+
+    Returns:
+        The proof and no detail, or no proof and what failed.
+
+    Raises:
+        UnskeinError: If the interpreter of ``--run`` does not exist.
+    """
+    try:
+        return prove_plan(context, plan, ProveOptions(run=options.run, python=options.python)), None
+    except ProofUnavailable as error:
+        return None, error.detail
 
 
 def _run_pipeline(context: ScanContext) -> ScanOutcome:

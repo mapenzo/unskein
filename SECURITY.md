@@ -16,6 +16,8 @@ You should receive an acknowledgement within 7 days.
 
 ## Scope notes
 
-- `unskein` never executes the code it analyzes; it only parses it with `ast`.
+- `unskein` never executes the code it analyzes; it only parses it with `ast`. The one
+  exception is `untangle --prove --run`, which you must ask for: it imports the project's
+  modules in isolated subprocesses, on a temporary copy of the project.
 - API keys must never appear in logs or reports. Any leak is a security bug.
 - Symlinks are not followed by default, to avoid analyzing code outside the project.

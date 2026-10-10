@@ -20,6 +20,7 @@ from unskein.parsers.usage import (
 
 MakeProject = Callable[[dict[str, str]], Path]
 A, F, M = UseContext.ANNOTATION, UseContext.FUNCTION, UseContext.MODULE
+Q = UseContext.QUOTED
 
 CONTEXT_CASES = {
     "annotation_only": ("def f(x: Engine) -> Engine: ...\n", {A}),
@@ -28,7 +29,8 @@ CONTEXT_CASES = {
     "class_base": ("class C(Engine): ...\n", {M}),
     "decorator_and_default": ("@Engine\ndef f(x=Engine): ...\n", {M}),
     "annotated_assignment": ("x: Engine = 1\n", {A}),
-    "quoted_annotation": ("def f(x: 'list[Engine]'): ...\n", {A}),
+    "quoted_annotation": ("def f(x: 'list[Engine]'): ...\n", {Q}),
+    "quoted_and_plain_annotation": ("def f(x: 'Engine', y: Engine): ...\n", {A, Q}),
     "lambda_body": ("g = lambda: Engine()\n", {F}),
     "method_annotation": ("class C:\n    def m(self) -> Engine: ...\n", {A}),
     "mixed": ("def f(x: Engine):\n    return Engine()\n", {A, F}),

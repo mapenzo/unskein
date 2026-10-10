@@ -122,7 +122,11 @@ Architecture health: fair.
   cheapest refactoring step for each (with file, line and symbols) and a before/after
   simulation. None of the open-source Python dependency tools we surveyed (pydeps,
   import-linter, tach) proposes cuts; the commercial ones that do (Sonargraph,
-  Structure101, Lattix) target Java/.NET.
+  Structure101, Lattix) target Java/.NET. With `--prove` it applies the lazy-import and
+  `TYPE_CHECKING` cuts to a temporary copy and checks each one: on litellm, 77 of the 79
+  lazy cuts are proven, the other 163 cuts say why they are not (the 143 that import the
+  whole package are never rewritten), and with `--run` all 625 modules of the tangles still
+  import afterwards (about 14 minutes). Your project is never modified.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
   Only imports that run when the code is imported count; those inside functions or under
   `TYPE_CHECKING` are reported apart as hidden coupling.
@@ -135,19 +139,18 @@ Architecture health: fair.
 
 ## Untangling a real project
 
-`unskein untangle` on [rich](https://github.com/Textualize/rich) (35 modules in one
-tangle), with no AI involved:
+`unskein untangle` on [rich](https://github.com/Textualize/rich) (one tangle), with no AI involved:
 
 ```text
 $ unskein untangle ./rich
 
-Tangles: 1 · imports to cut: 31 · total cost: 104.
+Tangles: 1 · imports to cut: 28 · total cost: 111.
 Simulation after the cuts: tangles 1 → 0, cycles 100+ → 0.
 
  Import                    Step                   Cost  Evidence
- rich.console → rich.emoji Move under TYPE_CHECKING  1  rich/console.py:44 · EmojiVariant
- rich.palette → rich.color Lazy import               3  rich/palette.py:78 · Color
- rich.box → rich.panel     Move the symbol           4  rich/box.py:426 · Panel
+ rich.terminal_theme → rich.palette Lazy import     3  rich/terminal_theme.py:4 · Palette
+ rich.box → rich.panel               Move the symbol 4  rich/box.py:426 · Panel
+ rich.color → rich.console           Move the symbol 4  rich/color.py:595 · Console
 ```
 
 The cuts are a heuristic (not guaranteed minimal) and the simulation is optimistic: read
@@ -171,7 +174,9 @@ code, without an LLM. The AI only interprets numbers the graph has already produ
 It never decides what counts as a module or an import. If the AI step is not configured
 or fails, you still get the full report.
 
-unskein never runs your code. It reads it with Python's own `ast` parser.
+unskein does not run your code: it reads it with Python's own `ast` parser. The only
+exception is `unskein untangle --prove --run`, which you ask for explicitly and which
+imports the project's modules in isolated subprocesses, on a temporary copy.
 
 ## Quickstart
 

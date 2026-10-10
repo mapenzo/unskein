@@ -345,11 +345,78 @@ del análisis hubo; `unskein scan` las muestra en detalle.
 - `--all-edges`: desenreda también el acoplamiento oculto (imports dentro de funciones
   o bajo `TYPE_CHECKING`).
 - `--max-tangles N`: cuántas marañas detallar, de mayor a menor (por defecto 5).
+- `--prove`: aplica los cortes a una copia temporal del proyecto y comprueba, corte a corte,
+  que el import ya no está (cortes `LAZY` y `TYPE_CHECKING`; no se ejecuta nada).
+- `--run`: con `--prove`, importa además los módulos de la maraña antes y después, en
+  subprocesos aislados. Ejecuta código del proyecto analizado.
+- `--python RUTA`: intérprete para `--run` (por defecto, el que ejecuta unskein).
 - `--output FICHERO` / `-o FICHERO`: guarda también el plan en Markdown.
 - `--lang es|en`: idioma de la salida.
 
 Códigos de salida: 0 si el plan se construyó (con o sin marañas), 1 en errores de uso y
 3 en errores internos. `untangle` nunca llama a la IA.
+
+## Demostrar el plan: `--prove`
+
+`unskein untangle --prove` toma los cortes del plan y los comprueba en vez de limitarse a
+proponerlos. Copia el proyecto a un directorio temporal, aplica cada corte que se puede aplicar
+de forma mecánica, vuelve a analizar la copia y da, por corte, un veredicto en una columna
+nueva (`Prueba`). Tu proyecto nunca se modifica.
+
+| Veredicto | Significado |
+|---|---|
+| Probado | El corte se aplicó a la copia y el re-análisis ya no ve la dependencia. |
+| No probado | El corte no se aplicó; el motivo dice por qué. |
+| Roto | El corte se aplicó y no funcionó: la dependencia sigue o (con `--run`) un módulo dejó de importarse. |
+
+Solo se reescriben dos pasos: el import perezoso (la sentencia de import pasa a cada función
+que lee sus nombres) y `TYPE_CHECKING` (la sentencia pasa bajo `if TYPE_CHECKING:` y se añade
+`from typing import TYPE_CHECKING` una vez por archivo). Todos los demás pasos quedan «No
+probado» con su motivo: mover un símbolo, extraer un módulo o reorganizar un paquete son
+decisiones de diseño («requiere diseño»), e importar desde el módulo que define el nombre no
+se reescribe cuando el import es `import pkg` («import del módulo entero»: cambiar `pkg.X` por
+un import directo altera el comportamiento si algo asigna `pkg.X` en ejecución).
+
+Un corte también queda «No probado» cuando reescribirlo no sería seguro: el import no está a
+nivel de módulo (dentro de `try`, `if`), comparte línea con otra sentencia, es un import con
+asterisco, el nombre se lee mientras el módulo carga (nivel de módulo, decoradores, valores
+por defecto, cuerpos de clase, anotaciones que Python evalúa), ninguna función lo lee, el
+nombre se vuelve a ligar o una función lo reutiliza como parámetro, asignación, `global`,
+`def`, `class`, `except as`, `match` o `del`, figura en `__all__`, o el cuerpo de la función
+está en la línea del `def`. Un movimiento a `TYPE_CHECKING` exige además que las anotaciones
+estén pospuestas (`from __future__ import annotations`) o entre comillas: si no, Python 3.12 y
+3.13 lanzan `NameError` al definir la función. Los comentarios, los finales de línea (CRLF),
+el BOM y la codificación declarada sobreviven a la edición.
+
+`--run` va un paso más allá e importa cada módulo de las marañas, antes y después de los
+cortes, cada uno en su propio subproceso aislado (`python -I -B`, 60 segundos como máximo).
+Un módulo que se importaba antes y ya no es una regresión; marca como «Roto» el corte cuyo
+archivo editado aparece en el traceback. **`--run` ejecuta código del proyecto analizado**
+(el código de nivel de módulo de los módulos que importa), siempre sobre la copia temporal,
+que con `--run` contiene el árbol completo del proyecto (sin `.git`, entornos virtuales ni
+cachés) para que existan los archivos de datos que se leen al importar. Los módulos que no se
+importan ni antes de los cortes (faltan dependencias, datos o servicios) se cuentan y no
+pueden mostrar una regresión; elige con `--python RUTA` el intérprete que tiene las
+dependencias del proyecto.
+
+Lo que la prueba no ve: código que lee el nombre movido por cadena o por módulo (`eval`,
+`getattr(sys.modules[...])`, otro módulo haciendo `m.dep`), bibliotecas que leen anotaciones
+en ejecución (modelos de pydantic, `functools.singledispatch`, `typing.get_type_hints`)
+cuando sus nombres salen del módulo, y una función que solo se ejecuta al cargar el módulo a
+través de otras funciones (las llamadas e instanciaciones directas al importar se rechazan;
+las cadenas de llamadas no se siguen). `--run` detecta las que fallan al importar; las demás
+fallan más tarde, así que ejecuta tus tests. Cuando un módulo deja de importarse y ningún
+archivo editado sale en el traceback, el resumen lo cuenta aparte y los cortes siguen
+«Probado»: lee esa línea antes de fiarte de la tabla.
+
+La prueba nunca cambia el código de salida. Lee el grafo de imports, no el comportamiento:
+un corte probado significa que la dependencia ya no está y, con `--run`, que los módulos
+siguen cargando; no ejecuta tus tests.
+
+En litellm (240 cortes), `--prove` tarda unos 2,6 segundos más que el plan y prueba 77 de los
+79 cortes perezosos (los otros 2 reutilizan el nombre `litellm`: cuatro sentencias lo ligan en un archivo, una función lo liga ella misma en el otro); los 143
+cortes que importan el paquete `litellm` entero y los 18 que requieren diseño no se prueban.
+Aplicar los 77 reduce la maraña principal de 616 a 570 módulos y deja la segunda intacta. Con `--run` y el intérprete que ejecuta unskein, los 625 módulos de las marañas se importaron antes y después, sin regresiones; la comprobación tardó unos 14 minutos (un subproceso por módulo, cada uno importando litellm), así que úsala cuando puedas esperar.
 
 ## Excluir rutas
 

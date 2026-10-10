@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `untangle --prove`: applies the plan's cuts to a temporary copy of the project, analyzes
+  the copy again and gives each cut a verdict (proven, not proven with a reason, broken).
+  Only the lazy import and `TYPE_CHECKING` steps are rewritten; the rest say why they are
+  not (needs design, whole-module import). `--run` also imports the tangle's modules before
+  and after in isolated subprocesses (it executes code of the analyzed project); `--python`
+  picks the interpreter. On litellm: 77 of 79 lazy cuts proven, 0 broken, all 625 modules
+  import afterwards. The proof never changes the exit code.
 - Finding: API leak, opt in with `--api-leaks` (or `api_leaks = true` under `[analysis]`).
   Code outside a package (another top-level package or distribution) that imports a module
   the package keeps internal — declared in the new `[api]` table (`public` and `internal`
@@ -145,6 +152,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `untangle` no longer advises moving an import under `TYPE_CHECKING` when its annotations
+  are evaluated at definition time (it raised `NameError` on Python 3.12 and 3.13); it needs
+  `from __future__ import annotations` or quoted annotations.
 - Tests no longer read the developer's real `~/.config/unskein/config.toml`:
   `load_toml_config` looks the user file up at call time.
 

@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import networkx as nx
+
 from unskein.graph.metrics import PACKAGE_INIT_FILE, analyze, find_tangles, import_time_graph
 from unskein.graph.untangle import Edge, UntanglePlan, plan_tangles, simulate
 from unskein.parsers.models import ImportKind, ParseResult
@@ -26,12 +28,18 @@ class UntangleOptions:
         lang: Requested output language.
         all_edges: Whether lazy and type-only imports count too (hidden coupling).
         max_tangles: How many tangles the report details, largest first.
+        prove: Whether to apply the cuts to a copy and check each one.
+        run: Whether the proof also imports the tangle's modules before and after.
+        python: Interpreter for that run; None means the one running unskein.
     """
 
     path: Path
     lang: str | None = None
     all_edges: bool = False
     max_tangles: int = DEFAULT_MAX_TANGLES
+    prove: bool = False
+    run: bool = False
+    python: Path | None = None
 
 
 def prepare_untangle(
@@ -132,6 +140,19 @@ def _names_read_from_sources(
     return collect_names_read_from(sources, wanted, encoding=encoding)
 
 
+def untangle_scope(graph: nx.DiGraph, *, all_edges: bool) -> nx.DiGraph:
+    """Return the graph whose tangles `untangle` plans: import-time edges, or all of them.
+
+    Args:
+        graph: The project's dependency graph.
+        all_edges: Whether lazy and type-only imports count too.
+
+    Returns:
+        The graph to search for tangles.
+    """
+    return graph if all_edges else import_time_graph(graph)
+
+
 def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePlan:
     """Analyze the project and plan the cuts of every tangle.
 
@@ -150,7 +171,7 @@ def build_untangle_plan(context: ScanContext, *, all_edges: bool) -> UntanglePla
     sources = parse_sources(context)
     parsed = resolve_parsed(sources, context)
     result = analyze(parsed, context.findings)
-    scope = result.graph if all_edges else import_time_graph(result.graph)
+    scope = untangle_scope(result.graph, all_edges=all_edges)
     tangles = find_tangles(scope)
     facades = facade_own_names(parsed)
     kinds = set(ImportKind) if all_edges else {ImportKind.MODULE}

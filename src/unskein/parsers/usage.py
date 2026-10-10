@@ -195,12 +195,15 @@ class UseContext(StrEnum):
     """Where a module reads a name, which decides how cheaply an import can be moved.
 
     Attributes:
-        ANNOTATION: In a type annotation only.
+        ANNOTATION: In a type annotation that is evaluated when the definition runs
+            (unless the module postpones annotations).
+        QUOTED: Inside a string annotation, which is never evaluated.
         FUNCTION: Inside a function or lambda body, run only when it is called.
         MODULE: At module or class level, run when the module is imported.
     """
 
     ANNOTATION = "annotation"
+    QUOTED = "quoted"
     FUNCTION = "function"
     MODULE = "module"
 
@@ -305,14 +308,14 @@ class _ContextCollector(ast.NodeVisitor):
             self.found[node.id].add(self.context)
 
     def visit_Constant(self, node: ast.Constant) -> None:
-        """Count names mentioned in a quoted annotation as annotation uses.
+        """Count names mentioned in a quoted annotation as quoted uses.
 
         Args:
             node: A constant; only strings inside annotations are inspected.
         """
         if self.context is UseContext.ANNOTATION and isinstance(node.value, str):
             for name in _names_in_text(node.value, self.found):
-                self.found[name].add(UseContext.ANNOTATION)
+                self.found[name].add(UseContext.QUOTED)
 
 
 # pylint: enable=invalid-name

@@ -6,6 +6,7 @@ import pytest
 from unskein.ai.models import AIFailure
 from unskein.errors import ConfigError, ErrorKey, UnskeinError
 from unskein.graph.findings import FindingKind
+from unskein.graph.proof import ProofReason
 from unskein.i18n import STRINGS, Lang, detect_lang, t, translate_error, translate_warning
 from unskein.parsers.models import ParseWarning, WarningCode
 
@@ -102,3 +103,8 @@ def test_every_finding_kind_has_title_explanation_and_recommendation() -> None:
     for kind in FindingKind:
         for part in ("title", "explanation", "recommendation"):
             assert f"finding.{kind}.{part}" in STRINGS, (kind, part)
+
+
+def test_every_proof_reason_has_a_label() -> None:
+    for reason in ProofReason:
+        assert f"untangle.proof.reason.{reason.value}" in STRINGS

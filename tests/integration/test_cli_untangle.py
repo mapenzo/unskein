@@ -1,10 +1,13 @@
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from unskein.cli import app
 from unskein.errors import ExitCode
+from unskein.i18n import Lang, t
+from unskein.prove import ProofUnavailable
 
 runner = CliRunner()
 MakeProject = Callable[[dict[str, str]], Path]
@@ -65,3 +68,49 @@ def test_untangle_reports_skipped_files(make_project: MakeProject) -> None:
     result = runner.invoke(app, ["untangle", str(root), "--lang", "en"])
     assert result.exit_code == ExitCode.OK
     assert "Analysis warnings: 1" in result.output
+
+
+def test_untangle_prove_adds_the_proof_column(make_project: MakeProject) -> None:
+    root = make_project(CYCLE)
+    result = runner.invoke(app, ["untangle", str(root), "--lang", "en", "--prove"])
+    assert result.exit_code == ExitCode.OK
+    assert t("untangle.proof.proven", Lang.EN) in result.output
+
+
+def test_untangle_without_prove_is_unchanged(make_project: MakeProject) -> None:
+    root = make_project(CYCLE)
+    result = runner.invoke(app, ["untangle", str(root), "--lang", "en"])
+    assert t("untangle.col.proof", Lang.EN) not in result.output
+
+
+def test_untangle_run_without_prove_is_a_usage_error(make_project: MakeProject) -> None:
+    result = runner.invoke(app, ["untangle", str(make_project(CYCLE)), "--run"])
+    assert result.exit_code == ExitCode.USAGE_ERROR
+
+
+def test_untangle_run_reports_the_execution_warning(make_project: MakeProject) -> None:
+    root = make_project(CYCLE)
+    result = runner.invoke(app, ["untangle", str(root), "--lang", "en", "--prove", "--run"])
+    assert result.exit_code == ExitCode.OK
+    assert "ran code of the analyzed project" in " ".join(result.output.split())
+
+
+def test_untangle_python_must_exist(make_project: MakeProject, tmp_path: Path) -> None:
+    root = make_project(CYCLE)
+    missing = tmp_path / "no-python"
+    result = runner.invoke(
+        app, ["untangle", str(root), "--prove", "--run", "--python", str(missing)]
+    )
+    assert result.exit_code == ExitCode.USAGE_ERROR
+
+
+def test_untangle_prints_the_plan_when_the_proof_is_unavailable(
+    make_project: MakeProject, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def unavailable(*_args: object, **_kwargs: object) -> None:
+        raise ProofUnavailable("disk full")
+
+    monkeypatch.setattr("unskein.cli.prove_plan", unavailable)
+    result = runner.invoke(app, ["untangle", str(make_project(CYCLE)), "--lang", "en", "--prove"])
+    assert result.exit_code == ExitCode.OK
+    assert "disk full" in result.output

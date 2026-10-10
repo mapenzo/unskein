@@ -390,3 +390,32 @@ def test_untangle_honors_the_project_config(
 ) -> None:
     root = make_project({**files, ".unskein.toml": toml})
     assert len(plan_for(root).tangles) == tangles
+
+
+EVALUATED_ANNOTATIONS = {
+    "pkg/__init__.py": "",
+    "pkg/a.py": (
+        "from pkg.b import B\n\n\nclass A:\n    def f(self, x: B) -> B:\n        return x\n"
+    ),
+    "pkg/b.py": "from pkg.a import A\n\n\nclass B:\n    def g(self) -> A:\n        return A()\n",
+}
+
+
+def test_plan_does_not_advise_type_checking_for_evaluated_annotations(
+    make_project: MakeProject,
+) -> None:
+    plan = plan_for(make_project(EVALUATED_ANNOTATIONS))
+    [tangle] = plan.tangles
+    assert all(cut.step is not StepKind.TYPE_CHECKING for cut in tangle.cuts)
+
+
+def test_plan_advises_type_checking_when_annotations_are_postponed(
+    make_project: MakeProject,
+) -> None:
+    future = "from __future__ import annotations\n\n"
+    files = dict(EVALUATED_ANNOTATIONS)
+    files["pkg/a.py"] = future + files["pkg/a.py"]
+    files["pkg/b.py"] = future + files["pkg/b.py"]
+    plan = plan_for(make_project(files))
+    [tangle] = plan.tangles
+    assert [cut.step for cut in tangle.cuts] == [StepKind.TYPE_CHECKING]

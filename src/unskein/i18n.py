@@ -46,6 +46,14 @@ _ERRORS: dict[str, dict[Lang, str]] = {
         Lang.ES: "No existe el archivo de configuración '{path}'",
         Lang.EN: "Config file '{path}' does not exist",
     },
+    "run_needs_prove": {
+        Lang.ES: "--run solo funciona junto a --prove",
+        Lang.EN: "--run only works together with --prove",
+    },
+    "python_not_found": {
+        Lang.ES: "No existe el intérprete de Python indicado: {path}",
+        Lang.EN: "The given Python interpreter does not exist: {path}",
+    },
 }
 
 _WARNINGS: dict[str, dict[Lang, str]] = {
@@ -629,6 +637,133 @@ _REPORT: dict[str, dict[Lang, str]] = {
     },
 }
 
+_PROOF: dict[str, dict[Lang, str]] = {
+    "untangle.col.proof": {Lang.ES: "Prueba", Lang.EN: "Proof"},
+    "untangle.proof.proven": {Lang.ES: "Probado", Lang.EN: "Proven"},
+    "untangle.proof.not_proven": {Lang.ES: "No probado", Lang.EN: "Not proven"},
+    "untangle.proof.broken": {Lang.ES: "Roto", Lang.EN: "Broken"},
+    "untangle.proof.reason.needs_design": {
+        Lang.ES: "requiere diseño",
+        Lang.EN: "needs design",
+    },
+    "untangle.proof.reason.whole_module_import": {
+        Lang.ES: "import del módulo entero: reescribir sus atributos puede cambiar el "
+        "comportamiento",
+        Lang.EN: "whole-module import: rewriting its attributes can change behavior",
+    },
+    "untangle.proof.reason.no_definer": {
+        Lang.ES: "ningún módulo del proyecto define esos nombres",
+        Lang.EN: "no project module defines those names",
+    },
+    "untangle.proof.reason.star_import": {
+        Lang.ES: "import con asterisco: los nombres no están escritos",
+        Lang.EN: "star import: the names are not written",
+    },
+    "untangle.proof.reason.nested_import": {
+        Lang.ES: "el import no está a nivel de módulo",
+        Lang.EN: "the import is not at module level",
+    },
+    "untangle.proof.reason.multiple_statements": {
+        Lang.ES: "el import comparte línea con otra sentencia",
+        Lang.EN: "the import shares its line with another statement",
+    },
+    "untangle.proof.reason.annotations_evaluated": {
+        Lang.ES: "las anotaciones se evalúan al definir",
+        Lang.EN: "annotations are evaluated at definition",
+    },
+    "untangle.proof.reason.read_at_import": {
+        Lang.ES: "el nombre se lee al importar el módulo",
+        Lang.EN: "the name is read while the module is imported",
+    },
+    "untangle.proof.reason.read_at_runtime": {
+        Lang.ES: "el nombre se lee en ejecución, donde la guarda no existiría",
+        Lang.EN: "the name is read at run time, where the guard would not exist",
+    },
+    "untangle.proof.reason.no_reader": {
+        Lang.ES: "ninguna función lee el nombre",
+        Lang.EN: "no function reads the name",
+    },
+    "untangle.proof.reason.name_reused": {
+        Lang.ES: "el nombre se vuelve a ligar o una función lo reutiliza",
+        Lang.EN: "the name is bound again or a function reuses it",
+    },
+    "untangle.proof.reason.exported": {
+        Lang.ES: "el nombre está en `__all__`",
+        Lang.EN: "the name is listed in `__all__`",
+    },
+    "untangle.proof.reason.inline_body": {
+        Lang.ES: "la función tiene el cuerpo en la misma línea",
+        Lang.EN: "the function body is on the same line",
+    },
+    "untangle.proof.reason.unreadable": {
+        Lang.ES: "no se pudo leer o reescribir el archivo",
+        Lang.EN: "the file could not be read or rewritten",
+    },
+    "untangle.proof.reason.edge_remains": {
+        Lang.ES: "el re-análisis sigue viendo la dependencia",
+        Lang.EN: "the re-analysis still sees the dependency",
+    },
+    "untangle.proof.reason.import_failed": {
+        Lang.ES: "un módulo dejó de importarse",
+        Lang.EN: "a module stopped importing",
+    },
+    "untangle.proof.summary": {
+        Lang.ES: "Prueba: {proven} de {total} cortes probados, {not_proven} sin probar, "
+        "{broken} rotos. Tras aplicarlos: marañas {tangles}, ciclos {cycles}.",
+        Lang.EN: "Proof: {proven} of {total} cuts proven, {not_proven} not proven, "
+        "{broken} broken. After applying them: tangles {tangles}, cycles {cycles}.",
+    },
+    "untangle.proof.run": {
+        Lang.ES: "Comprobación de imports (`--run`, {seconds} s): {importable} de {modules} "
+        "módulos se importaban antes; regresiones: {regressions}.",
+        Lang.EN: "Import check (`--run`, {seconds} s): {importable} of {modules} modules "
+        "imported before; regressions: {regressions}.",
+    },
+    "untangle.proof.run_warning": {
+        Lang.ES: "`--run` ejecutó código del proyecto analizado (al importar sus módulos), "
+        "en una copia temporal.",
+        Lang.EN: "`--run` ran code of the analyzed project (by importing its modules), "
+        "on a temporary copy.",
+    },
+    "untangle.proof.run_skipped": {
+        Lang.ES: "{count} módulos no se importaban ni antes de los cortes (faltan dependencias "
+        "o archivos de datos): no pueden mostrar una regresión.",
+        Lang.EN: "{count} modules did not import even before the cuts (missing dependencies "
+        "or data files): they cannot show a regression.",
+    },
+    "untangle.proof.regression": {
+        Lang.ES: "`{module}`: {error}",
+        Lang.EN: "`{module}`: {error}",
+    },
+    "untangle.proof.unattributed": {
+        Lang.ES: "Dejaron de importarse sin pasar por un archivo editado: {count}.",
+        Lang.EN: "Stopped importing without going through an edited file: {count}.",
+    },
+    "untangle.proof.unavailable": {
+        Lang.ES: "No se pudo probar el plan: {detail}.",
+        Lang.EN: "The plan could not be proven: {detail}.",
+    },
+    "untangle.proof.legend": {
+        Lang.ES: "Veredictos de la prueba",
+        Lang.EN: "Proof verdicts",
+    },
+    "untangle.proof.legend.proven": {
+        Lang.ES: "se aplicó el corte a una copia y el re-análisis ya no ve esa dependencia.",
+        Lang.EN: "the cut was applied to a copy and the re-analysis no longer sees the dependency.",
+    },
+    "untangle.proof.legend.not_proven": {
+        Lang.ES: "no se aplicó: el motivo dice por qué (casi siempre exige una decisión de "
+        "diseño o un cambio que podría alterar el comportamiento).",
+        Lang.EN: "it was not applied: the reason says why (usually a design decision or a "
+        "change that could alter behavior).",
+    },
+    "untangle.proof.legend.broken": {
+        Lang.ES: "se aplicó y no funcionó: la dependencia sigue o un módulo dejó de importarse.",
+        Lang.EN: "it was applied and did not work: the dependency remains or a module "
+        "stopped importing.",
+    },
+}
+
 _FINDINGS: dict[str, dict[Lang, str]] = {
     "finding.uses": {
         Lang.ES: "requeridos: {required}, perezosos: {lazy}, protegidos: {guarded}",
@@ -1194,7 +1329,7 @@ _CLI: dict[str, dict[Lang, str]] = {
     },
 }
 
-STRINGS: dict[str, dict[Lang, str]] = _ERRORS | _WARNINGS | _REPORT | _FINDINGS | _CLI
+STRINGS: dict[str, dict[Lang, str]] = _ERRORS | _WARNINGS | _REPORT | _PROOF | _FINDINGS | _CLI
 
 
 def t(key: str, lang: Lang, **kwargs: object) -> str:
