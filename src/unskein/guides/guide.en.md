@@ -359,23 +359,40 @@ new `Proof` column. Your project is never modified.
 | Not proven | The cut was not applied; the reason says why. |
 | Broken | The cut was applied and did not work: the dependency remains, or (with `--run`) a module stopped importing. |
 
-Only two steps are rewritten: the lazy import (the import statement moves into every
-function that reads its names) and `TYPE_CHECKING` (the statement moves under
-`if TYPE_CHECKING:`, adding `from typing import TYPE_CHECKING` once per file). Every other
-step is "Not proven" with its reason: moving a symbol, extracting a module or reorganizing
-a package are design decisions ("needs design"), and importing from the defining module is
-not rewritten when the import is `import pkg` ("whole-module import": replacing `pkg.X` by
-a direct import changes behavior when something assigns `pkg.X` at run time).
+Four steps are rewritten: the lazy import (the statement moves into every function that
+reads its names), `TYPE_CHECKING` (the statement moves under `if TYPE_CHECKING:`, adding
+`from typing import TYPE_CHECKING` once per file), postponing annotations (the file gets
+`from __future__ import annotations` and the import then moves as one of the two above),
+and importing from the defining module when a module reads `pkg.X` while it loads and `X`
+is a class or function that the package re-exports once, plainly, and that nothing in the
+project assigns, deletes or sets by string (`pkg.X = ...`, `setattr(pkg, "X", ...)`). Reads
+of `pkg` inside functions keep `import pkg`, moved into those functions. A whole-module
+`import pkg` that is only read inside functions is planned as a lazy import, not as a
+bypass. A plain `import pkg` inside `pkg.sub` is a lookup of a package Python has already
+loaded, so it moves even when a class that reads it is built while the module loads.
+Moving a symbol, extracting a module and reorganizing a package are design decisions: "Not
+proven" with "needs design", or with the smell they show: "the base class knows its
+subclass" (a base imports a class that inherits from it) or "copies at import time a setting
+that can change" (`x = pkg.setting` at class or module level, where the package assigns
+`setting` plainly). A "Design smells found" list in the report names them with the classes
+or settings involved.
 
 A cut is also "Not proven" when the rewrite would not be safe: the import is not at module
 level (inside `try`, `if`), it shares its line with another statement, it is a star
 import, the name is read while the module loads (module level, decorators, defaults, class
 bodies, annotations that Python evaluates), no function reads it, the name is bound again
-or a function reuses it as a parameter, assignment, `global`, `def`, `class`, `except as`,
-`match` or `del`, it is listed in `__all__`, or the function body is on the `def` line. A
-`TYPE_CHECKING` move also needs the annotations to be postponed (`from __future__ import
-annotations`) or quoted: otherwise Python 3.12 and 3.13 raise `NameError` when the function
-is defined. Comments, line endings (CRLF), a BOM and the declared encoding survive the edit.
+(an `import pkg.sub` next to `import pkg` does not count; an `import pkg.sub as pkg` does; a
+function that already imports the name before reading it is left alone) or a function
+reuses it as a parameter, assignment, `global`, `def`, `class`, `except as`, `match` or
+`del`, a call can write the module namespace (`globals()`, `exec`, `vars()`,
+`vars(sys.modules[__name__])`; `vars(obj)` on another object is fine), it is listed in
+`__all__`, or the function body is on the `def` line. A `TYPE_CHECKING` move also needs the
+annotations to be postponed or quoted: otherwise Python 3.12 and 3.13 raise `NameError`
+when the function is defined, so unskein postpones them itself, unless the module imports
+a library that reads annotations at run time (pydantic, fastapi, typer, msgspec, attrs,
+sqlalchemy and similar) or mentions `get_type_hints`, `singledispatch` or `__annotations__`
+("may read its annotations at run time"). Comments, line endings (CRLF), a BOM and the
+declared encoding survive the edit.
 
 `--run` goes one step further and imports every module of the tangles, before and after the
 cuts, each one in its own isolated subprocess (`python -I -B`, 60 seconds at most). A module
@@ -388,9 +405,11 @@ caches) so data files read at import exist. Modules that do not import even befo
 interpreter that has the project's dependencies with `--python PATH`.
 
 What the proof does not see: code that reads the moved name by string or by module
-(`eval`, `getattr(sys.modules[...])`, another module doing `m.dep`), libraries that read
-annotations at run time (pydantic models, `functools.singledispatch`,
-`typing.get_type_hints`) when their names move out of the module, and a function that
+(`eval`, `getattr(sys.modules[...])`, another module doing `m.dep`), code outside the
+project that reassigns `pkg.X` after a bypass, a module object kept in another variable and
+passed to `vars()`, libraries or frameworks elsewhere that read a module's annotations once
+they are postponed (pydantic models, `functools.singledispatch`, `typing.get_type_hints`),
+and a function that
 only runs while the module loads through other functions (direct calls and instantiations
 at import time are refused; chains of calls are not followed). `--run` catches the ones
 that fail while importing; the others fail later, so run your tests. When a module stops
@@ -401,11 +420,16 @@ The proof never changes the exit code. It reads the import graph, not behavior: 
 cut means the dependency is gone and, with `--run`, that the modules still load; it does not
 run your tests.
 
-On litellm (240 cuts), `--prove` takes about 2.6 seconds on top of the plan and proves 77 of
-the 79 lazy cuts (the other 2 reuse the name `litellm`: four statements bind it in one file, a function binds it itself in the other); the 143
-cuts that import the whole `litellm` package and the 18 that need design are not proven.
-Applying the 77 shrinks the main tangle from 616 to 570 modules and leaves the second one
-untouched. With `--run` and the interpreter that runs unskein, all 625 modules of the tangles imported before and after, with no regressions; the check took about 14 minutes (one subprocess per module, each importing litellm), so use it when you can afford the wait.
+On litellm (240 cuts), `--prove` takes about 17 seconds on top of the plan and proves 221
+cuts (200 lazy, 15 by importing from the defining module, 6 by postponing annotations);
+13 are named design smells (8 where a base class imports its subclass, 5 where a setting is
+copied at import time) and 6 need other decisions (3 need design, 2 belong to modules that
+read `__annotations__` or import pydantic, 1 reuses the name `litellm` in several import
+statements). Applying the proven cuts shrinks the main tangle from 616 to 117 modules and
+leaves the bedrock tangle (9 modules) untouched. With `--run` and the interpreter that runs
+unskein, all 625 modules of the tangles imported before and after, with no regressions; the
+check took about 14 minutes (one subprocess per module, each importing litellm), so use it
+when you can afford the wait.
 
 ## Excluding paths
 

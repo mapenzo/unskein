@@ -369,24 +369,41 @@ nueva (`Prueba`). Tu proyecto nunca se modifica.
 | No probado | El corte no se aplicó; el motivo dice por qué. |
 | Roto | El corte se aplicó y no funcionó: la dependencia sigue o (con `--run`) un módulo dejó de importarse. |
 
-Solo se reescriben dos pasos: el import perezoso (la sentencia de import pasa a cada función
-que lee sus nombres) y `TYPE_CHECKING` (la sentencia pasa bajo `if TYPE_CHECKING:` y se añade
-`from typing import TYPE_CHECKING` una vez por archivo). Todos los demás pasos quedan «No
-probado» con su motivo: mover un símbolo, extraer un módulo o reorganizar un paquete son
-decisiones de diseño («requiere diseño»), e importar desde el módulo que define el nombre no
-se reescribe cuando el import es `import pkg` («import del módulo entero»: cambiar `pkg.X` por
-un import directo altera el comportamiento si algo asigna `pkg.X` en ejecución).
+Se reescriben cuatro pasos: el import perezoso (la sentencia pasa a cada función que lee sus
+nombres), `TYPE_CHECKING` (la sentencia pasa bajo `if TYPE_CHECKING:` y se añade
+`from typing import TYPE_CHECKING` una vez por archivo), posponer las anotaciones (el archivo
+recibe `from __future__ import annotations` y el import pasa como uno de los dos anteriores)
+e importar desde el módulo que define el nombre cuando un módulo lee `pkg.X` mientras carga y
+`X` es una clase o función que el paquete reexporta una vez, de forma plana, y que nada del
+proyecto asigna, borra ni fija por cadena (`pkg.X = ...`, `setattr(pkg, "X", ...)`). Las
+lecturas de `pkg` dentro de funciones conservan `import pkg`, movido a esas funciones. Un
+`import pkg` de módulo entero que solo se lee dentro de funciones se planifica como import
+perezoso, no como desvío. Un `import pkg` plano dentro de `pkg.sub` es la búsqueda de un
+paquete que Python ya cargó, así que se mueve aunque se construya al cargar el módulo una clase
+que lo lee. Mover un símbolo, extraer un módulo y reorganizar un paquete son decisiones de
+diseño: «No probado» con «requiere diseño», o con el olor que muestran: «la clase base conoce
+a su subclase» (una base importa una clase que hereda de ella) o «copia al importar un ajuste
+que puede cambiar» (`x = pkg.ajuste` en una clase o a nivel de módulo, donde el paquete asigna
+`ajuste` de forma plana). Una lista «Olores de diseño detectados» en el informe los nombra
+con las clases o los ajustes implicados.
 
 Un corte también queda «No probado» cuando reescribirlo no sería seguro: el import no está a
 nivel de módulo (dentro de `try`, `if`), comparte línea con otra sentencia, es un import con
 asterisco, el nombre se lee mientras el módulo carga (nivel de módulo, decoradores, valores
 por defecto, cuerpos de clase, anotaciones que Python evalúa), ninguna función lo lee, el
-nombre se vuelve a ligar o una función lo reutiliza como parámetro, asignación, `global`,
-`def`, `class`, `except as`, `match` o `del`, figura en `__all__`, o el cuerpo de la función
-está en la línea del `def`. Un movimiento a `TYPE_CHECKING` exige además que las anotaciones
-estén pospuestas (`from __future__ import annotations`) o entre comillas: si no, Python 3.12 y
-3.13 lanzan `NameError` al definir la función. Los comentarios, los finales de línea (CRLF),
-el BOM y la codificación declarada sobreviven a la edición.
+nombre se vuelve a ligar (un `import pkg.sub` junto a `import pkg` no cuenta; un
+`import pkg.sub as pkg` sí; una función que ya importa el nombre antes de leerlo se deja
+como está) o una función lo reutiliza como parámetro, asignación, `global`, `def`, `class`,
+`except as`, `match` o `del`, una llamada puede escribir el espacio de nombres del módulo
+(`globals()`, `exec`, `vars()`, `vars(sys.modules[__name__])`; `vars(obj)` sobre otro objeto
+no importa), figura en `__all__`, o el cuerpo de la función está en la línea del `def`. Un
+movimiento a `TYPE_CHECKING` exige además que las anotaciones estén pospuestas o entre
+comillas: si no, Python 3.12 y 3.13 lanzan `NameError` al definir la función, así que unskein
+las pospone él mismo, salvo que el módulo importe una biblioteca que lee anotaciones en
+ejecución (pydantic, fastapi, typer, msgspec, attrs, sqlalchemy y similares) o mencione
+`get_type_hints`, `singledispatch` o `__annotations__` («puede leer sus anotaciones en
+ejecución»). Los comentarios, los finales de línea (CRLF), el BOM y la codificación declarada
+sobreviven a la edición.
 
 `--run` va un paso más allá e importa cada módulo de las marañas, antes y después de los
 cortes, cada uno en su propio subproceso aislado (`python -I -B`, 60 segundos como máximo).
@@ -400,9 +417,11 @@ pueden mostrar una regresión; elige con `--python RUTA` el intérprete que tien
 dependencias del proyecto.
 
 Lo que la prueba no ve: código que lee el nombre movido por cadena o por módulo (`eval`,
-`getattr(sys.modules[...])`, otro módulo haciendo `m.dep`), bibliotecas que leen anotaciones
-en ejecución (modelos de pydantic, `functools.singledispatch`, `typing.get_type_hints`)
-cuando sus nombres salen del módulo, y una función que solo se ejecuta al cargar el módulo a
+`getattr(sys.modules[...])`, otro módulo haciendo `m.dep`), código de fuera del proyecto que
+reasigne `pkg.X` tras un desvío, un objeto módulo guardado en otra variable y pasado a
+`vars()`, bibliotecas o frameworks de otro sitio que lean las anotaciones de un módulo una vez
+pospuestas (modelos de pydantic, `functools.singledispatch`, `typing.get_type_hints`), y una
+función que solo se ejecuta al cargar el módulo a
 través de otras funciones (las llamadas e instanciaciones directas al importar se rechazan;
 las cadenas de llamadas no se siguen). `--run` detecta las que fallan al importar; las demás
 fallan más tarde, así que ejecuta tus tests. Cuando un módulo deja de importarse y ningún
@@ -413,10 +432,16 @@ La prueba nunca cambia el código de salida. Lee el grafo de imports, no el comp
 un corte probado significa que la dependencia ya no está y, con `--run`, que los módulos
 siguen cargando; no ejecuta tus tests.
 
-En litellm (240 cortes), `--prove` tarda unos 2,6 segundos más que el plan y prueba 77 de los
-79 cortes perezosos (los otros 2 reutilizan el nombre `litellm`: cuatro sentencias lo ligan en un archivo, una función lo liga ella misma en el otro); los 143
-cortes que importan el paquete `litellm` entero y los 18 que requieren diseño no se prueban.
-Aplicar los 77 reduce la maraña principal de 616 a 570 módulos y deja la segunda intacta. Con `--run` y el intérprete que ejecuta unskein, los 625 módulos de las marañas se importaron antes y después, sin regresiones; la comprobación tardó unos 14 minutos (un subproceso por módulo, cada uno importando litellm), así que úsala cuando puedas esperar.
+En litellm (240 cortes), `--prove` tarda unos 17 segundos más que el plan y prueba 221 cortes
+(200 perezosos, 15 importando desde el módulo que define el nombre, 6 posponiendo anotaciones);
+13 son olores de diseño con nombre (8 donde una clase base importa a su subclase, 5 donde se
+copia un ajuste al importar) y 6 requieren otras decisiones (3 de diseño, 2 de módulos que
+leen `__annotations__` o importan pydantic, 1 que reutiliza el nombre `litellm` en varias
+sentencias de import). Aplicar los cortes probados reduce la maraña principal de 616 a 117
+módulos y deja intacta la de bedrock (9 módulos). Con `--run` y el intérprete que ejecuta
+unskein, los 625 módulos de las marañas se importaron antes y después, sin regresiones; la
+comprobación tardó unos 14 minutos (un subproceso por módulo, cada uno importando litellm),
+así que úsala cuando puedas esperar.
 
 ## Excluir rutas
 
