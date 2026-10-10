@@ -118,6 +118,8 @@ src/unskein/
 ├── cli.py                 # typer: flags, salida, códigos de salida (capa fina)
 ├── scan.py                # orquestación: prepare_scan + execute_scan
 ├── untangle.py            # orquestación de `unskein untangle` (prepare + build del plan)
+├── prove.py               # `untangle --prove`: aplica los cortes a una copia y los comprueba
+├── probe.py               # `--run`: importa módulos en subprocesos aislados
 ├── entry_points.py        # puntos de entrada de pyproject.toml (scripts)
 ├── config.py              # AnalysisConfig, AIConfig, jerarquía de config
 ├── init_config.py         # `unskein init` (plantilla comentada) y `unskein config save`
@@ -137,6 +139,7 @@ src/unskein/
 │   ├── indirection.py      # resolución de re-exports
 │   ├── usage.py            # uso de nombres importados: acceso por atributo y evidencia para `untangle`
 │   ├── exports.py          # nombres que un módulo expone a `import *`
+│   ├── rewrite.py          # reescritura de texto: mover imports a funciones o bajo TYPE_CHECKING
 │   └── python_parser.py    # implementación para Python con ast
 ├── graph/
 │   ├── builder.py           # construcción del grafo con NetworkX
@@ -152,6 +155,7 @@ src/unskein/
 │   ├── impact.py            # radio de impacto transitivo (impact_radius)
 │   ├── steps.py             # pasos de refactor y sus costes (choose_step)
 │   ├── untangle.py          # cortes de marañas (find_cuts), plan y simulación
+│   ├── proof.py             # veredictos de `untangle --prove` (CutProof, ProofResult)
 │   ├── packages.py          # resumen por paquetes: Ca/Ce entre paquetes y dependencias
 │   └── percentile.py        # percentil por rango más cercano (compartido)
 ├── ai/
@@ -212,6 +216,12 @@ para paquetes Python distribuibles).
 - **Snippets de código en las recomendaciones de IA quedan para más adelante**
   (sin versión asignada). Hoy la IA solo da resumen + problemas señalados, sin
   proponer código de solución.
+- **`untangle --prove` nunca toca el proyecto.** Aplica los cortes (solo `LAZY` y
+  `TYPE_CHECKING`; el resto queda `NOT_PROVEN` con motivo, y `BYPASS_FACADE` no se reescribe
+  porque `pkg.X` puede reasignarse en ejecución) a una copia temporal, la reanaliza y,
+  con `--run`, importa los módulos de la maraña antes y después en subprocesos aislados
+  (`python -I -B`). `--run` es lo único de unskein que ejecuta código del proyecto analizado.
+  La prueba nunca cambia el código de salida.
 
 ## Jerarquía de configuración
 

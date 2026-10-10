@@ -1204,6 +1204,52 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
   `PYTHONHASHSEED`. Los cortes cuestan menos de 35 ms; el tiempo lo domina la relectura de
   evidencia.
 
+- **Prueba** (`--prove`, `prove.py`, `parsers/rewrite.py`, `probe.py`, `graph/proof.py`).
+  Aplicar los cortes a una copia y comprobar cada uno es lo que ninguna herramienta que
+  midimos hace (pylint, pydeps, grimp, import-linter, tach y ruff señalan o nominan
+  dependencias; ninguna demuestra el corte). Flujo: (1) `copy_project` copia los archivos
+  descubiertos y los manifiestos que nombran su distribución a un directorio temporal;
+  (2) los cortes de cada archivo se planifican contra el árbol original y se aplican de una
+  vez (`rewrite_source`), porque aplicarlos uno a uno desplazaría los números de línea del
+  resto; (3) el resultado se vuelve a parsear y se descarta si no compila (`UNREADABLE`);
+  (4) `_reanalyze` repite el análisis sobre la copia; un corte es `PROBADO` si su arista ya
+  no está en el grafo y `ROTO` (`EDGE_REMAINS`) si sigue. Solo se reescriben `LAZY` y
+  `TYPE_CHECKING`; `MOVE_SYMBOL`, `EXTRACT_SHARED` y `PACKAGE_STRUCTURE` son `NOT_PROVEN`
+  `NEEDS_DESIGN`.
+- **Por qué `BYPASS_FACADE` no se reescribe.** Las aristas ya apuntan al módulo que define
+  cada nombre, así que un corte `BYPASS_FACADE` con símbolos casi no existe: en litellm los 143
+  son `import litellm` sin símbolos. Sustituir `litellm.X` por un import directo cambia el
+  comportamiento cuando algo reasigna el atributo en ejecución (`litellm.cache = ...`), así
+  que quedan `NOT_PROVEN` `WHOLE_MODULE_IMPORT` (o `NO_DEFINER` si la evidencia nombra
+  símbolos que ningún módulo define).
+- **Qué rechaza el reescritor** (`RewriteRefusal`, mismos valores que `ProofReason`): el import
+  no está a nivel de módulo (`NESTED_IMPORT`, p. ej. dentro de `try`); comparte línea con otra
+  sentencia o termina en `;` (`MULTIPLE_STATEMENTS`); es `import *` (`STAR_IMPORT`); el nombre
+  se lee al importar el módulo (`READ_AT_IMPORT`: nivel de módulo, decoradores, valores por
+  defecto, cuerpo de clase, anotaciones evaluadas); no lo lee ninguna función
+  (`NO_READER`); el nombre se vuelve a ligar en el módulo o la función lo reutiliza como
+  parámetro, asignación, `global`, `def`, `class`, `except as`, `match` o `del`
+  (`NAME_REUSED`); está en `__all__` (`EXPORTED`); la primera sentencia de la función comparte
+  línea con el `def` (`INLINE_BODY`). `TYPE_CHECKING` rechaza además anotaciones evaluadas
+  (`ANNOTATIONS_EVALUATED`), lecturas en ejecución (`READ_AT_RUNTIME`) y un `TYPE_CHECKING`
+  ligado a otra cosa. El texto se edita por posiciones de `ast` (nunca `ast.unparse`), así que
+  comentarios, CRLF, BOM y la codificación declarada se conservan byte a byte salvo lo movido.
+- **`NameError` en Python 3.12/3.13.** `def f(x: B)` evalúa `B` al definir la función; mover
+  su import bajo `if TYPE_CHECKING:` falla en 3.12 y 3.13 (3.14 evalúa las anotaciones de forma
+  perezosa, PEP 649). Por eso `TYPE_CHECKING` solo se ofrece con `from __future__ import
+  annotations` o anotaciones entre comillas (`UseContext.QUOTED`); antes se ofrecía siempre que
+  todos los usos fueran anotaciones.
+- **`--run`** (`probe.py`). Un subproceso `python -I -B` por módulo de las marañas, antes y
+  después, con las raíces de importación de la copia en `sys.path` y un tiempo máximo de 60 s
+  (`PROBE_TIMEOUT_SECONDS`). Una regresión es un módulo que se importaba antes y ya no; se
+  atribuye a un corte cuando el traceback pasa por un archivo que ese corte editó
+  (`ProofReason.IMPORT_FAILED`, el corte pasa a `ROTO`); si no, se informa como «sin atribuir».
+  Un módulo que no se importaba antes no cuenta como regresión. Es lo único de unskein que
+  ejecuta código del proyecto analizado, siempre sobre la copia y solo si se pide.
+- **Verificación.** Cada rechazo del reescritor y cada aceptación tienen un test; las
+  aceptaciones se ejecutan con `python -I -B` (el ciclo no se importa antes y sí después);
+  una comprobación de mutación desactiva cada salvaguarda y exige que algún test falle.
+
 ---
 
 ## 5. Pipeline de IA (`ai/client.py`, `ai/prompts.py`)

@@ -725,6 +725,12 @@ _PROOF: dict[str, dict[Lang, str]] = {
         Lang.EN: "`--run` ran code of the analyzed project (by importing its modules), "
         "on a temporary copy.",
     },
+    "untangle.proof.run_skipped": {
+        Lang.ES: "{count} módulos no se importaban ni antes de los cortes (faltan dependencias "
+        "o archivos de datos): no pueden mostrar una regresión.",
+        Lang.EN: "{count} modules did not import even before the cuts (missing dependencies "
+        "or data files): they cannot show a regression.",
+    },
     "untangle.proof.regression": {
         Lang.ES: "`{module}`: {error}",
         Lang.EN: "`{module}`: {error}",

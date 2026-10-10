@@ -33,6 +33,21 @@ from unskein.untangle import untangle_scope
 WORKSPACE_PREFIX = "unskein-prove-"
 COPY_DIR = "after"
 BEFORE_DIR = "before"
+SKIPPED_DIRECTORIES = (
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+    ".venv",
+    "venv",
+    ".eggs",
+)
 MOVE_KINDS = {StepKind.LAZY: MoveKind.LAZY, StepKind.TYPE_CHECKING: MoveKind.TYPE_CHECKING}
 DESIGN_STEPS = frozenset(
     {StepKind.MOVE_SYMBOL, StepKind.EXTRACT_SHARED, StepKind.PACKAGE_STRUCTURE}
@@ -125,23 +140,39 @@ def _manifests_above(path: Path, root: Path) -> list[Path]:
         folder = folder.parent
 
 
-def copy_project(context: ScanContext, destination: Path) -> None:
-    """Copy the discovered files, and the manifests that name their distributions.
+def copy_project(context: ScanContext, destination: Path, *, whole_tree: bool = False) -> None:
+    """Copy the project: the discovered files, or the whole tree for ``--run``.
+
+    The static proof only needs the sources and the manifests that name their
+    distributions. Importing modules also needs whatever they read when they load (data
+    files, templates), so ``--run`` copies everything except version-control data,
+    virtual environments and caches.
 
     Args:
         context: A prepared scan.
         destination: Directory that becomes the copy's root.
+        whole_tree: Whether to copy every file instead of the discovered ones.
 
     Raises:
         ProofUnavailable: If a file cannot be copied.
         UnskeinError: If the path is not a directory or holds no Python files.
     """
     root = context.root
-    wanted: set[Path] = set()
-    for path in discover_project(context):
-        wanted.add(path)
-        wanted.update(_manifests_above(path, root))
+    files = discover_project(context)
     try:
+        if whole_tree:
+            shutil.copytree(
+                root,
+                destination,
+                symlinks=True,
+                ignore=shutil.ignore_patterns(*SKIPPED_DIRECTORIES),
+                dirs_exist_ok=True,
+            )
+            return
+        wanted: set[Path] = set()
+        for path in files:
+            wanted.add(path)
+            wanted.update(_manifests_above(path, root))
         for path in sorted(wanted):
             relative = _relative(path, root)
             if relative is None:
@@ -458,7 +489,7 @@ def prove_plan(context: ScanContext, plan: UntanglePlan, options: ProveOptions) 
         with tempfile.TemporaryDirectory(prefix=WORKSPACE_PREFIX) as workspace:
             base = Path(workspace)
             copy_root = base / COPY_DIR / context.root.resolve().name
-            copy_project(context, copy_root)
+            copy_project(context, copy_root, whole_tree=python is not None)
             applied, verdicts = _apply_cuts(context, cuts, copy_root)
             scope, modules = _reanalyze(context, copy_root, all_edges=plan.all_edges)
             for done in applied.values():
@@ -467,7 +498,7 @@ def prove_plan(context: ScanContext, plan: UntanglePlan, options: ProveOptions) 
             run = None
             if python is not None:
                 before_root = base / BEFORE_DIR / copy_root.name
-                copy_project(context, before_root)
+                copy_project(context, before_root, whole_tree=True)
                 inputs = _RunInputs(
                     python,
                     before_root,

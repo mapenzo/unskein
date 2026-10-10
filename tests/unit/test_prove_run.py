@@ -100,3 +100,19 @@ def test_a_missing_interpreter_is_a_usage_error(tmp_path: Path) -> None:
     with pytest.raises(UnskeinError):
         prove_module.resolve_python(tmp_path / "no-python")
     assert prove_module.resolve_python(None) == Path(sys.executable)
+
+
+def test_the_run_copies_data_files_that_modules_read_when_imported(
+    make_project: MakeProject,
+) -> None:
+    files = dict(CYCLE_THAT_IMPORTS)
+    files["app/data.json"] = '{"a": 1}'
+    files["app/a.py"] = (
+        "import json\nimport pathlib\n\nimport app.b\n\n"
+        "DATA = json.loads(pathlib.Path(__file__).with_name('data.json').read_text())\n\n\n"
+        "def fa():\n    return app.b.fb\n"
+    )
+    proof = prove_run(make_project(files))
+    assert proof.run is not None
+    assert proof.run.importable == proof.run.modules == 2
+    assert proof.run.regressions == () and proof.run.unattributed == ()

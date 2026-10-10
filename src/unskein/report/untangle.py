@@ -331,6 +331,8 @@ def _run_lines(run: RunProof, lang: Lang) -> list[str]:
         "",
         t("untangle.proof.run_warning", lang),
     ]
+    if run.importable < run.modules:
+        lines += ["", t("untangle.proof.run_skipped", lang, count=run.modules - run.importable)]
     if run.regressions:
         lines.append("")
         lines += _regression_bullets(run.regressions, lang)

@@ -130,3 +130,9 @@ def test_the_legend_explains_the_verdicts(make_project: MakeProject) -> None:
     report = render(make_project, proof_of(ProofVerdict.PROVEN))
     assert t("untangle.proof.legend", Lang.EN) in report
     assert t("untangle.proof.legend.broken", Lang.EN) in report
+
+
+def test_modules_that_never_imported_are_called_out(make_project: MakeProject) -> None:
+    proof = proof_of(ProofVerdict.PROVEN, run=run_proof())
+    report = render(make_project, proof)
+    assert t("untangle.proof.run_skipped", Lang.EN, count=1) in report

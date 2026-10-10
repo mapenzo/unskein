@@ -171,7 +171,9 @@ code, without an LLM. The AI only interprets numbers the graph has already produ
 It never decides what counts as a module or an import. If the AI step is not configured
 or fails, you still get the full report.
 
-unskein never runs your code. It reads it with Python's own `ast` parser.
+unskein does not run your code: it reads it with Python's own `ast` parser. The only
+exception is `unskein untangle --prove --run`, which you ask for explicitly and which
+imports the project's modules in isolated subprocesses, on a temporary copy.
 
 ## Quickstart
 
