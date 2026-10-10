@@ -335,6 +335,11 @@ warnings there were; `unskein scan` shows them in detail.
 - `--all-edges`: also untangle hidden coupling (imports inside functions or under
   `TYPE_CHECKING`).
 - `--max-tangles N`: how many tangles to detail, largest first (default 5).
+- `--prove`: apply the cuts to a temporary copy of the project and check, cut by cut, that
+  the import is gone (`LAZY` and `TYPE_CHECKING` cuts; nothing is executed).
+- `--run`: with `--prove`, also import the tangle's modules before and after in isolated
+  subprocesses. It runs code of the analyzed project.
+- `--python PATH`: interpreter for `--run` (default: the one running unskein).
 - `--output FILE` / `-o FILE`: also save the Markdown plan.
 - `--lang es|en`: output language.
 

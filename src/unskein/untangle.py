@@ -28,12 +28,18 @@ class UntangleOptions:
         lang: Requested output language.
         all_edges: Whether lazy and type-only imports count too (hidden coupling).
         max_tangles: How many tangles the report details, largest first.
+        prove: Whether to apply the cuts to a copy and check each one.
+        run: Whether the proof also imports the tangle's modules before and after.
+        python: Interpreter for that run; None means the one running unskein.
     """
 
     path: Path
     lang: str | None = None
     all_edges: bool = False
     max_tangles: int = DEFAULT_MAX_TANGLES
+    prove: bool = False
+    run: bool = False
+    python: Path | None = None
 
 
 def prepare_untangle(

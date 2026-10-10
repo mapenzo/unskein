@@ -345,6 +345,11 @@ del análisis hubo; `unskein scan` las muestra en detalle.
 - `--all-edges`: desenreda también el acoplamiento oculto (imports dentro de funciones
   o bajo `TYPE_CHECKING`).
 - `--max-tangles N`: cuántas marañas detallar, de mayor a menor (por defecto 5).
+- `--prove`: aplica los cortes a una copia temporal del proyecto y comprueba, corte a corte,
+  que el import ya no está (cortes `LAZY` y `TYPE_CHECKING`; no se ejecuta nada).
+- `--run`: con `--prove`, importa además los módulos de la maraña antes y después, en
+  subprocesos aislados. Ejecuta código del proyecto analizado.
+- `--python RUTA`: intérprete para `--run` (por defecto, el que ejecuta unskein).
 - `--output FICHERO` / `-o FICHERO`: guarda también el plan en Markdown.
 - `--lang es|en`: idioma de la salida.
 
