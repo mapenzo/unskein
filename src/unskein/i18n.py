@@ -75,6 +75,16 @@ _WARNINGS: dict[str, dict[Lang, str]] = {
         Lang.ES: "Imports con asterisco sin analizar",
         Lang.EN: "Star imports not analyzed",
     },
+    "warning.api_contract_ignored": {
+        Lang.ES: "`[api]` declara un contrato, pero la regla de fugas de API está apagada: "
+        "`--api-leaks` la activa",
+        Lang.EN: "`[api]` declares a contract, but the API leak rule is off: `--api-leaks` "
+        "turns it on",
+    },
+    "warning_title.api_contract_ignored": {
+        Lang.ES: "Contrato `[api]` sin comprobar",
+        Lang.EN: "`[api]` contract not checked",
+    },
     "warning.relative_beyond_top": {
         Lang.ES: "El import relativo '{detail}' sube más allá del paquete raíz",
         Lang.EN: "Relative import '{detail}' goes beyond the top-level package",

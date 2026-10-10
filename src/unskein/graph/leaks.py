@@ -1,7 +1,7 @@
 """Rule 13: code outside a package imports what the package keeps internal."""
 
 from collections import Counter, defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -9,6 +9,7 @@ from pathlib import Path
 import networkx as nx
 
 from unskein.config import ApiContract
+from unskein.graph.findings import Evidence, Finding, FindingKind
 from unskein.parsers.indirection import (
     ReExportIndex,
     build_reexport_index,
@@ -20,6 +21,10 @@ from unskein.parsers.indirection import (
 from unskein.parsers.layout import relative_path
 from unskein.parsers.models import STAR_EXPORT, ImportEdge, ModuleInfo, ParseResult
 
+MAX_FIXES_SHOWN = 5
+FIX_SEPARATOR = "; "
+ROOT_SEPARATOR = "; "
+ROOT_COUNT_SEPARATOR = " "
 SEGMENT_SEPARATOR = "."
 LINE_SEPARATOR = ":"
 PRIVATE_PREFIX = "_"
@@ -556,3 +561,46 @@ def summarize_leaks(
     return sorted(
         leaks, key=lambda leak: (leak.kind is not LeakKind.INTERNAL, -leak.consumers, leak.name)
     )
+
+
+def _fix_summary(fix: LeakFix) -> str:
+    """Render one fix for the AI and the evidence: location and action.
+
+    Args:
+        fix: The fix.
+
+    Returns:
+        ``path:line from facade import x`` or ``path:line no_fix (reason)``.
+    """
+    if fix.action is LeakAction.NO_FIX:
+        return f"{fix.location} {fix.action} ({fix.reason})"
+    name = fix.symbol if fix.alias is None else f"{fix.symbol} as {fix.alias}"
+    return f"{fix.location} from {fix.facade} import {name}"
+
+
+def find_api_leaks(leaks: Iterable[LeakModule]) -> list[Finding]:
+    """Apply rule 13: one finding per module outside code reaches into.
+
+    Args:
+        leaks: From ``summarize_leaks``.
+
+    Returns:
+        The findings, in the same order.
+    """
+    findings = []
+    for leak in leaks:
+        evidence: Evidence = {
+            "kind": leak.kind.value,
+            "reason": leak.reason.value,
+            "consumers": leak.consumers,
+            "roots": ROOT_SEPARATOR.join(
+                f"{root}{ROOT_COUNT_SEPARATOR}{count}" for root, count in leak.roots
+            ),
+            "statements": len(leak.fixes),
+            "fixed": leak.fixed,
+            "no_fix": len(leak.fixes) - leak.fixed,
+            "fixes": FIX_SEPARATOR.join(_fix_summary(fix) for fix in leak.fixes[:MAX_FIXES_SHOWN]),
+            "fixes_total": len(leak.fixes),
+        }
+        findings.append(Finding(FindingKind.API_LEAK, (leak.name,), evidence))
+    return findings

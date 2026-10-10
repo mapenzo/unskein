@@ -5,7 +5,7 @@ from itertools import islice
 
 import networkx as nx
 
-from unskein.config import FindingsConfig
+from unskein.config import ApiContract, FindingsConfig
 from unskein.graph.builder import build_graph
 from unskein.graph.coupling import CouplingMetrics
 from unskein.graph.distributions import (
@@ -15,16 +15,23 @@ from unskein.graph.distributions import (
 )
 from unskein.graph.findings import Finding, FindingKind, find_findings
 from unskein.graph.impact import impact_radius
-from unskein.graph.leaks import LeakModule, summarize_leaks
+from unskein.graph.leaks import LeakModule, find_api_leaks, summarize_leaks
 from unskein.graph.missing import find_missing_modules
 from unskein.graph.native import NativeModule, find_optional_native_required, summarize_native
 from unskein.graph.packages import PackageEdge, PackageMetrics, summarize_project_packages
 from unskein.graph.percentile import nearest_rank_percentile
 from unskein.graph.scripts import ScriptGroup, count_consumers, find_scripts, group_scripts
 from unskein.graph.stars import WildcardModule, find_wildcard_imports, summarize_wildcards
-from unskein.parsers.models import ImportKind, ParseResult, ParseWarning, VirtualKind
+from unskein.parsers.models import (
+    ImportKind,
+    ParseResult,
+    ParseWarning,
+    VirtualKind,
+    WarningCode,
+)
 
 MAX_CYCLES = 100
+API_TABLE = "[api]"
 HIGH_COUPLING_PERCENTILE = 90
 PACKAGE_INIT_FILE = "__init__.py"
 # Impact costs one graph traversal per module, so only what the report shows is measured.
@@ -248,6 +255,22 @@ def _impact_targets(high_coupling: list[str], findings: list[Finding]) -> list[s
     return [*high_coupling[:IMPACT_COUPLED_MODULES], *bottlenecks[:IMPACT_BOTTLENECK_MODULES]]
 
 
+def _warnings(result: ParseResult, findings_config: FindingsConfig) -> list[ParseWarning]:
+    """Return the parse warnings, plus one when ``[api]`` declares a contract nothing checks.
+
+    Args:
+        result: Parse result.
+        findings_config: Findings settings, with the declared contract.
+
+    Returns:
+        The warnings; a declared contract with the rule off adds ``API_CONTRACT_IGNORED``.
+    """
+    warnings = list(result.warnings)
+    if findings_config.enabled and not result.api_leaks and findings_config.api != ApiContract():
+        warnings.append(ParseWarning(WarningCode.API_CONTRACT_IGNORED, None, None, API_TABLE))
+    return warnings
+
+
 def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) -> AnalysisResult:
     """Run the graph, coupling, cycles, findings, impact and package analyses.
 
@@ -314,6 +337,7 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
             *missing,
             *find_optional_native_required(native),
             *find_wildcard_imports(wildcards),
+            *find_api_leaks(leaks),
         ]
     package_metrics, package_edges = summarize_project_packages(
         graph, findings_config.package_depth, facades=facades, virtual=namespaces
@@ -323,7 +347,7 @@ def analyze(result: ParseResult, findings_config: FindingsConfig | None = None) 
         coupling_metrics=coupling,
         cycles=cycles,
         high_coupling_modules=high_coupling,
-        parse_warnings=list(result.warnings),
+        parse_warnings=_warnings(result, findings_config),
         cycles_truncated=cycles_truncated,
         tangles=tangles,
         findings=findings,

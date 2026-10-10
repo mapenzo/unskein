@@ -33,6 +33,8 @@ class WarningCode(StrEnum):
             identifiers; it is ignored.
         STAR_NOT_ANALYZED: ``from x import *`` of a project module outside a package facade,
             not analyzed because ``star_fixes`` is off; the option computes the explicit import.
+        API_CONTRACT_IGNORED: ``[api]`` declares a contract but the API leak rule is off, so
+            nothing checks it; ``api_leaks`` turns it on.
     """
 
     STAR_IMPORT = "star_import"
@@ -50,6 +52,7 @@ class WarningCode(StrEnum):
     DUPLICATE_DISTRIBUTION_NAME = "duplicate_distribution_name"
     INVALID_MODULE_NAME = "invalid_module_name"
     STAR_NOT_ANALYZED = "star_not_analyzed"
+    API_CONTRACT_IGNORED = "api_contract_ignored"
 
 
 @dataclass(frozen=True, slots=True)
