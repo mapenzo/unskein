@@ -25,7 +25,7 @@ from unskein.graph.steps import DEFERRED_CONTEXTS, StepKind
 from unskein.graph.untangle import Cut, Edge, UntanglePlan
 from unskein.parsers.discovery import detect_encoding
 from unskein.parsers.layout import MANIFEST_NAMES
-from unskein.parsers.rewrite import Move, MoveKind, rewrite_source
+from unskein.parsers.rewrite import Move, MoveKind, mentions_module_table, rewrite_source
 from unskein.parsers.usage import MODULE_SEPARATOR
 from unskein.pipeline import worker_count
 from unskein.probe import PROBE_TIMEOUT_SECONDS, ProbeJob, import_roots, run_probes
@@ -231,7 +231,25 @@ def _refused(cuts: list[Cut], reason: ProofReason) -> dict[Edge, CutProof]:
     }
 
 
-def _imports_ancestor(cut: Cut, tree: ast.Module) -> bool:
+def _is_stable_ancestor(source: str, package: str, facts: ProjectFacts) -> bool:
+    """Tell whether a package contains a module and keeps its module object.
+
+    Args:
+        source: Dotted name of the importing module.
+        package: Dotted name imported.
+        facts: Project facts.
+
+    Returns:
+        True when ``package`` is a proper prefix of ``source`` and its ``__init__`` never
+        touches ``sys.modules``.
+    """
+    if not source.startswith(package + MODULE_SEPARATOR):
+        return False
+    tree = facts.tree(package)
+    return tree is not None and not mentions_module_table(tree)
+
+
+def _imports_ancestor(cut: Cut, tree: ast.Module, facts: ProjectFacts) -> bool:
     """Tell whether the cut's statement imports a package that contains the importer.
 
     The statement decides, not the cut: ``import pkg`` also yields cuts toward
@@ -240,6 +258,7 @@ def _imports_ancestor(cut: Cut, tree: ast.Module) -> bool:
     Args:
         cut: A cut of the plan.
         tree: Syntax tree of the importing module.
+        facts: Project facts; the package must not replace itself in ``sys.modules``.
 
     Returns:
         True when a ``import name`` statement on the cut's lines names a package that is a
@@ -248,7 +267,7 @@ def _imports_ancestor(cut: Cut, tree: ast.Module) -> bool:
     return any(
         isinstance(node, ast.Import)
         and node.lineno in cut.evidence.lines
-        and any(cut.source.startswith(alias.name + MODULE_SEPARATOR) for alias in node.names)
+        and any(_is_stable_ancestor(cut.source, alias.name, facts) for alias in node.names)
         for node in tree.body
     )
 
@@ -267,7 +286,7 @@ def _move_for(cut: Cut, tree: ast.Module, facts: ProjectFacts) -> Move:
         goes under ``TYPE_CHECKING`` only when every read is an annotation.
     """
     evidence = cut.evidence
-    ancestor = _imports_ancestor(cut, tree)
+    ancestor = _imports_ancestor(cut, tree, facts)
     if cut.step is StepKind.BYPASS_FACADE:
         return Move(
             MoveKind.BYPASS,

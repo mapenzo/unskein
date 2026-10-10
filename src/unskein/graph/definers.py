@@ -15,11 +15,13 @@ from unskein.parsers.indirection import (
     star_exports,
 )
 from unskein.parsers.models import ModuleInfo, ParseResult
+from unskein.parsers.rewrite import mentions_module_table
 
 DEFINITIONS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 SET_ATTRIBUTE_CALLS = frozenset({"setattr", "delattr"})
 NAME_ARGUMENT = 1
 SEGMENT_SEPARATOR = "."
+STAR = "*"
 PACKAGE_INIT = "__init__.py"
 MAX_HOPS = 16
 
@@ -127,6 +129,28 @@ class DefinerIndex:
             return False
         return any(isinstance(node, DEFINITIONS) and node.name == name for node in tree.body)
 
+    def _source_of(self, module: str, node: ast.ImportFrom) -> str | None:
+        """Resolve the module a ``from`` statement imports from, when it is a project module.
+
+        Args:
+            module: The module that contains the statement.
+            node: The statement.
+
+        Returns:
+            The dotted source module, or None when it is outside the project or the relative
+            level climbs above the top-level package.
+        """
+        info = self.modules.get(module)
+        if info is None:
+            return None
+        package = module if info.file_path.name == PACKAGE_INIT else module.rpartition(".")[0]
+        parts = package.split(SEGMENT_SEPARATOR) if package else []
+        if node.level - 1 > len(parts):
+            return None
+        base = parts[: len(parts) - (node.level - 1)] if node.level else []
+        source = SEGMENT_SEPARATOR.join([*base, *([node.module] if node.module else [])])
+        return source if source in self.names else None
+
     def _imported_from(self, module: str, name: str) -> str | None:
         """Find the project module a module imports a name from, without renaming it.
 
@@ -142,21 +166,44 @@ class DefinerIndex:
             it or the source is not a project module.
         """
         tree = self._tree(module)
-        info = self.modules.get(module)
-        if tree is None or info is None:
+        if tree is None:
             return None
-        package = module if info.file_path.name == PACKAGE_INIT else module.rpartition(".")[0]
         for node in tree.body:
-            if not (
-                isinstance(node, ast.ImportFrom)
-                and any(alias.name == name and alias.asname is None for alias in node.names)
+            if isinstance(node, ast.ImportFrom) and any(
+                alias.name == name and alias.asname is None for alias in node.names
             ):
-                continue
-            parts = package.split(SEGMENT_SEPARATOR) if package else []
-            base = parts[: len(parts) - (node.level - 1)] if node.level else []
-            source = SEGMENT_SEPARATOR.join([*base, *([node.module] if node.module else [])])
-            return source if source in self.names else None
+                return self._source_of(module, node)
         return None
+
+    def _star_overrides(self, module: str, name: str) -> bool:
+        """Tell whether a star import could rebind a name after the module binds it.
+
+        Args:
+            module: A module the name passes through.
+            name: The name.
+
+        Returns:
+            True when a top-level star import comes after the statement that binds the name,
+            or its source is not a project module, so its exports are unknown.
+        """
+        tree = self._tree(module)
+        if tree is None:
+            return True
+        stars = [
+            node
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom) and any(a.name == STAR for a in node.names)
+        ]
+        if any(self._source_of(module, node) is None for node in stars):
+            return True
+        bound = [
+            node.lineno
+            for node in tree.body
+            if isinstance(node, ast.ImportFrom)
+            and any((a.asname or a.name) == name for a in node.names)
+        ]
+        first = min(bound) if bound else 0
+        return any(node.lineno > first for node in stars)
 
     def definer(self, facade: str, name: str) -> str | None:
         """Find the module that defines a name the facade offers.
@@ -168,7 +215,9 @@ class DefinerIndex:
         Returns:
             The dotted defining module, or None when the name is reassigned somewhere, is a
             submodule of the facade, passes a guard, is defined by the facade itself, or
-            some module on the way does not bind it exactly once, plainly.
+            some module on the way does not bind it exactly once, plainly, or a later star
+            import could rebind it, the definer lies outside the facade's package, or the
+            facade touches ``sys.modules``.
         """
         if name in self._reassigned_names():
             return None
@@ -191,10 +240,16 @@ class DefinerIndex:
             module = forwarded
         else:
             return None
-        if module == facade or not all(self._binds_once(hop, name) for hop in hops):
+        if module == facade or not module.startswith(facade + SEGMENT_SEPARATOR):
             return None
-        origin = module
-        return origin
+        if not all(self._binds_once(hop, name) for hop in hops):
+            return None
+        if any(self._star_overrides(hop, name) for hop in hops):
+            return None
+        facade_tree = self._tree(facade)
+        if facade_tree is None or mentions_module_table(facade_tree):
+            return None
+        return module
 
 
 def _sets_attribute_by_string(node: ast.AST) -> bool:

@@ -428,6 +428,21 @@ def _reaches_the_module(node: ast.expr) -> bool:
     )
 
 
+def mentions_module_table(tree: ast.Module) -> bool:
+    """Tell whether a module touches ``sys.modules``, where a package can replace itself.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        True when any attribute named ``modules`` appears in it.
+    """
+    return any(
+        isinstance(node, ast.Attribute) and node.attr == MODULES_ATTRIBUTE
+        for node in ast.walk(tree)
+    )
+
+
 def _writes_namespace(tree: ast.Module) -> bool:
     """Tell whether a call can bind module names that cannot be read from the source.
 

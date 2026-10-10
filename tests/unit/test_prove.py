@@ -266,3 +266,21 @@ def test_a_base_that_imports_its_subclass_is_named_even_when_postponing_is_unsaf
     [cut] = proof.cuts
     assert (cut.source, cut.target) == ("app.base", "app.child")
     assert (cut.verdict, cut.reason) == (ProofVerdict.NOT_PROVEN, ProofReason.BASE_KNOWS_SUBCLASS)
+
+
+def test_an_ancestor_that_replaces_itself_in_sys_modules_is_not_moved_as_already_loaded(
+    make_project: MakeProject,
+) -> None:
+    files = {
+        "pkg/__init__.py": (
+            "import sys\nfrom .a import FILTER\n\nsys.modules[__name__] = object()\n"
+        ),
+        "pkg/a.py": (
+            "import pkg\n\n\nclass Filter:\n    def run(self):\n        return pkg\n\n\n"
+            "FILTER = Filter()\n"
+        ),
+    }
+    _, proof = prove(make_project(files))
+    assert [(p.verdict, p.reason) for p in proof.cuts] == [
+        (ProofVerdict.NOT_PROVEN, ProofReason.READ_AT_IMPORT)
+    ]
