@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from unskein.errors import ConfigError, ErrorKey
 
@@ -116,6 +116,19 @@ class AnalysisConfig:
 
 
 @dataclass(frozen=True)
+class ApiContract:
+    """The public surface a project declares in ``[api]``.
+
+    Attributes:
+        public: Module prefixes that are public API, even inside an internal prefix.
+        internal: Module prefixes outside code must not import from.
+    """
+
+    public: tuple[str, ...] = ()
+    internal: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class FindingsConfig:
     """Thresholds of the architecture findings.
 
@@ -133,6 +146,7 @@ class FindingsConfig:
         entry_points: Module names or ``fnmatch`` patterns that are entry points
             and never count as orphans.
         layers: Layer names (package prefixes), highest first; empty means no layer rule.
+        api: The declared public surface; empty means only the naming convention decides.
     """
 
     enabled: bool = True
@@ -145,6 +159,7 @@ class FindingsConfig:
     package_depth: int | None = None
     entry_points: tuple[str, ...] = ()
     layers: tuple[str, ...] = ()
+    api: ApiContract = ApiContract()
 
 
 @dataclass
@@ -285,6 +300,57 @@ class TomlLayers(_TomlTable):
         return order
 
 
+class TomlApi(_TomlTable):
+    """The ``[api]`` table: which modules are public and which are internal.
+
+    Attributes:
+        public: Module prefixes that are public API. The longest matching prefix between
+            ``public`` and ``internal`` decides a module.
+        internal: Module prefixes that are internal.
+    """
+
+    public: list[str] | None = None
+    internal: list[str] | None = None
+
+    @field_validator("public", "internal")
+    @classmethod
+    def _check_prefixes(cls, prefixes: list[str] | None) -> list[str] | None:
+        """Reject prefixes that are not dotted module names, and repeated ones.
+
+        The messages never echo the offending value, like every configuration error.
+
+        Args:
+            prefixes: Prefixes as written in the file.
+
+        Returns:
+            The same prefixes.
+
+        Raises:
+            ValueError: If a prefix is not a dotted module name or is listed twice.
+        """
+        if prefixes is None:
+            return None
+        if not all(LAYER_NAME_PATTERN.fullmatch(prefix) for prefix in prefixes):
+            raise ValueError("every prefix must be a dotted module name, such as app.core")
+        if len(set(prefixes)) != len(prefixes):
+            raise ValueError("a prefix is listed more than once")
+        return prefixes
+
+    @model_validator(mode="after")
+    def _check_disjoint(self) -> "TomlApi":
+        """Reject a prefix declared both public and internal.
+
+        Returns:
+            This table.
+
+        Raises:
+            ValueError: If one prefix appears in both lists.
+        """
+        if set(self.public or ()) & set(self.internal or ()):
+            raise ValueError("a prefix cannot be both public and internal")
+        return self
+
+
 class TomlConfig(_TomlTable):
     """A validated, merged ``.unskein.toml`` (all tables optional).
 
@@ -294,6 +360,7 @@ class TomlConfig(_TomlTable):
         analysis: The ``[analysis]`` table.
         findings: The ``[findings]`` table.
         layers: The ``[layers]`` table.
+        api: The ``[api]`` table.
     """
 
     general: TomlGeneral = TomlGeneral()
@@ -301,6 +368,7 @@ class TomlConfig(_TomlTable):
     analysis: TomlAnalysis = TomlAnalysis()
     findings: TomlFindings = TomlFindings()
     layers: TomlLayers = TomlLayers()
+    api: TomlApi = TomlApi()
 
 
 def read_toml_file(path: Path) -> dict:
@@ -424,8 +492,9 @@ def resolve_analysis_config(toml: TomlConfig, flags: AnalysisFlags) -> AnalysisC
 def resolve_findings_config(toml: TomlConfig, enabled: bool | None) -> FindingsConfig:
     """Resolve the findings settings with precedence flag > .unskein.toml > default.
 
-    Entry points and layers are the exceptions: entry points declared by the project's
-    distributions are added during analysis; layers come from ``[layers]``.
+    Entry points, layers and the API contract are the exceptions: entry points declared by
+    the project's distributions are added during analysis; layers come from ``[layers]`` and
+    the contract from ``[api]``.
 
     Args:
         toml: Validated, merged TOML configuration.
@@ -439,7 +508,8 @@ def resolve_findings_config(toml: TomlConfig, enabled: bool | None) -> FindingsC
         overrides["enabled"] = enabled
     entry_points = tuple(toml.findings.entry_points or ())
     layers = tuple(toml.layers.order or ())
-    return FindingsConfig(**overrides, entry_points=entry_points, layers=layers)
+    api = ApiContract(tuple(toml.api.public or ()), tuple(toml.api.internal or ()))
+    return FindingsConfig(**overrides, entry_points=entry_points, layers=layers, api=api)
 
 
 def resolve_ai_config(
