@@ -13,8 +13,8 @@ class StepKind(StrEnum):
     """How a dependency can be removed, cheapest first.
 
     Attributes:
-        TYPE_CHECKING: The names are only read in annotations; import them under
-            ``if TYPE_CHECKING:``.
+        TYPE_CHECKING: The names are only read in annotations that are not evaluated at
+            import (postponed or quoted); import them under ``if TYPE_CHECKING:``.
         BYPASS_FACADE: The dependency goes to a package's ``__init__.py``; import from the
             module that defines the name instead (not offered when the facade defines every
             imported name itself).
@@ -59,6 +59,28 @@ STEP_COSTS: Mapping[StepKind, int] = MappingProxyType(
 )
 
 
+DEFERRED_CONTEXTS = frozenset({UseContext.ANNOTATION, UseContext.QUOTED})
+
+
+def _deferred_annotations(evidence: ImportEvidence) -> bool:
+    """Tell whether every read of the names happens where Python never evaluates it.
+
+    A signature annotation is evaluated when the function is defined, so moving its
+    import under ``TYPE_CHECKING`` raises ``NameError`` on Python 3.12 and 3.13 (3.14
+    evaluates annotations lazily). Only postponed or quoted annotations are safe.
+
+    Args:
+        evidence: Where the names are read and whether annotations are postponed.
+
+    Returns:
+        True when the names are read only in postponed or quoted annotations.
+    """
+    contexts = evidence.contexts
+    if not contexts or not contexts <= DEFERRED_CONTEXTS:
+        return False
+    return evidence.postponed_annotations or contexts == {UseContext.QUOTED}
+
+
 def _lazy_applies(evidence: ImportEvidence) -> bool:
     """Tell whether importing the names inside the functions that read them is safe.
 
@@ -74,10 +96,11 @@ def _lazy_applies(evidence: ImportEvidence) -> bool:
     contexts = evidence.contexts
     if not contexts:
         return False
-    if contexts <= {UseContext.FUNCTION}:
+    if contexts <= {UseContext.FUNCTION, UseContext.QUOTED}:
         return True
     return evidence.postponed_annotations and contexts <= {
         UseContext.ANNOTATION,
+        UseContext.QUOTED,
         UseContext.FUNCTION,
     }
 
@@ -118,8 +141,7 @@ def _applicable_steps(
     if source in facades and target.startswith(f"{source}."):
         return {StepKind.PACKAGE_STRUCTURE}
     steps = {StepKind.EXTRACT_SHARED}
-    contexts = evidence.contexts
-    if contexts and contexts <= {UseContext.ANNOTATION}:
+    if _deferred_annotations(evidence):
         steps.add(StepKind.TYPE_CHECKING)
     if _lazy_applies(evidence):
         steps.add(StepKind.LAZY)

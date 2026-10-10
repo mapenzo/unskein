@@ -1142,7 +1142,7 @@ Para cada maraña, propone qué imports cortar y con qué refactor, y simula el 
 
   | Paso | Coste | Cuándo aplica |
   |---|---|---|
-  | `TYPE_CHECKING` | 1 | todos los usos son anotaciones |
+  | `TYPE_CHECKING` | 1 | todos los usos son anotaciones que no se evalúan al importar: con `from __future__ import annotations`, o entre comillas (`UseContext.QUOTED`). Sin eso la firma `def f(x: B)` se evalúa al definirse en Python 3.12 y 3.13 (3.14 las evalúa de forma perezosa) y mover el import bajo `if TYPE_CHECKING:` da `NameError` |
   | `BYPASS_FACADE` | 2 | el destino es una fachada de paquete, salvo que la fachada defina ella misma todos los nombres importados (ni reexportados ni submódulos: no hay otro sitio de donde importarlos); un import del módulo entero lo admite siempre |
   | `LAZY` | 3 | todos los usos están dentro de funciones; o en funciones y anotaciones si el módulo tiene `from __future__ import annotations` (sin él, las anotaciones de firmas y de nivel de módulo o clase se evalúan al importar y darían `NameError`) |
   | `MOVE_SYMBOL` | 4 | a lo sumo `MAX_MOVABLE_SYMBOLS = 2` símbolos |

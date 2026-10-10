@@ -6,6 +6,7 @@ from unskein.graph.steps import STEP_COSTS, StepKind, choose_step
 from unskein.parsers.usage import NO_EVIDENCE, ImportEvidence, UseContext
 
 A, F, M = UseContext.ANNOTATION, UseContext.FUNCTION, UseContext.MODULE
+Q = UseContext.QUOTED
 FACADES = {"pkg": frozenset({"CONST", "VERSION"}), "pkg.sub": frozenset()}
 
 
@@ -32,8 +33,12 @@ def evidence(
     [
         ("pkg", "pkg.sub", evidence({M}), StepKind.PACKAGE_STRUCTURE),
         ("pkg", "pkg.sub.deep", evidence({A}), StepKind.PACKAGE_STRUCTURE),
-        ("app.a", "app.b", evidence({A}), StepKind.TYPE_CHECKING),
-        ("app.a", "pkg", evidence({A}), StepKind.TYPE_CHECKING),
+        ("app.a", "app.b", evidence({A}, postponed=True), StepKind.TYPE_CHECKING),
+        ("app.a", "pkg", evidence({A}, postponed=True), StepKind.TYPE_CHECKING),
+        ("app.a", "app.b", evidence({A}), StepKind.MOVE_SYMBOL),
+        ("app.a", "app.b", evidence({Q}), StepKind.TYPE_CHECKING),
+        ("app.a", "app.b", evidence({A, Q}), StepKind.MOVE_SYMBOL),
+        ("app.a", "app.b", evidence({Q, F}), StepKind.LAZY),
         ("app.a", "pkg", evidence({M}), StepKind.BYPASS_FACADE),
         ("pkg.sub.x", "pkg", evidence({M}), StepKind.BYPASS_FACADE),
         ("app.a", "app.b", evidence({F}), StepKind.LAZY),
@@ -48,8 +53,12 @@ def evidence(
     ids=[
         "package_child",
         "package_grandchild",
-        "annotation_only",
-        "annotation_only_wins_over_facade",
+        "annotation_only_postponed",
+        "annotation_only_postponed_wins_over_facade",
+        "annotation_evaluated_is_not_type_checking",
+        "quoted_only",
+        "quoted_and_evaluated",
+        "quoted_and_function",
         "into_a_facade",
         "child_into_its_parent_facade",
         "function_only",

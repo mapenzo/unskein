@@ -145,6 +145,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `untangle` no longer advises moving an import under `TYPE_CHECKING` when its annotations
+  are evaluated at definition time (it raised `NameError` on Python 3.12 and 3.13); it needs
+  `from __future__ import annotations` or quoted annotations.
 - Tests no longer read the developer's real `~/.config/unskein/config.toml`:
   `load_toml_config` looks the user file up at call time.
 

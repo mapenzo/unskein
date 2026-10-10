@@ -104,7 +104,7 @@ def test_plan_prefers_the_cheapest_step_in_a_cycle() -> None:
     scope = graph_of(("a", "b"), ("b", "a"))
     found = {
         ("a", "b"): evidence({UseContext.MODULE}, ("X", "Y", "Z")),
-        ("b", "a"): evidence({UseContext.ANNOTATION}),
+        ("b", "a"): evidence({UseContext.QUOTED}),
     }
     [plan] = plan_tangles(scope, [["a", "b"]], found, facades={}, all_edges=False)
     assert [(c.source, c.target, c.step) for c in plan.cuts] == [("b", "a", StepKind.TYPE_CHECKING)]
