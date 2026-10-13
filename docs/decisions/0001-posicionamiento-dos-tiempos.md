@@ -1,6 +1,6 @@
 # 0001. Posicionamiento en dos tiempos para equipos con monolito
 
-- **Estado:** aceptada
+- **Estado:** aceptada; lema de hoy sustituido provisionalmente por 0003
 - **Fecha:** 2026-10-12
 - **Tipo:** posicionamiento
 

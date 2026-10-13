@@ -1,0 +1,56 @@
+[
+ {
+  "name": "Publicar v0.4.0 + 3.15 en CI",
+  "R": 2,
+  "I": 2,
+  "C": 50,
+  "E": 0.35,
+  "D": 1.5,
+  "maintenance": "bajo"
+ },
+ {
+  "name": "Descubrimiento con equipos (1 h/sem)",
+  "R": 1,
+  "I": 3,
+  "C": 50,
+  "E": 0.33,
+  "D": 1,
+  "maintenance": "bajo"
+ },
+ {
+  "name": "Caso con tests y PR de los cortes",
+  "R": 1,
+  "I": 2,
+  "C": 50,
+  "E": 0.8,
+  "D": 1.5,
+  "maintenance": "bajo"
+ },
+ {
+  "name": "Salida JSON versionada",
+  "R": 2,
+  "I": 1,
+  "C": 50,
+  "E": 0.75,
+  "D": 1,
+  "maintenance": "medio"
+ },
+ {
+  "name": "Contrato [contexts]",
+  "R": 2,
+  "I": 2,
+  "C": 50,
+  "E": 2.5,
+  "D": 1.5,
+  "maintenance": "medio"
+ },
+ {
+  "name": "Lazy correcto (aplazado)",
+  "R": 2,
+  "I": 0.5,
+  "C": 50,
+  "E": 0.25,
+  "D": 1,
+  "maintenance": "bajo"
+ }
+]
