@@ -2,20 +2,35 @@
 
 import ast
 import os
+import re
 import tokenize
 import warnings
-from collections.abc import Hashable, Iterator, Mapping
+from collections.abc import Hashable, Iterator, Mapping, Sequence
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pathspec
 
 GITIGNORE_FILE = ".gitignore"
 IGNORE_FILES = (GITIGNORE_FILE, ".unskeinignore")
-DEFAULT_TEST_PATTERNS = ("tests/", "test/", "test_*.py", "*_test.py", "conftest.py")
+TEST_DIRECTORY_PATTERNS = ("tests/", "test/", "conftest.py")
+# File names that usually hold tests, but sometimes production code (``quellen_test.py``).
+TEST_FILE_NAME_PATTERNS = ("test_*.py", "*_test.py")
+DEFAULT_TEST_PATTERNS = (*TEST_DIRECTORY_PATTERNS, *TEST_FILE_NAME_PATTERNS)
+# The names an import statement mentions: ``from a.b import (c, d)`` or ``import a.b as c``.
+IMPORT_STATEMENT = re.compile(
+    r"^[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import[ \t]*(\([^)]*\)|[^\n]*)|import[ \t]+([^\n]*))",
+    re.MULTILINE,
+)
+WORD = re.compile(r"\w+")
 
 
 def load_exclude_spec(
-    root: Path, cli_exclude: list[str], include_tests: bool = False
+    root: Path,
+    cli_exclude: list[str],
+    include_tests: bool = False,
+    *,
+    test_file_names: bool = True,
 ) -> pathspec.PathSpec:
     """Combine every exclude source into one gitignore-style spec.
 
@@ -26,11 +41,14 @@ def load_exclude_spec(
         root: Project directory holding the ignore files.
         cli_exclude: Extra patterns passed with `--exclude`.
         include_tests: Whether to keep test code instead of excluding it by default.
+        test_file_names: Whether the test patterns include the file-name ones
+            (``test_*.py``, ``*_test.py``); off when the caller filters those files
+            itself with ``drop_unimported_test_files``.
 
     Returns:
         A spec that matches every path to leave out of the analysis.
     """
-    return _spec(root, cli_exclude, include_tests, IGNORE_FILES)
+    return _spec(root, cli_exclude, include_tests, IGNORE_FILES, test_file_names)
 
 
 def load_evidence_spec(
@@ -54,7 +72,11 @@ def load_evidence_spec(
 
 
 def _spec(
-    root: Path, cli_exclude: list[str], include_tests: bool, ignore_files: tuple[str, ...]
+    root: Path,
+    cli_exclude: list[str],
+    include_tests: bool,
+    ignore_files: tuple[str, ...],
+    test_file_names: bool = True,
 ) -> pathspec.PathSpec:
     """Build a gitignore-style spec from the default test patterns, ignore files and CLI.
 
@@ -63,11 +85,13 @@ def _spec(
         cli_exclude: Extra patterns passed with `--exclude`.
         include_tests: Whether to keep test code instead of excluding it by default.
         ignore_files: Names of the ignore files to read.
+        test_file_names: Whether the test patterns include the file-name ones.
 
     Returns:
         The union of every pattern.
     """
-    patterns: list[str] = [] if include_tests else list(DEFAULT_TEST_PATTERNS)
+    test_patterns = DEFAULT_TEST_PATTERNS if test_file_names else TEST_DIRECTORY_PATTERNS
+    patterns: list[str] = [] if include_tests else list(test_patterns)
     for name in ignore_files:
         ignore_file = root / name
         if ignore_file.exists():
@@ -156,6 +180,67 @@ def walk_files(
                 spec = file_specs.get(full.suffix, exclude_spec) if file_specs else exclude_spec
                 if not spec.match_file(full.relative_to(root).as_posix()):
                     yield full
+
+
+def is_test_file_name(file_name: str) -> bool:
+    """Tell whether a file is named like a test module (``test_*.py``, ``*_test.py``).
+
+    Args:
+        file_name: Base name of the file.
+
+    Returns:
+        True when the name matches a test file-name pattern.
+    """
+    return any(fnmatchcase(file_name, pattern) for pattern in TEST_FILE_NAME_PATTERNS)
+
+
+def drop_unimported_test_files(files: Sequence[Path]) -> list[Path]:
+    """Leave out the files named like tests, except those that other code imports.
+
+    A file named like a test that production code imports (``quellen_test.py``, a
+    "source test" feature) is production code; excluding it would turn every import of
+    it into an import of a module that does not exist. Imports are found by scanning the
+    text of the other files, so this costs one read of each file, and only when some
+    file is named like a test.
+
+    Args:
+        files: Discovered files, with the file-name test patterns not applied.
+
+    Returns:
+        The files in the same order, without the test-named ones nothing imports.
+    """
+    named_like_tests = {path for path in files if is_test_file_name(path.name)}
+    if not named_like_tests:
+        return list(files)
+    stems = {path.stem for path in named_like_tests}
+    others = [path for path in files if path.suffix == ".py" and path not in named_like_tests]
+    imported = _imported_names(others, stems)
+    return [path for path in files if path not in named_like_tests or path.stem in imported]
+
+
+def _imported_names(files: Sequence[Path], wanted: set[str]) -> set[str]:
+    """Return which of the wanted names appear in an import statement of the files.
+
+    Args:
+        files: Python source files to scan.
+        wanted: Module base names to look for.
+
+    Returns:
+        The wanted names some import statement mentions.
+    """
+    found: set[str] = set()
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in IMPORT_STATEMENT.finditer(text):
+            for group in match.groups():
+                if group:
+                    found |= wanted.intersection(WORD.findall(group))
+        if found == wanted:
+            break
+    return found
 
 
 def detect_encoding(file_path: Path, config_default: str | None) -> str:

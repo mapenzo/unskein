@@ -378,8 +378,9 @@ def test_lazy_help_warns_about_runtime_annotation_readers(lang: Lang) -> None:
 
 TEST_FILE_CYCLE = {
     "app/__init__.py": "",
-    "app/a.py": "from app.test_b import helper\n\nVALUE = helper()\n",
-    "app/test_b.py": CYCLE["app/b.py"],
+    "app/a.py": "from app.tests.test_b import helper\n\nVALUE = helper()\n",
+    "app/tests/__init__.py": "",
+    "app/tests/test_b.py": CYCLE["app/b.py"],
 }
 
 

@@ -26,7 +26,11 @@ from unskein.errors import ErrorKey, UnskeinError
 from unskein.graph.findings import unmatched_layers
 from unskein.graph.metrics import AnalysisResult, analyze
 from unskein.i18n import Lang, detect_lang
-from unskein.parsers.discovery import load_evidence_spec, load_exclude_spec
+from unskein.parsers.discovery import (
+    drop_unimported_test_files,
+    load_evidence_spec,
+    load_exclude_spec,
+)
 from unskein.parsers.models import ParseResult
 from unskein.parsers.python_parser import PythonAdapter
 from unskein.pipeline import parse_all
@@ -175,11 +179,14 @@ def discover_project(context: ScanContext) -> list[Path]:
         raise UnskeinError(ErrorKey.PATH_NOT_FOUND, {"path": str(root)})
     config = context.analysis
     adapter = PythonAdapter(config)
-    spec = load_exclude_spec(root, config.exclude, config.include_tests)
+    # Test-named files are filtered after the walk: those other code imports are kept.
+    spec = load_exclude_spec(root, config.exclude, config.include_tests, test_file_names=False)
     evidence = load_evidence_spec(root, config.exclude, config.include_tests)
     files = sorted(
         adapter.discover_files(root, spec, config.follow_symlinks, evidence_spec=evidence)
     )
+    if not config.include_tests:
+        files = drop_unimported_test_files(files)
     sources = sum(1 for path in files if path.suffix in adapter.file_extensions)
     if not sources:
         raise UnskeinError(ErrorKey.NO_FILES_FOUND, {"path": str(root)})

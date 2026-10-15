@@ -454,7 +454,9 @@ Se combinan tres orígenes; ninguno sustituye a los demás:
 3. Las flags `--exclude` y `exclude` en `.unskein.toml`.
 
 El código de tests (`tests/`, `test/`, `test_*.py`, `*_test.py`,
-`conftest.py`) se omite salvo que pases `--include-tests`.
+`conftest.py`) se omite salvo que pases `--include-tests`. Un archivo con nombre de
+test (`quellen_test.py`) que importa código fuera de los tests se conserva: es código
+de producción con un nombre que parece de test.
 
 Un patrón con una barra en medio queda anclado a la raíz: `migrations/**`
 solo omite la carpeta de primer nivel, mientras que `migrations/` o

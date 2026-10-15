@@ -442,7 +442,8 @@ Three sources are combined; none replaces the others:
 3. `--exclude` flags and `exclude` in `.unskein.toml`.
 
 Test code (`tests/`, `test/`, `test_*.py`, `*_test.py`, `conftest.py`) is skipped
-unless you pass `--include-tests`.
+unless you pass `--include-tests`. A file named like a test (`quellen_test.py`) that
+code outside the tests imports is kept: it is production code with a test-like name.
 
 A pattern with a slash in the middle is anchored to the root:
 `migrations/**` only skips the top-level folder, while `migrations/` or

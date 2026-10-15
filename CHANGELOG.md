@@ -110,6 +110,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[analysis] source_roots` to keep the previous naming.
 - Entry points are read from the scripts of every distribution, not only the root one.
 
+### Fixed
+
+- A production module named like a test (`quellen_test.py`, matched by `*_test.py`) was
+  excluded as test code, so every import of it was reported as an unresolved import of
+  a module that does not exist, with a misleading fix. Files named `test_*.py` or
+  `*_test.py` outside test directories are now kept when code outside the tests
+  imports them; the others are still left out unless `--include-tests` is passed.
+
 ## [0.3.0] - 2026-10-01
 
 ### Added
