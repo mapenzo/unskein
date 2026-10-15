@@ -508,6 +508,11 @@ dos detiene el análisis con código 1 y nombra el archivo y la clave.
 Si tus paquetes no están en la raíz ni en `src/`, define `source_roots` en
 `[analysis]`.
 
+Un symlink de directorio que da a un paquete un segundo nombre (`src/admin_web ->
+verwaltung/admin_web`, importado como `admin_web`) se resuelve al paquete real, también
+en checkouts de Windows donde git escribe el enlace como un pequeño archivo de texto.
+Para otros alias, decláralos en `module_aliases` dentro de `[analysis]`.
+
 La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde fuera
 del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los
 módulos `__main__` se detectan solos). El ajuste `package_depth` cambia cómo se

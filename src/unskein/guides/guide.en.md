@@ -494,6 +494,11 @@ stops the scan with exit code 1 and names the file and the key.
 If your packages live somewhere other than the root or `src/`, set
 `source_roots` in `[analysis]`.
 
+A directory symlink that gives a package a second name (`src/admin_web ->
+verwaltung/admin_web`, imported as `admin_web`) is followed back to the real package,
+also on Windows checkouts where git writes the link as a small text file. For other
+aliases, list them in `module_aliases` in `[analysis]`.
+
 The `[findings]` table tunes the findings; modules that are run from outside the
 code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`
 modules are detected on their own). The `package_depth` setting changes how

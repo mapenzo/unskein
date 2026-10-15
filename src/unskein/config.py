@@ -97,6 +97,8 @@ class AnalysisConfig:
         source_roots: Directories module names are relative to; None auto-detects
             a ``src/`` layout. The project root is always the last fallback.
         include_tests: Whether test code is analyzed (excluded by default).
+        module_aliases: Second names of packages, mapped to their real dotted names, for
+            aliases discovery cannot see (directory links are found on their own).
         optional_rules: Rules that are off by default because they cost extra analysis.
         pipeline: Per-stage concurrency settings.
     """
@@ -111,6 +113,7 @@ class AnalysisConfig:
     exclude: list[str] = field(default_factory=list)
     source_roots: list[str] | None = None
     include_tests: bool = False
+    module_aliases: dict[str, str] = field(default_factory=dict)
     optional_rules: OptionalRules = field(default_factory=OptionalRules)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
@@ -221,6 +224,7 @@ class TomlAnalysis(_TomlTable):
         exclude: Extra exclude patterns, added to the CLI ones.
         source_roots: See ``AnalysisConfig``.
         include_tests: See ``AnalysisConfig``.
+        module_aliases: See ``AnalysisConfig``.
         star_fixes: See ``OptionalRules``.
         api_leaks: See ``OptionalRules``.
     """
@@ -235,8 +239,31 @@ class TomlAnalysis(_TomlTable):
     exclude: list[str] | None = None
     source_roots: list[str] | None = None
     include_tests: bool | None = None
+    module_aliases: dict[str, str] | None = None
     star_fixes: bool | None = None
     api_leaks: bool | None = None
+
+    @field_validator("module_aliases")
+    @classmethod
+    def _check_aliases(cls, aliases: dict[str, str] | None) -> dict[str, str] | None:
+        """Reject aliases or targets that are not dotted module names.
+
+        The messages never echo the offending value, like every configuration error.
+
+        Args:
+            aliases: Aliases as written in the file.
+
+        Returns:
+            The same aliases.
+
+        Raises:
+            ValueError: If an alias or its target is not a dotted module name.
+        """
+        if aliases is None:
+            return None
+        if not all(LAYER_NAME_PATTERN.fullmatch(name) for pair in aliases.items() for name in pair):
+            raise ValueError("aliases and targets must be dotted module names, such as app.core")
+        return aliases
 
 
 class TomlFindings(_TomlTable):
