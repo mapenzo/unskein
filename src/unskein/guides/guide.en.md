@@ -494,6 +494,10 @@ stops the scan with exit code 1 and names the file and the key.
 If your packages live somewhere other than the root or `src/`, set
 `source_roots` in `[analysis]`.
 
+A script in a directory without `__init__.py` that imports a file next to it
+(`import helper` in `tools/run.py`, run as `python tools/run.py`) depends on
+`tools.helper`, as Python resolves it.
+
 The `[findings]` table tunes the findings; modules that are run from outside the
 code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`
 modules are detected on their own). The `package_depth` setting changes how

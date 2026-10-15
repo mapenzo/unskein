@@ -498,6 +498,30 @@ class _ImportCollector:
             parts += node.module.split(".")
         return ".".join(parts)
 
+    def script_sibling(self, name: str) -> str:
+        """Return the module an absolute import loads when it names a file next to a script.
+
+        ``python dir/script.py`` puts ``dir`` first on ``sys.path``, so in a directory
+        without ``__init__.py`` ``import helper`` loads ``dir/helper.py``, which the
+        project names ``dir.helper``. Python would not reach the file that way if the
+        module were imported as part of a package, so only namespace directories count.
+
+        Args:
+            name: Dotted name taken from an absolute import.
+
+        Returns:
+            The sibling's project name, or the name itself when no sibling matches.
+        """
+        if self.is_package or PATH_SEPARATOR in self.source or not self.index.is_external(name):
+            return name
+        directory = self.source.rpartition(NAME_SEPARATOR)[0]
+        if not directory or not self.index.is_namespace(directory):
+            return name
+        first = name.partition(NAME_SEPARATOR)[0]
+        if f"{directory}{NAME_SEPARATOR}{first}" not in self.index.modules:
+            return name
+        return f"{directory}{NAME_SEPARATOR}{name}"
+
     def visit(self, tree: ast.Module) -> None:
         """Collect every import in a module, including nested ones, in code order.
 
@@ -513,7 +537,7 @@ class _ImportCollector:
                     else:
                         bound = Binding(top, rest, f"{MODULE_OBJECT}{top}")
                     self.add(
-                        alias.name,
+                        self.script_sibling(alias.name),
                         None,
                         node.lineno,
                         kind=kind,
@@ -521,7 +545,10 @@ class _ImportCollector:
                         is_guarded=is_guarded,
                     )
             elif isinstance(node, ast.ImportFrom):
-                base = self.relative_base(node) if node.level else node.module
+                if node.level:
+                    base = self.relative_base(node)
+                else:
+                    base = self.script_sibling(node.module) if node.module else None
                 if base:
                     self.visit_from(base, node, kind=kind, is_guarded=is_guarded)
 

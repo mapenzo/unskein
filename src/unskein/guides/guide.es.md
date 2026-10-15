@@ -508,6 +508,10 @@ dos detiene el análisis con código 1 y nombra el archivo y la clave.
 Si tus paquetes no están en la raíz ni en `src/`, define `source_roots` en
 `[analysis]`.
 
+Un script en un directorio sin `__init__.py` que importa un archivo vecino
+(`import helper` en `tools/run.py`, ejecutado como `python tools/run.py`) depende de
+`tools.helper`, como lo resuelve Python.
+
 La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde fuera
 del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los
 módulos `__main__` se detectan solos). El ajuste `package_depth` cambia cómo se
