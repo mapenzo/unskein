@@ -1,13 +1,14 @@
 [project]
 name = "unskein"
 version = "0.3.0"
-description = "AI-assisted static analysis CLI that untangles module dependencies, coupling and cycles in Python projects."
+description = "Map the import cycles in your Python monolith, plan the cuts that undo them, and check each cut on a copy. Free, works offline, no telemetry."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Miguel Ángel Poveda Lorenzo", email = "mapovedalorenzo@gmail.com" }]
 requires-python = ">=3.12"
-keywords = ["static-analysis", "dependencies", "coupling", "architecture", "cli", "llm"]
+keywords = ["static-analysis", "dependencies", "coupling", "architecture", "cli", "llm",
+            "circular-imports", "import-cycles", "monolith", "refactoring"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
