@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="unskein: a tangled skein of threads straightening into ordered module lanes" width="100%">
+  <img src="https://raw.githubusercontent.com/mapenzo/unskein/main/docs/assets/banner.svg" alt="unskein: a tangled skein of threads straightening into ordered module lanes" width="100%">
 </p>
 
 <p align="center">
-  <strong>See how your Python modules really depend on each other, and where they knot up.</strong>
+  <strong>See what ties your Python monolith together, and which import cuts undo it.</strong>
 </p>
 
 <p align="center">
@@ -15,23 +15,29 @@
 
 ---
 
+Before you cut your Python monolith, see what binds it: your import cycles, which cuts
+undo them, which of those cuts disappear when a copy is re-analyzed, and which leave the
+modules importable under `--run`. Free, works offline, no telemetry. `--run` executes your
+project's modules in isolated subprocesses; nothing in unskein runs your tests.
+
 Every Python project starts as a few clean modules. A year later, `services` imports
 `models`, `models` imports `utils`, `utils` quietly imports `services`, and changing one
 file breaks three others you never touched.
 
 **unskein** pulls that skein apart. Point it at a project and it maps every import between
 your modules, measures how tightly each one is bound to the rest, finds the cycles, and
-tells you, in plain language, which knots are worth cutting first.
+shows which cuts undo them.
 
 ```bash
 unskein scan .
 ```
 
 > [!NOTE]
-> unskein is in **alpha** (v0.3.0). `unskein scan <path>` already works end to end (graph,
-> coupling, cycles, findings, AI interpretation, Markdown report in English or Spanish), and
-> `unskein untangle <path>` plans how to undo the tangles. The first sample below shows the
-> v0.1 report, AI section included.
+> unskein is in **alpha** (v0.4.0). `unskein scan <path>` works end to end (graph,
+> coupling, cycles, findings, optional AI interpretation, Markdown report in English or
+> Spanish), and `unskein untangle <path>` plans how to undo the tangles. The first sample
+> below shows the v0.1 report, AI section included; the `untangle --prove` sample is
+> [further down](#untangling-a-real-project).
 
 ## What you get
 
@@ -120,16 +126,23 @@ Architecture health: fair.
   modules.
 - **Untangle plan** (`unskein untangle`): for each tangle, the imports to cut, the
   cheapest refactoring step for each (with file, line and symbols) and a before/after
-  simulation. None of the open-source Python dependency tools we surveyed (pydeps,
-  import-linter, tach) proposes cuts; the commercial ones that do (Sonargraph,
-  Structure101, Lattix) target Java/.NET. With `--prove` it applies the cuts to a temporary copy and checks each one (lazy imports,
-  `TYPE_CHECKING`, postponed annotations, imports from the defining module) and names the
-  design smells it cannot fix: on litellm, 218 of 240 cuts are proven, the main tangle
-  shrinks from 616 to 123 modules, and with `--run` all 625 modules of the tangles still
-  import afterwards (about 14 minutes). Your project is never modified.
+  simulation. import-linter (through grimp) can nominate a minimal set of imports whose
+  removal breaks the cycles, and the commercial tools that plan cuts (Sonargraph,
+  Structure101, Lattix) target Java/.NET. unskein goes on to pick a concrete Python step for
+  each import. With `--prove` it applies the cuts to a temporary copy, re-analyzes it and
+  marks a cut *proven* when the import is gone there (lazy imports, `TYPE_CHECKING`,
+  postponed annotations, imports from the defining module); the rest say why they are not
+  proven, or name the design smell behind them. Proven means the edge disappears when the
+  copy is re-analyzed, not that your tests pass. On litellm, 218 of 240 cuts are proven,
+  the main tangle shrinks from 616 to 123 modules, and with `--run` all 625 modules of the
+  tangles still import afterwards (about 14 minutes). Outside litellm, fewer cuts are
+  proven: see [below](#untangling-a-real-project). Your project is never modified.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
   Only imports that run when the code is imported count; those inside functions or under
   `TYPE_CHECKING` are reported apart as hidden coupling.
+  Python 3.15's `lazy import` counts as an ordinary import, so unskein can report a cycle
+  that does not happen at run time, never hide one. On Python 3.14 or older, a file that
+  uses `lazy import` is a syntax error: unskein skips it with a parse-error warning.
 - **Re-exports resolved**: `from app import Engine` is traced through `__init__.py`
   facades to the module that actually defines `Engine`, so cycles hidden behind a
   package's `__init__.py` still show up. `import pkg as p` followed by `p.name` is
@@ -139,23 +152,41 @@ Architecture health: fair.
 
 ## Untangling a real project
 
-`unskein untangle` on [rich](https://github.com/Textualize/rich) (one tangle), with no AI involved:
+`unskein untangle --prove` on [rich](https://github.com/Textualize/rich) (one tangle), with
+no AI involved. Rows are trimmed; the full run lists all 29 cuts:
 
 ```text
-$ unskein untangle ./rich
+$ unskein untangle ./rich --prove
 
-Tangles: 1 · imports to cut: 28 · total cost: 111.
+Tangles: 1 · imports to cut: 29 · total cost: 95.
 Simulation after the cuts: tangles 1 → 0, cycles 100+ → 0.
 
- Import                    Step                   Cost  Evidence
- rich.terminal_theme → rich.palette Lazy import     3  rich/terminal_theme.py:4 · Palette
- rich.box → rich.panel               Move the symbol 4  rich/box.py:426 · Panel
- rich.color → rich.console           Move the symbol 4  rich/color.py:595 · Console
+Proof: 5 of 29 cuts proven, 24 not proven, 0 broken. After applying them: tangles 1, cycles 100+.
+
+ Import                 Step                  Cost  Evidence                    Proof
+ rich.console →         Postpone annotations  2     rich/console.py:44 ·        Proven
+ rich.emoji                                         EmojiVariant
+ rich.palette →         Lazy import           3     rich/palette.py:78 ·        Not proven: the import is
+ rich.color                                         Color                       not at module level
+ rich.box →             Move the symbol       4     rich/box.py:425 ·           Not proven: needs design
+ rich.columns                                       Columns
+ …
 ```
 
-The cuts are a heuristic (not guaranteed minimal) and the simulation is optimistic: read
-the output as a plan to review. On networkx the plan has 32 cuts, mostly "import from the
-module that defines it" instead of through the package's `__init__.py`.
+Read it as a plan to review. The cuts are a heuristic (not guaranteed minimal), the
+simulation is optimistic, and a *proven* cut only means its import disappears when a copy
+is re-analyzed: on rich, the 5 proven cuts leave the tangle in place.
+
+| Project | Cuts proven | Command |
+|---|---|---|
+| litellm `a93c396a5c` | 218 of 240 (tangle 616 → 123 modules) | `unskein untangle . --prove` |
+| rich `9d8f9a3` | 5 of 29 | `unskein untangle . --prove` |
+| networkx `a325f6a` | 7 of 32 | `unskein untangle . --prove` |
+| aiohttp `a2c6c92` | 0 of 1 | `unskein untangle . --prove` |
+
+Measured by the author with unskein `d8668a6`, run from the root of each checkout (see
+[`docs/prove-outside-litellm.md`](docs/prove-outside-litellm.md)).
+litellm is the project the feature was developed against.
 
 ## How it works
 
