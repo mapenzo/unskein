@@ -454,7 +454,10 @@ Se combinan tres orígenes; ninguno sustituye a los demás:
 3. Las flags `--exclude` y `exclude` en `.unskein.toml`.
 
 El código de tests (`tests/`, `test/`, `test_*.py`, `*_test.py`,
-`conftest.py`) se omite salvo que pases `--include-tests`.
+`conftest.py`) se omite salvo que pases `--include-tests`. Una excepción: un archivo
+`*_test.py` fuera de los directorios de tests que el resto del código importa
+(`quellen_test.py`) se conserva, porque es código de producción con nombre de test.
+Los archivos `test_*.py` son siempre código de tests.
 
 Un patrón con una barra en medio queda anclado a la raíz: `migrations/**`
 solo omite la carpeta de primer nivel, mientras que `migrations/` o
@@ -507,6 +510,13 @@ dos detiene el análisis con código 1 y nombra el archivo y la clave.
 
 Si tus paquetes no están en la raíz ni en `src/`, define `source_roots` en
 `[analysis]`.
+
+Un symlink de directorio que da a un paquete un segundo nombre (`src/admin_web ->
+verwaltung/admin_web`, importado como `admin_web`) se resuelve al paquete real, también
+en checkouts de Windows donde git escribe el enlace como un pequeño archivo de texto.
+Para otros alias, decláralos en `module_aliases` dentro de `[analysis]`. En ejecución,
+`admin_web` y `verwaltung.admin_web` son dos objetos módulo; el grafo los funde en un
+solo nodo, porque describe la arquitectura, no la tabla de módulos del intérprete.
 
 La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde fuera
 del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los

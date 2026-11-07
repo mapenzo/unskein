@@ -1,21 +1,39 @@
 """Find the source files to analyze: combined excludes, safe directory walk, encoding."""
 
 import ast
+import io
 import os
+import re
 import tokenize
 import warnings
-from collections.abc import Hashable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterator, Mapping, Sequence
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import pathspec
 
+from unskein.config import AnalysisConfig
+
 GITIGNORE_FILE = ".gitignore"
 IGNORE_FILES = (GITIGNORE_FILE, ".unskeinignore")
-DEFAULT_TEST_PATTERNS = ("tests/", "test/", "test_*.py", "*_test.py", "conftest.py")
+TEST_CODE_PATTERNS = ("tests/", "test/", "test_*.py", "conftest.py")
+# A suffix that usually marks a test, but sometimes production code (``quellen_test.py``).
+TEST_LIKE_NAME_PATTERNS = ("*_test.py",)
+DEFAULT_TEST_PATTERNS = (*TEST_CODE_PATTERNS, *TEST_LIKE_NAME_PATTERNS)
+# The names an import statement mentions: ``from a.b import (c, d)`` or ``import a.b as c``.
+IMPORT_STATEMENT = re.compile(
+    r"^[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import[ \t]*(\([^)]*\)|[^\n]*)|import[ \t]+([^\n]*))",
+    re.MULTILINE,
+)
+WORD = re.compile(r"\w+")
 
 
 def load_exclude_spec(
-    root: Path, cli_exclude: list[str], include_tests: bool = False
+    root: Path,
+    cli_exclude: list[str],
+    include_tests: bool = False,
+    *,
+    test_like_names: bool = True,
 ) -> pathspec.PathSpec:
     """Combine every exclude source into one gitignore-style spec.
 
@@ -26,11 +44,13 @@ def load_exclude_spec(
         root: Project directory holding the ignore files.
         cli_exclude: Extra patterns passed with `--exclude`.
         include_tests: Whether to keep test code instead of excluding it by default.
+        test_like_names: Whether the test patterns include ``*_test.py``; off when
+            the caller filters those files itself with ``drop_unimported_test_files``.
 
     Returns:
         A spec that matches every path to leave out of the analysis.
     """
-    return _spec(root, cli_exclude, include_tests, IGNORE_FILES)
+    return _spec(root, cli_exclude, include_tests, IGNORE_FILES, test_like_names)
 
 
 def load_evidence_spec(
@@ -54,7 +74,11 @@ def load_evidence_spec(
 
 
 def _spec(
-    root: Path, cli_exclude: list[str], include_tests: bool, ignore_files: tuple[str, ...]
+    root: Path,
+    cli_exclude: list[str],
+    include_tests: bool,
+    ignore_files: tuple[str, ...],
+    test_like_names: bool = True,
 ) -> pathspec.PathSpec:
     """Build a gitignore-style spec from the default test patterns, ignore files and CLI.
 
@@ -63,11 +87,13 @@ def _spec(
         cli_exclude: Extra patterns passed with `--exclude`.
         include_tests: Whether to keep test code instead of excluding it by default.
         ignore_files: Names of the ignore files to read.
+        test_like_names: Whether the test patterns include ``*_test.py``.
 
     Returns:
         The union of every pattern.
     """
-    patterns: list[str] = [] if include_tests else list(DEFAULT_TEST_PATTERNS)
+    test_patterns = DEFAULT_TEST_PATTERNS if test_like_names else TEST_CODE_PATTERNS
+    patterns: list[str] = [] if include_tests else list(test_patterns)
     for name in ignore_files:
         ignore_file = root / name
         if ignore_file.exists():
@@ -158,6 +184,105 @@ def walk_files(
                     yield full
 
 
+def is_test_like_name(file_name: str) -> bool:
+    """Tell whether a file is named like a test module without being one for sure.
+
+    Args:
+        file_name: Base name of the file.
+
+    Returns:
+        True when the name matches ``*_test.py``.
+    """
+    return any(fnmatchcase(file_name, pattern) for pattern in TEST_LIKE_NAME_PATTERNS)
+
+
+def drop_unimported_test_files(files: Sequence[Path], config: AnalysisConfig) -> list[Path]:
+    """Leave out the files named ``*_test.py``, except those that other code imports.
+
+    A file named like a test that production code imports (``quellen_test.py``, a
+    "source test" feature) is production code; excluding it would turn every import of
+    it into an import of a module that does not exist. Imports are found by scanning the
+    text of the other files, so this costs one read of each file, and only when some
+    file is named like a test. The scan matches words, not modules: any word of an
+    import statement equal to the file's stem keeps the file, even a trailing comment or
+    a same-named module of another package. That over-inclusion is accepted; a kept
+    file is a real module, only one that might have been left out.
+
+    Args:
+        files: Discovered files, with the ``*_test.py`` pattern not applied.
+        config: Analysis settings; its size limit and fallback encoding apply to the
+            scan exactly as to parsing.
+
+    Returns:
+        The files in the same order, without the test-named ones nothing imports.
+    """
+    named_like_tests = {path for path in files if is_test_like_name(path.name)}
+    if not named_like_tests:
+        return list(files)
+    stems = {path.stem for path in named_like_tests}
+    others = [path for path in files if path.suffix == ".py" and path not in named_like_tests]
+    imported = _imported_names(others, stems, config)
+    return [path for path in files if path not in named_like_tests or path.stem in imported]
+
+
+def _imported_names(files: Sequence[Path], wanted: set[str], config: AnalysisConfig) -> set[str]:
+    """Return which of the wanted names appear in an import statement of the files.
+
+    Files over the size limit, unreadable or with an unknown encoding are skipped
+    quietly: the parser reports them later.
+
+    Args:
+        files: Python source files to scan.
+        wanted: Module base names to look for.
+        config: Analysis settings with the size limit and the fallback encoding.
+
+    Returns:
+        The wanted names some import statement mentions.
+    """
+    found: set[str] = set()
+    missing = set(wanted)
+    needles = {name.encode("utf-8") for name in wanted}
+    for path in files:
+        data = _read_for_scan(path, config)
+        # Source encodings are ASCII-compatible, so a byte search rules out most files
+        # before anything is decoded, and it is far cheaper than the regex.
+        if data is None or not any(needle in data for needle in needles):
+            continue
+        encoding = declared_encoding(io.BytesIO(data).readline, config.default_encoding)
+        text = data.decode(encoding, errors="replace")
+        for match in IMPORT_STATEMENT.finditer(text):
+            for group in match.groups():
+                if group:
+                    found |= missing.intersection(WORD.findall(group))
+        missing -= found
+        needles = {name.encode("utf-8") for name in missing}
+        if not missing:
+            break
+    return found
+
+
+def _read_for_scan(path: Path, config: AnalysisConfig) -> bytes | None:
+    """Read a source file under the parser's size limit, or give up quietly.
+
+    One open per file: the size comes from the open handle, since on Windows opening a
+    file costs more than reading a small one.
+
+    Args:
+        path: Python source file.
+        config: Analysis settings with the size limit.
+
+    Returns:
+        The raw bytes, or None when the file is over the limit or cannot be read.
+    """
+    try:
+        with open(path, "rb") as handle:
+            if os.fstat(handle.fileno()).st_size > config.max_file_size_bytes:
+                return None
+            return handle.read()
+    except OSError:
+        return None
+
+
 def detect_encoding(file_path: Path, config_default: str | None) -> str:
     """Return the encoding a Python file declares (PEP 263 cookie or BOM).
 
@@ -171,12 +296,25 @@ def detect_encoding(file_path: Path, config_default: str | None) -> str:
     Returns:
         The detected encoding, else the fallback, else "utf-8".
     """
+    with open(file_path, "rb") as f:
+        return declared_encoding(f.readline, config_default)
+
+
+def declared_encoding(readline: Callable[[], bytes], config_default: str | None) -> str:
+    """Return the encoding the first lines of a Python source declare (PEP 263 or BOM).
+
+    Args:
+        readline: Reads one line of raw bytes per call, like ``BufferedReader.readline``.
+        config_default: Fallback encoding from configuration, if any.
+
+    Returns:
+        The detected encoding, else the fallback, else "utf-8".
+    """
     try:
-        with open(file_path, "rb") as f:
-            encoding, _ = tokenize.detect_encoding(f.readline)
-        return encoding
+        encoding, _ = tokenize.detect_encoding(readline)
     except SyntaxError:
         return config_default or "utf-8"
+    return encoding
 
 
 def parse_source(file_path: Path, encoding: str | None) -> ast.Module | None:

@@ -2,6 +2,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from test_package_aliases import symlink_or_skip
 
 from unskein import prove as prove_module
 from unskein.graph.proof import ProofReason, ProofVerdict
@@ -284,3 +285,67 @@ def test_an_ancestor_that_replaces_itself_in_sys_modules_is_not_moved_as_already
     assert [(p.verdict, p.reason) for p in proof.cuts] == [
         (ProofVerdict.NOT_PROVEN, ProofReason.READ_AT_IMPORT)
     ]
+
+
+ALIAS_PROJECT = {
+    "src/verwaltung/__init__.py": "",
+    "src/verwaltung/admin_web/__init__.py": "",
+    "src/app/__init__.py": "",
+    "src/app/other.py": "from admin_web.api import router\n\n\ndef use():\n    return router\n",
+}
+ALIAS_CYCLE = ALIAS_PROJECT | {
+    "src/verwaltung/admin_web/api.py": (
+        "from app.main import VALUE\n\n\ndef router():\n    return VALUE\n"
+    ),
+    "src/app/main.py": (
+        "from admin_web.api import router\n\nVALUE = 1\n\n\ndef show():\n    return router()\n"
+    ),
+}
+ALIAS_CYCLE_NEEDING_DESIGN = ALIAS_PROJECT | {
+    "src/verwaltung/admin_web/api.py": (
+        "from app.main import VALUE\n\nLIMIT = VALUE\n\n\ndef router():\n    return LIMIT\n"
+    ),
+    "src/app/main.py": "from admin_web.api import router\n\nVALUE = 1\nROUTES = router()\n",
+}
+
+
+def aliased(make_project: MakeProject, files: dict[str, str], link: str) -> Path:
+    """Write a project whose src/admin_web is a git stub or a symlink to verwaltung/admin_web."""
+    if link == "stub":
+        return make_project({**files, "src/admin_web": "verwaltung/admin_web"})
+    root = make_project(files)
+    symlink_or_skip(root / "src" / "admin_web", root / "src" / "verwaltung" / "admin_web")
+    return root
+
+
+@pytest.mark.parametrize("link", ["stub", "symlink"])
+def test_alias_edges_survive_the_static_copy(
+    make_project: MakeProject, monkeypatch: pytest.MonkeyPatch, link: str
+) -> None:
+    root = aliased(make_project, ALIAS_CYCLE, link)
+    seen: list[set[tuple[str, str]]] = []
+    reanalyze = prove_module._reanalyze
+
+    def spy(
+        context: prove_module.ScanContext, copy_root: Path, *, all_edges: bool, aliases: dict
+    ) -> tuple[prove_module.nx.DiGraph, dict[str, Path]]:
+        scope, modules = reanalyze(context, copy_root, all_edges=all_edges, aliases=aliases)
+        seen.append(set(scope.edges))
+        return scope, modules
+
+    monkeypatch.setattr(prove_module, "_reanalyze", spy)
+    _, proof = prove(root)
+    [edges] = seen
+    assert ("app.other", "verwaltung.admin_web.api") in edges
+    assert [p.verdict for p in proof.cuts] == [ProofVerdict.PROVEN]
+    assert proof.tangles_after == 0
+
+
+@pytest.mark.parametrize("link", ["stub", "symlink"])
+def test_a_tangle_through_an_alias_that_no_cut_removes_still_counts(
+    make_project: MakeProject, link: str
+) -> None:
+    root = aliased(make_project, ALIAS_CYCLE_NEEDING_DESIGN, link)
+    _, proof = prove(root)
+    assert {p.verdict for p in proof.cuts} == {ProofVerdict.NOT_PROVEN}
+    assert proof.tangles_after == 1

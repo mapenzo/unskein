@@ -3,12 +3,13 @@
 import ast
 from collections import defaultdict
 from collections.abc import Collection, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pathspec
 
 from unskein.config import AnalysisConfig
+from unskein.parsers.aliases import find_package_aliases, resolve_alias
 from unskein.parsers.base import LanguageAdapter
 from unskein.parsers.discovery import detect_encoding, walk_files
 from unskein.parsers.exports import module_exports
@@ -213,6 +214,7 @@ class ProjectIndex:
         virtual: Modules with no ``.py`` file, by name: namespace packages (dotted prefixes
             of importable names that are not modules themselves), compiled extensions and
             stubs. All of them are in ``modules``; namespace packages are also in ``packages``.
+        aliases: Second names of packages (directory links), mapped to their real names.
     """
 
     modules: frozenset[str]
@@ -221,6 +223,7 @@ class ProjectIndex:
     unpackaged: frozenset[str] = frozenset()
     # A dict cannot be hashed; the other fields identify the index.
     virtual: dict[str, VirtualKind] = field(default_factory=dict, hash=False)
+    aliases: dict[str, str] = field(default_factory=dict, hash=False)
 
     @classmethod
     def from_names(
@@ -228,6 +231,8 @@ class ProjectIndex:
         names: set[str],
         unpackaged: frozenset[str] = frozenset(),
         native: Mapping[str, VirtualKind] | None = None,
+        *,
+        aliases: Mapping[str, str] | None = None,
     ) -> "ProjectIndex":
         """Build the index from the project's module names.
 
@@ -242,6 +247,7 @@ class ProjectIndex:
             names: Names of all parsed project modules.
             unpackaged: Those of them no distribution ships.
             native: Compiled extensions and stubs with no ``.py`` file, by name.
+            aliases: Second names of packages, mapped to their real names.
 
         Returns:
             The index over those names.
@@ -258,7 +264,26 @@ class ProjectIndex:
         modules = frozenset(names) | frozenset(virtual)
         top_level = frozenset(name.split(NAME_SEPARATOR)[0] for name in importable)
         packages = frozenset(prefixes & modules)
-        return cls(modules, top_level, packages, unpackaged, dict(sorted(virtual.items())))
+        return cls(
+            modules,
+            top_level,
+            packages,
+            unpackaged,
+            dict(sorted(virtual.items())),
+            dict(sorted((aliases or {}).items())),
+        )
+
+    def real_name(self, name: str) -> str:
+        """Return a name taken from an import with a package alias replaced by its real name.
+
+        Args:
+            name: Dotted module name taken from an import.
+
+        Returns:
+            The name under the real package (``admin_web.api`` becomes
+            ``verwaltung.admin_web.api``), or the name itself when it uses no alias.
+        """
+        return resolve_alias(name, self.aliases)
 
     @property
     def namespaces(self) -> frozenset[str]:
@@ -513,7 +538,7 @@ class _ImportCollector:
                     else:
                         bound = Binding(top, rest, f"{MODULE_OBJECT}{top}")
                     self.add(
-                        alias.name,
+                        self.index.real_name(alias.name),
                         None,
                         node.lineno,
                         kind=kind,
@@ -523,7 +548,9 @@ class _ImportCollector:
             elif isinstance(node, ast.ImportFrom):
                 base = self.relative_base(node) if node.level else node.module
                 if base:
-                    self.visit_from(base, node, kind=kind, is_guarded=is_guarded)
+                    self.visit_from(
+                        self.index.real_name(base), node, kind=kind, is_guarded=is_guarded
+                    )
 
     def visit_from(
         self, base: str, node: ast.ImportFrom, *, kind: ImportKind, is_guarded: bool = False
@@ -819,6 +846,12 @@ class PythonAdapter(LanguageAdapter):
         sources = [path for path in files if not is_evidence(path)]
         layout, warnings = build_layout(root, sources, self.config.source_roots)
         named, collisions = name_files(layout, sources)
+        aliases = find_package_aliases(layout, sources, [name.name for _, name in named])
+        aliases |= self.config.module_aliases
+        # A followed link names its files by the alias path; they belong to the real package.
+        named = [
+            (path, replace(name, name=resolve_alias(name.name, aliases))) for path, name in named
+        ]
         tasks = [(path, name.name) for path, name in named]
         names = {name for _, name in tasks}
         native, native_distributions = find_native_modules(
@@ -826,7 +859,10 @@ class PythonAdapter(LanguageAdapter):
         )
         unpackaged = frozenset(name.name for _, name in named if not name.is_packaged)
         index = ProjectIndex.from_names(
-            names, unpackaged, {name: module.kind for name, module in native.items()}
+            names,
+            unpackaged,
+            {name: module.kind for name, module in native.items()},
+            aliases=aliases,
         )
         module_distributions = {
             name.name: name.distribution for _, name in named if name.distribution is not None

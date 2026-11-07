@@ -219,8 +219,14 @@ def test_syntax_error_is_warned_and_other_files_still_parse(make_project: MakePr
 def test_deeply_nested_expression_is_warned_not_raised(make_project: MakeProject) -> None:
     root = make_project({"gen.py": "x = " + "+".join(["a"] * 100_000) + "\n"})
     result = parse(root)
-    assert module_names(result) == set()
-    assert codes(result) == [WarningCode.PARSE_ERROR]
+    # Whether CPython's parser overflows on this depth depends on its patch version
+    # (3.14.2 raises RecursionError, 3.14.4 parses it): either way nothing escapes, and
+    # the file is parsed or skipped with exactly one warning, never half of each.
+    if module_names(result):
+        assert module_names(result) == {"gen"}
+        assert codes(result) == []
+    else:
+        assert codes(result) == [WarningCode.PARSE_ERROR]
 
 
 def test_null_bytes_are_warned(make_project: MakeProject) -> None:
