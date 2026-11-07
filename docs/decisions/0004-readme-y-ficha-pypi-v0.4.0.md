@@ -31,17 +31,17 @@ Edición mínima del README y de la ficha de PyPI, más el cambio del ejemplo:
    publican. litellm se presenta como el proyecto sobre el que se desarrolló la función.
 4. **Ejemplo.** Sustituir el informe v0.1 por una captura real de `untangle --prove` con
    la build de la v0.4.0 (por ejemplo sobre rich); no se escribe a mano.
-5. **Python 3.15.** Badge y classifier solo con 3.15 en verde en el CI. El README dice que
-   `lazy import` se trata como import normal (puede marcar un ciclo que en ejecución no
-   ocurre, nunca oculta uno) y que con Python ≤3.14 el archivo se salta con un aviso;
-   antes se comprueba que el aviso exista en `python_parser.py`.
+5. **Python 3.15.** Sin soporte hasta que las dependencias lo permitan (ver la
+   actualización de 2026-11-07): ni badge, ni classifier, ni job en el CI. El README dice
+   solo que unskein soporta de 3.12 a 3.14 y que un archivo con `lazy import` se salta con
+   un aviso; el aviso existe en `python_parser.py`.
 6. **PyPI.** Resumen que encabece con lo determinista, palabras clave `circular-imports`,
    `import-cycles`, `monolith`, `refactoring`, banner con URL absoluta (comprobar con
    `curl -I` el tipo de contenido del SVG en `raw.githubusercontent.com`) y nota de estado
    «alpha (v0.4.0)».
 7. **Sin promesas** de separar contextos o fronteras (`[contexts]` no existe), ni «único»
    ni «probado».
-8. **Orden.** CI con 3.15 en verde, README, ficha, versión 0.4.0 y `[0.4.0]` fechado en el
+8. **Orden.** README, ficha, versión 0.4.0 y `[0.4.0]` fechado en el
    CHANGELOG, guías `guide.{es,en}.md` al día, y render con `readme-renderer[md]` antes de
    publicar.
 
@@ -67,8 +67,8 @@ llamada al LLM y el README ya lo dice en Privacy.
 - «Antes de cortar tu monolito» puede atraer a quien busca fronteras, que unskein no
   ofrece. → Sin promesas de contextos (punto 7). La demanda observada en competidores es
   de JSON y fronteras (import-linter #291, #262, #240; tach #584, #678, #680, #759).
-- Publicar sin soporte completo de `lazy` la semana de Python 3.15. → Decisión del
-  mantenedor en el ADR 0002 (variante Y, 2026-10-13); el README lo documenta.
+- Publicar sin soporte de `lazy` la semana de Python 3.15. → Aceptado: no se promete
+  soporte de 3.15 (actualización de 2026-11-07); el README documenta el aviso.
 - El lema pone `--run` junto a «offline, sin telemetría» sin decir que ejecuta código.
   → Aceptado: se añade el aviso (punto 1).
 
@@ -123,3 +123,14 @@ Ninguno. Ninguna restricción marcada como no negociable.
 - Hasta 2026-11-02, 20 días sin commits en `develop`: el calendario de 1,4-2,8 semanas
   para la v0.4.0 del ADR 0002 ya se ha agotado.
 - Mantenimiento: bajo; hay que reproducir las cifras al cambiar la versión.
+
+## Actualización 2026-11-07: sin soporte de Python 3.15
+
+El job de 3.15 del CI de la rama falla al compilar `fastuuid 0.14.0` (dependencia de
+`litellm`): su `pyo3-ffi 0.26.0` no soporta CPython 3.15 y no hay wheel. Con 3.15 ni
+siquiera se puede instalar unskein, de modo que el README no puede prometer ese soporte.
+
+Decisión del mantenedor: no dar soporte a 3.15 hasta que las dependencias estén
+preparadas; hay muchas aplicaciones en las versiones soportadas y no hay prisa. Se retira
+3.15 de la matriz del CI y el README deja de tratar `lazy import` como análisis
+compatible. Se retoma cuando `fastuuid` (o `litellm`) publique soporte para 3.15.

@@ -6,6 +6,7 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from unskein.graph.steps import DEFERRED_CONTEXTS, StepKind
 from unskein.graph.untangle import Cut, Edge, UntanglePlan
 from unskein.parsers.discovery import detect_encoding
 from unskein.parsers.layout import MANIFEST_NAMES
+from unskein.parsers.python_parser import PythonAdapter
 from unskein.parsers.rewrite import Move, MoveKind, mentions_module_table, rewrite_source
 from unskein.parsers.usage import MODULE_SEPARATOR
 from unskein.pipeline import worker_count
@@ -172,7 +174,9 @@ def _manifests_above(path: Path, root: Path) -> list[Path]:
         folder = folder.parent
 
 
-def copy_project(context: ScanContext, destination: Path, *, whole_tree: bool = False) -> None:
+def copy_project(
+    context: ScanContext, destination: Path, *, whole_tree: bool = False
+) -> list[Path]:
     """Copy the project: the discovered files, or the whole tree for ``--run``.
 
     The static proof only needs the sources and the manifests that name their
@@ -184,6 +188,9 @@ def copy_project(context: ScanContext, destination: Path, *, whole_tree: bool = 
         context: A prepared scan.
         destination: Directory that becomes the copy's root.
         whole_tree: Whether to copy every file instead of the discovered ones.
+
+    Returns:
+        The discovered files, which every copy holds.
 
     Raises:
         ProofUnavailable: If a file cannot be copied.
@@ -213,6 +220,25 @@ def copy_project(context: ScanContext, destination: Path, *, whole_tree: bool = 
             shutil.copy2(path, target)
     except OSError as error:
         raise ProofUnavailable(str(error)) from error
+    return files
+
+
+def _tree_aliases(context: ScanContext, files: list[Path]) -> dict[str, str]:
+    """Return the package aliases of the project, those its tree declares included.
+
+    A directory link or a git symlink stub names a package a second time. The static
+    copy holds only the discovered files, so neither reaches it; the re-analysis gets
+    the aliases instead, and an import through one stays internal, as in the original.
+
+    Args:
+        context: A prepared scan.
+        files: The discovered files of the original project.
+
+    Returns:
+        Alias to real dotted name, the configured aliases included.
+    """
+    plan = PythonAdapter(context.analysis).plan_parse(files, context.root)
+    return dict(plan.shared.aliases)
 
 
 def _refused(cuts: list[Cut], reason: ProofReason) -> dict[Edge, CutProof]:
@@ -387,7 +413,7 @@ def _apply_cuts(
 
 
 def _reanalyze(
-    context: ScanContext, copy_root: Path, *, all_edges: bool
+    context: ScanContext, copy_root: Path, *, all_edges: bool, aliases: Mapping[str, str]
 ) -> tuple[nx.DiGraph, dict[str, Path]]:
     """Analyze the edited copy as the original was analyzed.
 
@@ -395,6 +421,7 @@ def _reanalyze(
         context: The scan of the original project.
         copy_root: Root of the copy.
         all_edges: Whether lazy and type-only imports count too.
+        aliases: Package aliases of the original, since the copy holds no links.
 
     Returns:
         The graph whose tangles `untangle` plans, for the copy, and the path of every
@@ -403,7 +430,8 @@ def _reanalyze(
     Raises:
         UnskeinError: If the copy holds no Python files.
     """
-    copy_context = dataclasses.replace(context, root=copy_root)
+    analysis = dataclasses.replace(context.analysis, module_aliases=dict(aliases))
+    copy_context = dataclasses.replace(context, root=copy_root, analysis=analysis)
     parsed = resolve_parsed(parse_sources(copy_context), copy_context)
     modules: dict[str, Path] = {}
     for module in parsed.modules:
@@ -597,11 +625,14 @@ def prove_plan(context: ScanContext, plan: UntanglePlan, options: ProveOptions) 
         with tempfile.TemporaryDirectory(prefix=WORKSPACE_PREFIX) as workspace:
             base = Path(workspace)
             copy_root = base / COPY_DIR / context.root.resolve().name
-            copy_project(context, copy_root, whole_tree=python is not None)
+            files = copy_project(context, copy_root, whole_tree=python is not None)
+            aliases = _tree_aliases(context, files)
             facts = ProjectFacts(context)
             applied, verdicts = _apply_cuts(context, cuts, copy_root, facts=facts)
             _name_smells(cuts, verdicts, facts=facts)
-            scope, modules = _reanalyze(context, copy_root, all_edges=plan.all_edges)
+            scope, modules = _reanalyze(
+                context, copy_root, all_edges=plan.all_edges, aliases=aliases
+            )
             for done in applied.values():
                 for cut in done:
                     verdicts[(cut.source, cut.target)] = _static_verdict(cut, scope)

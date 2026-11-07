@@ -442,7 +442,9 @@ Three sources are combined; none replaces the others:
 3. `--exclude` flags and `exclude` in `.unskein.toml`.
 
 Test code (`tests/`, `test/`, `test_*.py`, `*_test.py`, `conftest.py`) is skipped
-unless you pass `--include-tests`.
+unless you pass `--include-tests`. One exception: a `*_test.py` file outside the test
+directories that the rest of the code imports (`quellen_test.py`) is kept, since it is
+production code with a test-like name. `test_*.py` files are always test code.
 
 A pattern with a slash in the middle is anchored to the root:
 `migrations/**` only skips the top-level folder, while `migrations/` or
@@ -493,6 +495,13 @@ stops the scan with exit code 1 and names the file and the key.
 
 If your packages live somewhere other than the root or `src/`, set
 `source_roots` in `[analysis]`.
+
+A directory symlink that gives a package a second name (`src/admin_web ->
+verwaltung/admin_web`, imported as `admin_web`) is followed back to the real package,
+also on Windows checkouts where git writes the link as a small text file. For other
+aliases, list them in `module_aliases` in `[analysis]`. At run time `admin_web` and
+`verwaltung.admin_web` are two module objects; the graph merges them into one node,
+because it describes the architecture, not the interpreter's module table.
 
 The `[findings]` table tunes the findings; modules that are run from outside the
 code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`

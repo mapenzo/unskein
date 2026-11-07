@@ -32,6 +32,12 @@
 # src layout, and the project root always as a fallback.
 # source_roots = ["src"]
 
+# Second names of packages, for imports unskein cannot trace on its own. Directory
+# symlinks inside the project (and the stub files git writes for them when
+# core.symlinks is off) are found automatically. Example:
+# { admin_web = "verwaltung.admin_web" } for `import admin_web`.
+# module_aliases = {}
+
 # Analyze test code too (tests/, test_*.py, *_test.py, conftest.py).
 # include_tests = false
 
