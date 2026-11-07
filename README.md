@@ -140,9 +140,8 @@ Architecture health: fair.
 - **Cycle detection**: import loops that make code hard to test and impossible to split.
   Only imports that run when the code is imported count; those inside functions or under
   `TYPE_CHECKING` are reported apart as hidden coupling.
-  Python 3.15's `lazy import` counts as an ordinary import, so unskein can report a cycle
-  that does not happen at run time, never hide one. On Python 3.14 or older, a file that
-  uses `lazy import` is a syntax error: unskein skips it with a parse-error warning.
+  unskein supports Python 3.12 to 3.14. A file that uses Python 3.15's `lazy import` is a
+  syntax error there: unskein skips it with a parse-error warning.
 - **Re-exports resolved**: `from app import Engine` is traced through `__init__.py`
   facades to the module that actually defines `Engine`, so cycles hidden behind a
   package's `__init__.py` still show up. `import pkg as p` followed by `p.name` is
