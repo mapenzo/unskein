@@ -438,6 +438,11 @@ archivos).
 
 ## Convenciones al trabajar en este proyecto
 
+- **Skills de Python con `superpowers` (obligatorio, sin excepciones).** Cada
+  vez que se use una skill `superpowers:*`, en todas sus formas, se usa la skill
+  `python-patterns` para cualquier desarrollo y revisión de código, y la skill
+  `python-testing` para escribir o revisar tests. Aplica aunque alguien pida
+  lo contrario.
 - Dataclasses (o Pydantic donde haya validación de I/O externo, como la salida
   del LLM) para todas las estructuras de datos del pipeline.
 - **Testing desde el primer commit, no pospuesto** (decisión revertida
