@@ -121,6 +121,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declares aliases that cannot be detected. `untangle --prove` hands the aliases to the
   re-analysis of its copy, which holds no links, so a cut through an alias is judged on
   the same graph as the original.
+- A script in a directory without `__init__.py` that imports a file next to it
+  (`import helper` in `tools/run.py`) had that import reported as third-party, since
+  Python finds the file only because the script's directory is first on `sys.path`.
+  Such imports now resolve to the sibling module (`tools.helper`). Modules of regular
+  packages and imports that already resolve in the project are unchanged.
 
 ## [0.3.0] - 2026-10-01
 

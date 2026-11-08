@@ -503,6 +503,10 @@ aliases, list them in `module_aliases` in `[analysis]`. At run time `admin_web` 
 `verwaltung.admin_web` are two module objects; the graph merges them into one node,
 because it describes the architecture, not the interpreter's module table.
 
+A script in a directory without `__init__.py` that imports a file next to it
+(`import helper` in `tools/run.py`, run as `python tools/run.py`) depends on
+`tools.helper`, as Python resolves it.
+
 The `[findings]` table tunes the findings; modules that are run from outside the
 code can be listed in `entry_points` (scripts in `pyproject.toml` and `__main__`
 modules are detected on their own). The `package_depth` setting changes how

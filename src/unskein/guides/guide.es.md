@@ -518,6 +518,10 @@ Para otros alias, decláralos en `module_aliases` dentro de `[analysis]`. En eje
 `admin_web` y `verwaltung.admin_web` son dos objetos módulo; el grafo los funde en un
 solo nodo, porque describe la arquitectura, no la tabla de módulos del intérprete.
 
+Un script en un directorio sin `__init__.py` que importa un archivo vecino
+(`import helper` en `tools/run.py`, ejecutado como `python tools/run.py`) depende de
+`tools.helper`, como lo resuelve Python.
+
 La tabla `[findings]` ajusta los hallazgos; los módulos que se ejecutan desde fuera
 del código se pueden listar en `entry_points` (los scripts de `pyproject.toml` y los
 módulos `__main__` se detectan solos). El ajuste `package_depth` cambia cómo se
